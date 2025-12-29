@@ -1,0 +1,215 @@
+version: "3.8"
+
+services:
+  # SGLang - Brain (logic/routing)
+  cortex-brain:
+    image: ${CORTEX_IMAGE}
+    command: python3 -m sglang.launch_server --model-path ${BRAIN_MODEL_PATH} --host 0.0.0.0 --port 30000 --tp-size 2
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - NVIDIA_VISIBLE_DEVICES=${BRAIN_GPU_IDS}
+    ports:
+      - "${PORT_BRAIN}:30000"
+    restart: unless-stopped
+    networks:
+      - ${NETWORK_NAME}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/30000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # SGLang - Worker (general tasks)
+  cortex-worker:
+    image: ${CORTEX_IMAGE}
+    command: python3 -m sglang.launch_server --model-path ${WORKER_MODEL_PATH} --host 0.0.0.0 --port 30001 --tp-size 1
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - NVIDIA_VISIBLE_DEVICES=${WORKER_GPU_IDS}
+    ports:
+      - "${PORT_WORKER}:30001"
+    restart: unless-stopped
+    networks:
+      - ${NETWORK_NAME}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/30001"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # SGLang - Vision
+  cortex-vision:
+    image: ${CORTEX_IMAGE}
+    command: python3 -m sglang.launch_server --model-path ${VISION_MODEL_PATH} --host 0.0.0.0 --port 30002 --tp-size 2
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - NVIDIA_VISIBLE_DEVICES=${VISION_GPU_IDS}
+    ports:
+      - "${PORT_VISION}:30002"
+    restart: unless-stopped
+    networks:
+      - ${NETWORK_NAME}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/30002"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Ollama - Drafter
+  drafter:
+    image: ${DRAFTER_IMAGE}
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${DRAFTER_GPU_IDS}
+    ports:
+      - "${PORT_DRAFTER}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - ${NETWORK_NAME}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/11434"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ArangoDB - Memory
+  memory:
+    image: ${MEMORY_IMAGE}
+    ports:
+      - "${PORT_MEMORY}:${PORT_MEMORY}"
+    environment:
+      - ARANGO_ROOT_PASSWORD=${ARANGO_ROOT_PASSWORD}
+    volumes:
+      - memory_data:/var/lib/arangodb3
+      - ./scripts/arango-init.js:/docker-entrypoint-initdb.d/arango-init.js:ro
+    networks:
+      - ${NETWORK_NAME}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/${PORT_MEMORY}"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Qdrant - Vector DB
+  vector:
+    image: ${VECTOR_IMAGE}
+    ports:
+      - "${PORT_VECTOR}:${PORT_VECTOR}"
+    environment:
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+    volumes:
+      - qdrant_data:/qdrant/storage
+      - ./scripts/qdrant-init.sh:/scripts/qdrant-init.sh:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      /qdrant/qdrant &
+      PID=$$!
+      sleep 5
+      /bin/sh /scripts/qdrant-init.sh
+      wait $$PID
+    networks:
+      - ${NETWORK_NAME}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/${PORT_VECTOR}"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Next.js Console
+  console:
+    build:
+      context: ../src/console
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT_CONSOLE}:${PORT_CONSOLE}"
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - NEXT_PUBLIC_API_URL=http://localhost:${PORT_BRAIN}/v1
+      - CORTEX_SERVICE_URL=http://cortex-brain:30000
+      - MEMORY_SERVICE_URL=http://memory:${PORT_MEMORY}
+      - SENTENCE_TRANSFORMER_URL=http://embedder:80
+      - QDRANT_URL=http://vector:${PORT_VECTOR}
+      - ARANGODB_DB=${GRAPH_DB_NAME}
+      - ARANGODB_USER=${ARANGODB_USER}
+      - ARANGO_ROOT_PASSWORD=${ARANGO_ROOT_PASSWORD}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      - CONSOLE_PASSWORD=${CONSOLE_PASSWORD}
+      - NEXTAUTH_SECRET=${CONSOLE_SECRET}
+      - NEXTAUTH_URL=http://localhost:${PORT_CONSOLE}
+    depends_on:
+      - cortex-brain
+      - memory
+      - vector
+    networks:
+      - ${NETWORK_NAME}
+
+  # Embedder
+  embedder:
+    build:
+      context: ../src/embedder
+    ports:
+      - "${PORT_EMBEDDER}:80"
+    environment:
+      - MODEL_NAME=${EMBEDDER_MODEL_NAME}
+    restart: unless-stopped
+    networks:
+      - ${NETWORK_NAME}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Orchestrator (agentic workflow API)
+  orchestrator:
+    image: ${ORCHESTRATOR_IMAGE}
+    working_dir: /app
+    command: ["python", "-m", "flask", "--app", "src.orchestrator.server", "run", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../src:/app
+      - ./scripts:/app/deploy/scripts:ro
+    environment:
+      - BRAIN_URL=http://cortex-brain:30000
+      - WORKER_URL=http://cortex-worker:30001
+      - VISION_URL=http://cortex-vision:30002
+      - DRAFTER_URL=http://drafter:11434
+      - MEMORY_URL=http://memory:${PORT_MEMORY}
+      - VECTOR_URL=http://vector:${PORT_VECTOR}
+      - ARANGODB_DB=${GRAPH_DB_NAME}
+      - ARANGODB_USER=${ARANGODB_USER}
+      - ARANGODB_PASSWORD=${ARANGO_ROOT_PASSWORD}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+    depends_on:
+      - cortex-brain
+      - cortex-worker
+      - cortex-vision
+      - drafter
+      - memory
+      - vector
+    networks:
+      - ${NETWORK_NAME}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('localhost',8000)); s.close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  ${NETWORK_NAME}:
+    driver: bridge
+
+volumes:
+  memory_data:
+  qdrant_data:
+  ollama_data:

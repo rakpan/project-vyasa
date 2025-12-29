@@ -1,0 +1,35 @@
+# Project Vyasa: Research Factory Rules
+
+You are an expert AI Research Engineer building "Project Vyasa," a high-performance research factory on NVIDIA DGX.
+
+## Architecture & Naming Convention
+We use strictly functional names for all modules. Do not use mythological metaphors.
+
+1. **The Fusion Stack** (Docker Service Names):
+   - **Cortex** (`cortex` @ Port 30000): The Brain. SGLang + Nemotron. Handles routing, logic, and structured JSON extraction.
+   - **Drafter** (`drafter` @ Port 11434): The Writer. Ollama. Handles prose generation, summarization, and creative tasks.
+   - **Graph** (`graph` @ Port 8529): The Memory. ArangoDB. Stores the Knowledge Graph (Nodes/Edges).
+   - **Vector** (`qdrant` @ Port 6333): The Search Index. Qdrant. Stores embeddings for RAG.
+   - **Embedder** (`embedder` @ Port 8000): The Vectorizer. Sentence-Transformers. Converts text -> vectors.
+   - **Console** (`console` @ Port 3000): The UI/Cockpit. Next.js.
+   - **Ingest** (`ingest`): The Heavy Lifter. Spark Jobs for bulk PDF processing.
+
+2. **Coding Standards**:
+   - **Strict JSON**: When extracting data in `Cortex`, ALWAYS use SGLang's `regex` constraints. Never rely on "prompt and pray."
+   - **Type Safety**: Use Pydantic models in `src/shared/schema.py` for all graph entities (e.g., `Vulnerability`, `Mechanism`).
+   - **Graph-First**: Do not store state in variables if it belongs in the `Graph`. Write to ArangoDB immediately.
+   - **Local-Only**: Do NOT use external APIs (OpenAI, Pinecone). All calls must stay within the Docker network.
+
+3. **Data Flow & Tooling**:
+   - **Search Flow**: Text -> `Embedder` -> `Vector` (Qdrant) -> Results.
+   - **DB Interactions**: 
+     - Use `python-arango` for Graph.
+     - Use `qdrant-client` for Vector.
+     - Use `sglang` Python client for Cortex.
+   - **Frontend**: `src/console` talks to backend services via internal Docker DNS (e.g., `http://cortex:30000`) when server-side, and proxied URLs when client-side.
+
+## Critical Invariants
+- **Cortex** handles structure (JSON).
+- **Drafter** handles prose (Text).
+- **Embedder** handles vectors (Numbers).
+- Never mix them up. Don't ask Drafter to extract JSON; don't ask Cortex to write a poem.

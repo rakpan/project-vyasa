@@ -1,0 +1,324 @@
+# Project Vyasa .gitignore
+
+# Archive directory
+.archive/
+shelly.sh
+
+# ============================================
+# Python
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+cython_debug/
+venv/
+ENV/
+env/
+.venv
+
+# ============================================
+# Node.js / Next.js
+# ============================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+.pnpm-store/
+
+# Next.js
+.next/
+out/
+build/
+dist/
+.vercel
+.vercel.json
+
+# Next.js standalone output
+.standalone/
+
+# ============================================
+# Environment Variables (CRITICAL)
+# ============================================
+.env
+.env*.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+# ## ADDED: Explicitly block deploy envs
+deploy/.env
+deploy/.env.local
+src/orchestrator/.env
+
+# ============================================
+# IDE / Editor
+# ============================================
+# VSCode
+.vscode/
+*.code-workspace
+
+# Cursor
+.cursor/
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# ============================================
+# OS Files
+# ============================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ============================================
+# Docker
+# ============================================
+*.log
+docker-compose.override.yml
+.dockerignore
+
+# ============================================
+# Data & Volumes (Project Vyasa Specific)
+# ============================================
+# Generic Database data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker volumes
+volumes/
+docker-volumes/
+
+# ## ADDED: Vyasa Specific Volume Names
+vyasa_memory_data/
+vyasa_vector_data/
+vyasa_graph_data/
+vyasa_redis_data/
+
+# ArangoDB (Legacy paths)
+arangodb_data/
+arangodb_dumps/
+
+# Qdrant
+qdrant_data/
+qdrant_storage/
+snapshots/
+
+# Ollama & SGLang
+ollama_data/
+.ollama/
+# ## ADDED: SGLang model caches
+.cache/huggingface/
+models--*
+
+# ============================================
+# Logs
+# ============================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+pnpm-debug.log*
+# ## ADDED: Backend logs
+src/logs/
+orchestrator.log
+sglang_server.log
+
+# ============================================
+# Cache
+# ============================================
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+.nyc_output/
+coverage/
+*.tsbuildinfo
+
+# Transformers cache
+.transformers_cache/
+
+# ============================================
+# Temporary Files
+# ============================================
+*.tmp
+*.temp
+*.bak
+*.backup
+*.swp
+*.swo
+*~
+.tmp/
+temp/
+
+# ============================================
+# Build Artifacts
+# ============================================
+*.o
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+
+# ============================================
+# Project Specific
+# ============================================
+# Query logs
+query_logs/
+data/query-logs/
+
+# Model downloads (Heavy weights)
+models/
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Notebooks output
+notebooks/*.pyc
+notebooks/__pycache__/
+
+# ============================================
+# Secrets & Keys (SECURITY)
+# ============================================
+*.pem
+*.key
+*.cert
+*.crt
+secrets/
+.secrets/
+*.secret
+api_keys.txt
+credentials.json
+# ## ADDED: Google Credential patterns
+client_secret*.json
+service-account.json
+
+# ============================================
+# Testing
+# ============================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+.mypy_cache/
+test-results/
+playwright-report/
+test-results/
+
+# ============================================
+# Documentation builds
+# ============================================
+docs/_build/
+docs/.doctrees/
+site/

@@ -1,0 +1,8 @@
+sentence-transformers==2.3.1
+transformers==4.46.3
+# PyTorch - will use CUDA version if available, CPU otherwise
+# Install CPU version by default, can be overridden with CUDA version at build time
+torch>=2.0.0
+flask==2.3.3
+gunicorn==23.0.0
+numpy==1.26.2 

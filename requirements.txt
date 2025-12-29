@@ -1,0 +1,25 @@
+# Project Vyasa Core Dependencies
+# Python 3.11+
+
+# Core dependencies
+pydantic>=2.0.0
+langgraph>=0.0.20
+langchain-core>=0.2.0
+python-arango>=7.0.0
+requests>=2.31.0
+pymupdf4llm>=0.0.14
+flask>=3.0.0
+
+# SGLang client (adjust version as needed)
+# Note: SGLang Python client API may vary - adjust imports accordingly
+# sglang>=0.2.0
+
+# Optional: For better type hints
+typing-extensions>=4.8.0
+
+# Testing dependencies
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+httpx>=0.24.0
+reportlab>=4.0.0
+qdrant-client>=1.7.0
