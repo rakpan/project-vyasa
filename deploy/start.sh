@@ -15,6 +15,10 @@ if [[ ! -f "$ENV_FILE" ]]; then
   echo -e "${RED}[ERROR] deploy/.env not found. Copy deploy/.env.example and set your values.${NC}" >&2
   exit 1
 fi
+# Basic secret sanity
+if grep -q "changeme" "$ENV_FILE"; then
+  echo -e "${RED}[WARN] deploy/.env contains placeholder 'changeme' values. Please set real secrets/tokens before deploying.${NC}"
+fi
 
 # Pre-flight: Docker daemon
 if ! docker info >/dev/null 2>&1; then
