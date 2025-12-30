@@ -67,28 +67,36 @@ C4Container
 **Responsibilities**:
 - State machine coordination
 - Asynchronous job management (max 2 concurrent jobs)
+- Project context injection (early middleware pattern)
 - Workflow routing decisions
 - Memory query orchestration
 - Content drafting coordination
 
 **Key API Endpoints**:
-- `GET /health` - Health check
-- `POST /ingest/pdf` - PDF to Markdown conversion
-- `POST /workflow/submit` - Submit async workflow job (returns `job_id`)
+- `GET /health` - Health check endpoint
+  - Quick check (default): Returns 200 if server is up
+  - Deep check (`?deep=true`): Pings ArangoDB and Cortex Worker to verify connectivity
+  - Response includes `status`, `service`, `version`, and `dependencies` (when deep=true)
+- `POST /api/projects` - Create project
+- `GET /api/projects` - List projects
+- `GET /api/projects/<project_id>` - Get project details
+- `POST /ingest/pdf` - PDF to Markdown conversion (requires `project_id`)
+- `POST /workflow/submit` - Submit async workflow job (returns `job_id`, accepts `project_id`)
 - `GET /workflow/status/<job_id>` - Get job status
-- `POST /workflow/process` - Synchronous workflow (legacy)
+- `POST /workflow/process` - Synchronous workflow (legacy, accepts `project_id`)
 
 **Key Components**:
+- `ProjectService` - Project Kernel persistence layer
 - `Supervisor` - Main state machine node
 - `SupervisorState` - TypedDict state definition
 - `build_graph()` - LangGraph workflow construction
 - `JobManager` - In-memory job registry (thread-safe)
 
-### Brain (SGLang - Logic)
+### Brain (SGLang - Reasoning)
 
 **Port**: 30000 (configurable via `${PORT_BRAIN}`)  
 **Internal DNS**: `cortex-brain`  
-**Technology**: SGLang, Large Model (e.g., `nvidia/nemotron-3-nano-30b`)  
+**Technology**: SGLang, `Llama-3.3-70B`  
 **GPU**: `${BRAIN_GPU_IDS}` (Tensor Parallelism: 2)
 
 **Responsibilities**:
@@ -104,27 +112,28 @@ C4Container
 
 **Port**: 30001 (configurable via `${PORT_WORKER}`)  
 **Internal DNS**: `cortex-worker`  
-**Technology**: SGLang, Cheap Model (e.g., `meta-llama/Llama-3.1-8B-Instruct`)  
+**Technology**: SGLang, `Qwen 2.5 49B`  
 **GPU**: `${WORKER_GPU_IDS}` (Tensor Parallelism: 1)
 
 **Responsibilities**:
-- Strict JSON extraction (PACT ontology)
+- Strict JSON extraction (knowledge graph)
 - Graph validation (Critic role)
 - High-volume extraction tasks
+- Claim tagging (HIGH/LOW priority based on Project RQs)
 
 **Key Endpoints**:
 - `/v1/chat/completions` - OpenAI-compatible API
 - Used by Cartographer and Critic nodes
 
-### Vision (SGLang - Eye)
+### Vision (SGLang - Confidence Filtering)
 
 **Port**: 30002 (configurable via `${PORT_VISION}`)  
 **Internal DNS**: `cortex-vision`  
-**Technology**: SGLang, Large Model (e.g., `nvidia/nemotron-3-nano-30b`)  
+**Technology**: SGLang, `Qwen2-VL-72B`  
 **GPU**: `${VISION_GPU_IDS}` (Tensor Parallelism: 2)
 
 **Responsibilities**:
-- Description and data point extraction
+- Figure/table/chart interpretation
 - Confidence scoring for triples
 - Filters results where `confidence_score < 0.5`
 
@@ -166,15 +175,19 @@ C4Container
 
 **Responsibilities**:
 - Knowledge graph storage (nodes/edges)
+- Project configuration storage (`ProjectConfig`)
 - Role profile storage
 - Document metadata
+- Claim storage with priority tags
 - AQL query execution
 
 **Collections**:
+- `projects` - Project configurations (Thesis, RQs, Anti-Scope)
 - `entities` - Graph nodes
 - `relations` - Graph edges
 - `roles` - Dynamic role profiles
 - `documents` - Document metadata
+- `claims` - Extracted claims with priority tags (HIGH/LOW)
 
 ### Vector (Qdrant)
 
@@ -192,23 +205,28 @@ C4Container
 
 ## Data Flow
 
-### Document Processing Flow
+### Document Processing Flow (Project-First)
 
 ```
-User → Console → Orchestrator → Worker (extract) → Critic (validate) → Vision (filter) → Graph
+User → Console → Orchestrator (with project_id) → Fetch ProjectConfig → Inject Context
                     ↓
-                 ArangoDB (save)
+                 Worker (extract + tag) → Critic (validate) → Vision (filter) → Graph
+                    ↓
+                 ArangoDB (save with project_id)
 ```
 
-1. User uploads document via Console
-2. Console forwards to Orchestrator (async job submission)
-3. Orchestrator routes to **Worker** (Cartographer node) for extraction
-4. Worker returns structured JSON (PACT entities/relations)
-5. Orchestrator routes to **Worker** (Critic node) for validation
-6. If validation passes, Orchestrator routes to **Vision** for confidence filtering
-7. Vision filters triples (confidence_score >= 0.5)
-8. Orchestrator saves to ArangoDB (Saver node)
-9. Console queries graph for visualization
+1. User uploads document via Console **with project_id** (required)
+2. Console forwards to Orchestrator `/ingest/pdf` with `project_id` in FormData
+3. Orchestrator middleware fetches `ProjectConfig` from ArangoDB
+4. Project context (Thesis, RQs) is serialized and injected into workflow state
+5. Orchestrator routes to **Worker** (Cartographer node) for extraction
+   - Cartographer uses RQs to tag claims as HIGH/LOW priority
+6. Worker returns structured JSON (knowledge graph entities/relations) with priority tags
+7. Orchestrator routes to **Worker** (Critic node) for validation
+8. If validation passes, Orchestrator routes to **Vision** for confidence filtering
+9. Vision filters triples (confidence_score >= 0.5)
+10. Orchestrator saves to ArangoDB (Saver node) with `project_id` linkage
+11. Console queries graph for visualization (project-scoped)
 
 ### Semantic Search Flow
 
@@ -224,24 +242,27 @@ User → Console → Embedder → Vector (Qdrant)
 4. Console queries Qdrant for similar vectors
 5. Results returned to user
 
-### Role-Based Extraction Flow
+### Role-Based Extraction Flow (with Project Context)
 
 ```
 Orchestrator → RoleRegistry → ArangoDB (roles collection)
                     ↓
               Dynamic System Prompt
                     ↓
-              Worker/Vision/Brain (with prompt)
+              Project Context (Thesis/RQs) Injection
+                    ↓
+              Worker/Vision/Brain (with prompt + context)
 ```
 
 1. Orchestrator requests role from RoleRegistry
 2. RoleRegistry queries ArangoDB for role profile
 3. System prompt retrieved dynamically
-4. Appropriate service (Worker/Vision/Brain) uses prompt:
-   - **Cartographer** role → Worker service
-   - **Critic** role → Worker service
-   - **Vision** role → Vision service
-   - **Supervisor** role → Brain service
+4. Project context (Thesis, RQs) is injected into the prompt
+5. Appropriate service (Worker/Vision/Brain) uses prompt + context:
+   - **Cartographer** role → Worker service (tags claims HIGH/LOW based on RQs)
+   - **Critic** role → Worker service (validates against Thesis)
+   - **Vision** role → Vision service (confidence filtering)
+   - **Supervisor** role → Brain service (routing decisions)
 
 ## Network Architecture
 

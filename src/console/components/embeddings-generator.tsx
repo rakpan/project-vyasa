@@ -226,8 +226,12 @@ export function EmbeddingsGenerator({ showTripleExtraction = false }: Embeddings
           const model = JSON.parse(selectedModel);
           if (model.provider === "ollama") {
             processingMethod = `Ollama ${model.model || 'qwen3:1.7b'}`;
-          } else if (model.id?.startsWith("nvidia-")) {
-            processingMethod = 'NVIDIA Nemotron';
+          } else if (model.id === "worker-qwen") {
+            processingMethod = 'Qwen 2.5 (Worker)';
+          } else if (model.id === "brain-llama") {
+            processingMethod = 'Llama 3.3 (Brain)';
+          } else if (model.id === "vision-qwen") {
+            processingMethod = 'Qwen 2 VL (Vision)';
           }
         }
       } catch (e) {

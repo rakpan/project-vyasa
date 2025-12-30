@@ -50,6 +50,43 @@ def test_cartographer_calls_cortex_and_returns_triples(monkeypatch):
   assert triples[0]["subject"] == "A"
 
 
+def test_cartographer_node_with_project_context(monkeypatch):
+  """Cartographer should run without crashing when project_context is provided."""
+  captured: Dict[str, Any] = {}
+
+  def fake_post(url: str, json: Dict[str, Any], timeout: int = 0):
+    captured["body"] = json
+    return make_chat_response(
+        {"triples": [{"subject": "A", "predicate": "relates", "object": "B", "confidence": 0.9}]}
+    )
+
+  monkeypatch.setattr("src.orchestrator.nodes.get_worker_url", lambda: "http://fake-worker:1234")
+  monkeypatch.setattr(nodes.requests, "post", fake_post)
+
+  # State with project_context
+  state: PaperState = {
+    "raw_text": "Hello world",
+    "critiques": [],
+    "project_id": "550e8400-e29b-41d4-a716-446655440000",
+    "project_context": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "title": "Test Project",
+      "thesis": "Test thesis",
+      "research_questions": ["RQ1"],
+      "seed_files": [],
+      "created_at": "2024-01-15T10:30:00Z",
+    },
+  }
+  
+  # Should not raise
+  result = cartographer_node(state)
+  
+  # Verify triples are present
+  assert "extracted_json" in result
+  assert "triples" in result["extracted_json"]
+  assert len(result["extracted_json"]["triples"]) == 1
+
+
 def test_cartographer_includes_critiques_in_prompt(monkeypatch):
   """Prior critiques must be included in the request prompt."""
   captured: Dict[str, Any] = {}
@@ -150,6 +187,7 @@ def test_saver_persists_to_arango(monkeypatch):
 
 
 def test_saver_failure_propagates(monkeypatch):
+  """Saver node should re-raise exceptions (not swallow them)."""
   class FakeCollection:
     def insert(self, doc):
       raise RuntimeError("db down")
@@ -171,7 +209,7 @@ def test_saver_failure_propagates(monkeypatch):
   monkeypatch.setattr(nodes, "ArangoClient", FakeClient)
 
   state: PaperState = {"extracted_json": {"triples": []}, "critiques": []}
-  with pytest.raises(Exception):
+  with pytest.raises(RuntimeError, match="db down"):
     saver_node(state)
 
 

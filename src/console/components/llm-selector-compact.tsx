@@ -28,7 +28,7 @@ interface LLMModel {
   description?: string
 }
 
-// Default models
+// Default models - Project Vyasa Committee of Experts
 const DEFAULT_MODELS: LLMModel[] = [
   {
     id: "ollama-llama3.1:8b",
@@ -38,18 +38,26 @@ const DEFAULT_MODELS: LLMModel[] = [
     description: "Local Ollama model"
   },
   {
-    id: "nvidia-nemotron-super",
-    name: "Nemotron Super 49B",
-    model: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-    provider: "nvidia",
-    description: "NVIDIA API (requires key)"
+    id: "worker-qwen",
+    name: "Qwen 2.5 (Worker)",
+    // Technical fallback: HuggingFace model path (should be overridden via NEXT_PUBLIC_WORKER_MODEL_NAME)
+    model: process.env.NEXT_PUBLIC_WORKER_MODEL_NAME || "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
+    provider: "worker",
+    description: "Worker service - Extraction & tagging"
   },
   {
-    id: "nvidia-nemotron-nano",
-    name: "Nemotron Nano 9B v2",
-    model: "nvidia/nvidia-nemotron-nano-9b-v2",
-    provider: "nvidia",
-    description: "NVIDIA API - Fast & efficient"
+    id: "brain-llama",
+    name: "Llama 3.3 (Brain)",
+    model: process.env.NEXT_PUBLIC_BRAIN_MODEL_NAME || "meta-llama/Llama-3.3-70B-Instruct",
+    provider: "brain",
+    description: "Brain service - Reasoning & validation"
+  },
+  {
+    id: "vision-qwen",
+    name: "Qwen 2 VL (Vision)",
+    model: process.env.NEXT_PUBLIC_VISION_MODEL_NAME || "Qwen/Qwen2-VL-72B-Instruct",
+    provider: "vision",
+    description: "Vision service - Image analysis"
   },
 ]
 

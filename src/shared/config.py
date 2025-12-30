@@ -16,14 +16,19 @@ from typing import Optional
 # Brain (Logic) - High-level reasoning and JSON planning
 CORTEX_BRAIN_URL: str = os.getenv("CORTEX_BRAIN_URL", "http://cortex-brain:30000")
 BRAIN_URL: str = os.getenv("BRAIN_URL", CORTEX_BRAIN_URL)
+BRAIN_MODEL_NAME: str = os.getenv("BRAIN_MODEL_NAME", "meta-llama/Llama-3.3-70B-Instruct")
 
 # Worker (Extraction) - Strict JSON extraction (cheap model)
 CORTEX_WORKER_URL: str = os.getenv("CORTEX_WORKER_URL", "http://cortex-worker:30001")
 WORKER_URL: str = os.getenv("WORKER_URL", CORTEX_WORKER_URL)
+# Worker (Extraction) - Qwen 2.5 49B model path
+# Note: Default HuggingFace path uses legacy naming; override via WORKER_MODEL_NAME env var
+WORKER_MODEL_NAME: str = os.getenv("WORKER_MODEL_NAME", "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5")
 
 # Vision (Eye) - Description and data point extraction
 CORTEX_VISION_URL: str = os.getenv("CORTEX_VISION_URL", "http://cortex-vision:30002")
 VISION_URL: str = os.getenv("VISION_URL", CORTEX_VISION_URL)
+VISION_MODEL_NAME: str = os.getenv("VISION_MODEL_NAME", "Qwen/Qwen2-VL-72B-Instruct")
 
 # Legacy aliases for backward compatibility
 CORTEX_URL: str = os.getenv("CORTEX_URL", CORTEX_BRAIN_URL)
@@ -53,6 +58,14 @@ SENTENCE_TRANSFORMER_URL: str = os.getenv("SENTENCE_TRANSFORMER_URL", EMBEDDER_U
 ARANGODB_DB: str = os.getenv("ARANGODB_DB", "project_vyasa")
 ARANGODB_USER: str = os.getenv("ARANGODB_USER", "root")
 ARANGODB_PASSWORD: str = os.getenv("ARANGODB_PASSWORD", "")
+
+# ============================================
+# Runtime Safeguards
+# ============================================
+MAX_KV_CACHE_GB: int = int(os.getenv("MAX_KV_CACHE_GB", "30"))
+# Optional per-service caps (can be tuned in deploy/.env)
+MAX_KV_CACHE_GB_BRAIN: int = int(os.getenv("MAX_KV_CACHE_GB_BRAIN", str(MAX_KV_CACHE_GB)))
+MAX_KV_CACHE_GB_WORKER: int = int(os.getenv("MAX_KV_CACHE_GB_WORKER", str(MAX_KV_CACHE_GB)))
 
 # ============================================
 # Environment Variable Names (for reference)
@@ -96,6 +109,10 @@ def get_drafter_url() -> str:
 def get_memory_url() -> str:
     """Get Memory (ArangoDB) service URL from environment or default."""
     return MEMORY_URL
+
+def get_arango_password() -> str:
+    """Centralized ArangoDB password lookup with ARANGO_ROOT_PASSWORD override."""
+    return os.getenv("ARANGO_ROOT_PASSWORD") or ARANGODB_PASSWORD
 
 def get_vector_url() -> str:
     """Get Vector (Qdrant) service URL from environment or default."""

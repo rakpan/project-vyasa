@@ -14,7 +14,7 @@ const nextConfig = {
   experimental: {
     // webpackBuildWorker: true,
   },
-  // Enable standalone output for optimized Docker builds
+  // Enable standalone output for optimized Docker builds (Compose-First deployment)
   output: 'standalone',
   // Make environment variables accessible to server components
   env: {

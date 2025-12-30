@@ -16,13 +16,14 @@
 //
 /**
  * Triple interface representing a knowledge graph edge
- * Matches the legacy format for backward compatibility
+ * Matches the backend schema from src/shared/schema.py
  */
 export interface Triple {
   subject: string
   predicate: string
   object: string
-  confidence?: number
+  confidence?: number // 0.0 to 1.0
+  evidence?: string    // The source text snippet
   usedFallback?: boolean
 }
 

@@ -2,12 +2,15 @@ version: "3.8"
 
 services:
   # SGLang - Brain (logic/routing)
+  # MXFP4 quantization preserves reasoning logic while reducing memory footprint
+  # Lowered mem-fraction to ensure 24GB headroom for OS/ArangoDB/Qdrant
   cortex-brain:
     image: ${CORTEX_IMAGE}
-    command: python3 -m sglang.launch_server --model-path ${BRAIN_MODEL_PATH} --host 0.0.0.0 --port 30000 --tp-size 2
+    command: python3 -m sglang.launch_server --model-path ${BRAIN_MODEL_PATH} --host 0.0.0.0 --port 30000 --tp-size 2 --quantization mxfp4 --mem-fraction-static 0.70 --max-running-requests 2
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - NVIDIA_VISIBLE_DEVICES=${BRAIN_GPU_IDS}
+    cpuset: "10-19"
     ports:
       - "${PORT_BRAIN}:30000"
     restart: unless-stopped
@@ -21,12 +24,16 @@ services:
       start_period: 20s
 
   # SGLang - Worker (general tasks)
+  # FP4 quantization maximizes memory efficiency for extraction tasks
+  # Increased KV cache capacity due to reduced weight size
+  # Lowered mem-fraction to ensure 24GB headroom for OS/ArangoDB/Qdrant
   cortex-worker:
     image: ${CORTEX_IMAGE}
-    command: python3 -m sglang.launch_server --model-path ${WORKER_MODEL_PATH} --host 0.0.0.0 --port 30001 --tp-size 1
+    command: python3 -m sglang.launch_server --model-path ${WORKER_MODEL_PATH} --host 0.0.0.0 --port 30001 --tp-size 1 --quantization fp4 --mem-fraction-static 0.70 --max-running-requests 4 --context-length 16384
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - NVIDIA_VISIBLE_DEVICES=${WORKER_GPU_IDS}
+    cpuset: "10-19"
     ports:
       - "${PORT_WORKER}:30001"
     restart: unless-stopped
@@ -40,12 +47,15 @@ services:
       start_period: 20s
 
   # SGLang - Vision
+  # INT8 quantization for vision models (balanced precision/performance)
+  # Memory guardrails: bounded footprint to prevent UMA spikes
   cortex-vision:
     image: ${CORTEX_IMAGE}
-    command: python3 -m sglang.launch_server --model-path ${VISION_MODEL_PATH} --host 0.0.0.0 --port 30002 --tp-size 2
+    command: python3 -m sglang.launch_server --model-path ${VISION_MODEL_PATH} --host 0.0.0.0 --port 30002 --tp-size 2 --quantization int8 --mem-fraction-static 0.75 --max-running-requests 2
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - NVIDIA_VISIBLE_DEVICES=${VISION_GPU_IDS}
+    cpuset: "10-19"
     ports:
       - "${PORT_VISION}:30002"
     restart: unless-stopped
@@ -59,10 +69,12 @@ services:
       start_period: 20s
 
   # Ollama - Drafter
+  # Pinned to efficiency cores for management tasks
   drafter:
     image: ${DRAFTER_IMAGE}
     environment:
       - NVIDIA_VISIBLE_DEVICES=${DRAFTER_GPU_IDS}
+    cpuset: "0-9"
     ports:
       - "${PORT_DRAFTER}:11434"
     volumes:
@@ -80,6 +92,7 @@ services:
   # ArangoDB - Memory
   memory:
     image: ${MEMORY_IMAGE}
+    cpuset: "0-9"
     ports:
       - "${PORT_MEMORY}:${PORT_MEMORY}"
     environment:
@@ -99,6 +112,7 @@ services:
   # Qdrant - Vector DB
   vector:
     image: ${VECTOR_IMAGE}
+    cpuset: "0-9"
     ports:
       - "${PORT_VECTOR}:${PORT_VECTOR}"
     environment:
@@ -127,6 +141,7 @@ services:
     build:
       context: ../src/console
       dockerfile: Dockerfile
+    cpuset: "0-9"
     ports:
       - "${PORT_CONSOLE}:${PORT_CONSOLE}"
     environment:
@@ -151,9 +166,11 @@ services:
       - ${NETWORK_NAME}
 
   # Embedder
+  # Pinned to efficiency cores for management tasks
   embedder:
     build:
       context: ../src/embedder
+    cpuset: "0-9"
     ports:
       - "${PORT_EMBEDDER}:80"
     environment:
@@ -173,6 +190,7 @@ services:
     image: ${ORCHESTRATOR_IMAGE}
     working_dir: /app
     command: ["python", "-m", "flask", "--app", "src.orchestrator.server", "run", "--host", "0.0.0.0", "--port", "8000"]
+    cpuset: "0-9"
     ports:
       - "8000:8000"
     volumes:
@@ -189,6 +207,7 @@ services:
       - ARANGODB_USER=${ARANGODB_USER}
       - ARANGODB_PASSWORD=${ARANGO_ROOT_PASSWORD}
       - QDRANT_API_KEY=${QDRANT_API_KEY}
+      - LOG_FORMAT=json
     depends_on:
       - cortex-brain
       - cortex-worker

@@ -43,7 +43,7 @@ try {
     {
       name: 'entities',
       type: 'document',
-      description: 'Entity collection for PACT ontology (Vulnerabilities, Mechanisms, Constraints, Outcomes)'
+      description: 'Entity collection for knowledge graph (Vulnerabilities, Mechanisms, Constraints, Outcomes)'
     },
     {
       name: 'edges',
@@ -54,6 +54,26 @@ try {
       name: 'documents',
       type: 'document',
       description: 'Document metadata collection'
+    },
+    {
+      name: 'manuscript_blocks',
+      type: 'document',
+      description: 'Manuscript blocks with version history and citation binding'
+    },
+    {
+      name: 'patches',
+      type: 'document',
+      description: 'Proposed edits (patches) for manuscript blocks awaiting review'
+    },
+    {
+      name: 'project_bibliography',
+      type: 'document',
+      description: 'Project bibliography for citation validation (Librarian Key-Guard)'
+    },
+    {
+      name: 'canonical_knowledge',
+      type: 'document',
+      description: 'Global repository of expert-vetted, merged knowledge with provenance tracking'
     }
   ];
 
@@ -121,10 +141,47 @@ try {
     }
   }
 
+  const canonicalCollection = db._collection('canonical_knowledge');
+  if (canonicalCollection) {
+    // Unique identifier for canonical entries
+    try {
+      canonicalCollection.ensureIndex({
+        type: 'persistent',
+        fields: ['entity_id'],
+        unique: true
+      });
+      console.log('✅ Index created on canonical_knowledge.entity_id (unique)');
+    } catch (e) {
+      if (!e.message.includes('already exists')) {
+        console.warn(`Warning creating index on canonical_knowledge.entity_id: ${e.message}`);
+      }
+    }
+
+    // Lookup helpers
+    const canonicalIndexes = [
+      { fields: ['entity_name'], unique: false },
+      { fields: ['entity_type'], unique: false },
+      { fields: ['conflict_flags[*]'], unique: false },
+      { fields: ['provenance_log[*].project_id'], unique: false },
+      { fields: ['provenance_log[*].job_id'], unique: false },
+      { fields: ['source_pointers[*].doc_hash'], unique: false },
+    ];
+
+    for (const idx of canonicalIndexes) {
+      try {
+        canonicalCollection.ensureIndex({ type: 'persistent', ...idx });
+        console.log(`✅ Index created on canonical_knowledge.${idx.fields.join(',')}`);
+      } catch (e) {
+        if (!e.message.includes('already exists')) {
+          console.warn(`Warning creating index on canonical_knowledge.${idx.fields.join(',')}: ${e.message}`);
+        }
+      }
+    }
+  }
+
   console.log(`✅ ArangoDB initialization complete for '${DB_NAME}'`);
 } catch (error) {
   console.error(`❌ Error during ArangoDB initialization: ${error.message}`);
   console.error(error.stack);
   throw error;
 }
-

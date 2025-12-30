@@ -15,6 +15,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
   echo -e "${RED}[ERROR] deploy/.env not found. Copy deploy/.env.example and set your values.${NC}" >&2
   exit 1
 fi
+# Secure env file permissions
+chmod 600 "$ENV_FILE" 2>/dev/null || true
 # Basic secret sanity
 if grep -q "changeme" "$ENV_FILE"; then
   echo -e "${RED}[WARN] deploy/.env contains placeholder 'changeme' values. Please set real secrets/tokens before deploying.${NC}"
@@ -52,18 +54,40 @@ done
 
 # Seed roles via orchestrator container
 ORCH_CONTAINER=${CONTAINER_ORCHESTRATOR:-vyasa-orchestrator}
-SEED_SCRIPT=/app/deploy/scripts/seed_roles.py
-if docker exec "$ORCH_CONTAINER" test -f "$SEED_SCRIPT"; then
-  echo -e "${GREEN}Seeding roles via orchestrator...${NC}"
-  docker exec "$ORCH_CONTAINER" python3 "$SEED_SCRIPT"
-else
-  echo -e "${RED}[WARN] Seed script not found in orchestrator: $SEED_SCRIPT${NC}"
+echo -e "${GREEN}Seeding roles via orchestrator...${NC}"
+if ! docker exec "$ORCH_CONTAINER" python -m src.scripts.seed_roles; then
+  echo -e "${RED}[WARN] Role seeding failed. Check orchestrator logs.${NC}"
 fi
 
-# Output URLs
+# Verify orchestrator is running
+if ! docker ps --format '{{.Names}}' | grep -q "^${ORCH_CONTAINER}\$"; then
+  echo -e "${RED}[ERROR] Orchestrator container (${ORCH_CONTAINER}) is not running after startup.${NC}" >&2
+  exit 1
+fi
+
+# Poll orchestrator health
+ORCHESTRATOR_PORT=${PORT_ORCHESTRATOR:-8000}
+ORCHESTRATOR_URL="http://localhost:${ORCHESTRATOR_PORT}/health"
 CONSOLE_PORT=${PORT_CONSOLE:-3000}
+ATTEMPTS=30
+SLEEP_SECONDS=2
+
+printf "Waiting for orchestrator to become ready"
+for i in $(seq 1 $ATTEMPTS); do
+  if curl -s -f "$ORCHESTRATOR_URL" > /dev/null 2>&1; then
+    echo -e "\n${GREEN}✅ System Online: http://localhost:${CONSOLE_PORT}${NC}"
+    break
+  fi
+  printf "."
+  sleep "$SLEEP_SECONDS"
+  if [[ "$i" -eq "$ATTEMPTS" ]]; then
+    echo -e "\n${RED}⚠️ Orchestrator failed to respond. Check logs: docker logs ${ORCH_CONTAINER}${NC}" >&2
+    exit 1
+  fi
+done
+
+# Output URLs
 ARANGO_PORT=${PORT_MEMORY:-8529}
 
-echo -e "${GREEN}Project Vyasa is starting up.${NC}"
 echo "Console:  http://localhost:${CONSOLE_PORT}"
 echo "ArangoDB: http://localhost:${ARANGO_PORT}"

@@ -1,5 +1,5 @@
 """
-SGLang-optimized extraction function for PACT ontology.
+SGLang-optimized extraction function for knowledge graphs.
 
 Connects to the Cortex service (SGLang) and uses constrained decoding (regex)
 to strictly enforce JSON schema compliance.
@@ -10,7 +10,7 @@ import os
 from typing import List, Optional, Dict, Any
 import requests
 
-from ..shared.schema import PACTGraph, GraphTriple, EntityType, RelationType, RoleProfile
+from ..shared.schema import KnowledgeGraph, GraphTriple, EntityType, RelationType, RoleProfile
 from ..shared.config import get_cortex_url
 from ..shared.logger import get_logger
 from ..shared.role_manager import RoleRegistry
@@ -21,8 +21,8 @@ logger = get_logger("ingestion", __name__)
 CORTEX_URL = get_cortex_url()
 
 
-class PACTExtractor:
-    """Extracts PACT ontology entities and relations from text using SGLang.
+class KnowledgeExtractor:
+    """Extracts knowledge graph entities and relations from text using SGLang.
     
     This class connects to the Cortex service (SGLang) and uses constrained
     decoding (regex) to strictly enforce JSON schema compliance. The extraction
@@ -38,7 +38,7 @@ class PACTExtractor:
     """
     
     def __init__(self, cortex_url: Optional[str] = None, role_name: str = "The Cartographer") -> None:
-        """Initialize the PACT extractor.
+        """Initialize the knowledge extractor.
         
         Args:
             cortex_url: URL of the Cortex (SGLang) service endpoint.
@@ -82,14 +82,14 @@ class PACTExtractor:
                 logger.info(f"Loaded role '{self.role_name}' (version {self._role.version})")
     
     def _generate_json_schema_regex(self) -> str:
-        """Generate a regex pattern that matches the PACTGraph JSON schema.
+        """Generate a regex pattern that matches the KnowledgeGraph JSON schema.
         
-        This regex enforces strict JSON structure matching the PACTGraph model.
+        This regex enforces strict JSON structure matching the KnowledgeGraph model.
         SGLang uses regex constraints to force valid JSON output, ensuring the
         extraction result conforms to the expected schema.
         
         Returns:
-            Regex pattern string that matches valid PACTGraph JSON. The pattern
+            Regex pattern string that matches valid KnowledgeGraph JSON. The pattern
             requires:
             - vulnerabilities: Array of vulnerability objects
             - mechanisms: Array of mechanism objects
@@ -102,7 +102,7 @@ class PACTExtractor:
             This is a simplified regex. For production, consider using a more
             sophisticated schema validation approach (e.g., JSON Schema).
         """
-        # Regex pattern for valid JSON matching PACTGraph schema
+        # Regex pattern for valid JSON matching KnowledgeGraph schema
         # This ensures the output is valid JSON with required fields
         # Pattern allows nested structures with proper escaping
         return r'\{\s*"vulnerabilities"\s*:\s*\[.*?\]\s*,\s*"mechanisms"\s*:\s*\[.*?\]\s*,\s*"constraints"\s*:\s*\[.*?\]\s*,\s*"outcomes"\s*:\s*\[.*?\]\s*,\s*"triples"\s*:\s*\[.*?\]\s*(?:,\s*"source"\s*:\s*"[^"]*")?\s*\}'
@@ -112,11 +112,11 @@ class PACTExtractor:
         
         Combines the role's system prompt (from RoleRegistry) with the input text
         to create a complete extraction prompt. The system prompt contains instructions
-        for extracting PACT ontology entities and relations with strict JSON compliance.
+        for extracting knowledge graph entities and relations with strict JSON compliance.
         
         Args:
             text: Input text to extract from. Should be non-empty and contain
-                  content relevant to PACT ontology (vulnerabilities, mechanisms, etc.).
+                  content relevant to knowledge graph extraction (vulnerabilities, mechanisms, etc.).
                   
         Returns:
             Formatted prompt string ready for SGLang API. The prompt format:
@@ -129,7 +129,7 @@ class PACTExtractor:
             If role is not loaded, falls back to a generic extraction prompt.
         """
         # Use the role's system prompt as the base
-        system_prompt = self._role.system_prompt if self._role else "Extract PACT ontology entities and relations from text."
+        system_prompt = self._role.system_prompt if self._role else "Extract knowledge graph entities and relations from text."
         
         # Append the text to analyze
         prompt = f"""{system_prompt}
@@ -140,21 +140,21 @@ Text to analyze:
 JSON:"""
         return prompt
     
-    def extract_pact_graph(self, text: str, source: Optional[str] = None) -> PACTGraph:
-        """Extract PACT ontology from a single text document.
+    def extract_knowledge_graph(self, text: str, source: Optional[str] = None) -> KnowledgeGraph:
+        """Extract knowledge graph from a single text document.
         
         Sends the input text to Cortex (SGLang) with regex constraints to ensure
-        valid JSON output matching the PACTGraph schema. The extraction uses the
+        valid JSON output matching the KnowledgeGraph schema. The extraction uses the
         role's system prompt (default: "The Cartographer") to guide the extraction.
         
         Args:
             text: Input text to extract from. Must be non-empty. If empty, returns
-                  an empty PACTGraph.
+                  an empty KnowledgeGraph.
             source: Optional source identifier (e.g., document ID, filename).
-                   Stored in the returned PACTGraph.source field.
+                   Stored in the returned KnowledgeGraph.source field.
                    
         Returns:
-            PACTGraph object containing:
+            KnowledgeGraph object containing:
             - vulnerabilities: List of Vulnerability objects
             - mechanisms: List of Mechanism objects
             - constraints: List of Constraint objects
@@ -162,7 +162,7 @@ JSON:"""
             - triples: List of GraphTriple objects (relations)
             - source: Source identifier if provided
             
-            Returns an empty PACTGraph if input text is empty.
+            Returns an empty KnowledgeGraph if input text is empty.
             
         Raises:
             ValueError: If extraction fails, JSON parsing fails, or Cortex returns
@@ -177,7 +177,7 @@ JSON:"""
         
         if not text or not text.strip():
             logger.warning("Empty text provided for extraction")
-            return PACTGraph(source=source)
+            return KnowledgeGraph(source=source)
         
         try:
             prompt = self._build_extraction_prompt(text)
@@ -232,27 +232,27 @@ JSON:"""
                 logger.error(f"Response text: {extracted_text[:500]}")
                 raise ValueError(f"Invalid JSON response from SGLang: {e}")
             
-            # Validate and convert to PACTGraph
-            pact_graph = PACTGraph(**data)
+            # Validate and convert to KnowledgeGraph
+            knowledge_graph = KnowledgeGraph(**data)
             if source:
-                pact_graph.source = source
+                knowledge_graph.source = source
             
-            logger.info(f"Extracted {len(pact_graph.vulnerabilities)} vulnerabilities, "
-                       f"{len(pact_graph.mechanisms)} mechanisms, "
-                       f"{len(pact_graph.constraints)} constraints, "
-                       f"{len(pact_graph.outcomes)} outcomes, "
-                       f"{len(pact_graph.triples)} triples")
+            logger.info(f"Extracted {len(knowledge_graph.vulnerabilities)} vulnerabilities, "
+                       f"{len(knowledge_graph.mechanisms)} mechanisms, "
+                       f"{len(knowledge_graph.constraints)} constraints, "
+                       f"{len(knowledge_graph.outcomes)} outcomes, "
+                       f"{len(knowledge_graph.triples)} triples")
             
-            return pact_graph
+            return knowledge_graph
             
         except Exception as e:
             logger.error(f"Extraction failed: {e}", exc_info=True)
-            raise ValueError(f"Failed to extract PACT graph: {e}")
+            raise ValueError(f"Failed to extract knowledge graph: {e}")
     
-    def extract_batch(self, texts: List[str], sources: Optional[List[str]] = None) -> List[PACTGraph]:
-        """Extract PACT ontology from multiple text documents (batch processing).
+    def extract_batch(self, texts: List[str], sources: Optional[List[str]] = None) -> List[KnowledgeGraph]:
+        """Extract knowledge graph from multiple text documents (batch processing).
         
-        Processes multiple texts sequentially, calling extract_pact_graph for each.
+        Processes multiple texts sequentially, calling extract_knowledge_graph for each.
         This is a convenience method for processing multiple documents. For true
         parallel processing, consider using asyncio or multiprocessing.
         
@@ -263,9 +263,9 @@ JSON:"""
                     corresponding text.
                     
         Returns:
-            List of PACTGraph objects, one per input text. The order matches the
+            List of KnowledgeGraph objects, one per input text. The order matches the
             input order. If extraction fails for a text, that entry will contain
-            an empty PACTGraph (errors are logged but don't stop batch processing).
+            an empty KnowledgeGraph (errors are logged but don't stop batch processing).
             
         Raises:
             ValueError: If texts is empty, or if sources is provided but has a
@@ -283,21 +283,21 @@ JSON:"""
         for i, text in enumerate(texts):
             source = sources[i] if sources else None
             try:
-                result = self.extract_pact_graph(text, source=source)
+                result = self.extract_knowledge_graph(text, source=source)
                 results.append(result)
             except Exception as e:
                 logger.error(f"Failed to extract from text {i}: {e}")
                 # Return empty graph on failure to maintain batch structure
-                results.append(PACTGraph(source=source))
+                results.append(KnowledgeGraph(source=source))
         
         logger.info(f"Batch extraction completed: {len(results)}/{len(texts)} successful")
         return results
 
 
 # Convenience function for direct usage
-def extract_pact_graph(text: str, source: Optional[str] = None, cortex_url: Optional[str] = None) -> PACTGraph:
+def extract_knowledge_graph(text: str, source: Optional[str] = None, cortex_url: Optional[str] = None) -> KnowledgeGraph:
     """
-    Extract PACT ontology from text using Cortex service.
+    Extract knowledge graph from text using Cortex service.
     
     Args:
         text: Input text to extract from
@@ -306,7 +306,15 @@ def extract_pact_graph(text: str, source: Optional[str] = None, cortex_url: Opti
                    If None, uses CORTEX_URL from environment/config.
         
     Returns:
-        PACTGraph containing extracted entities and relations
+        KnowledgeGraph containing extracted entities and relations
     """
-    extractor = PACTExtractor(cortex_url=cortex_url)
-    return extractor.extract_pact_graph(text, source=source)
+    extractor = KnowledgeExtractor(cortex_url=cortex_url)
+    return extractor.extract_knowledge_graph(text, source=source)
+
+# Backward compatibility alias (deprecated)
+def extract_pact_graph(text: str, source: Optional[str] = None, cortex_url: Optional[str] = None):
+    """Deprecated: Use extract_knowledge_graph instead."""
+    from ..shared import PACTGraph  # Backward compatibility alias
+    result = extract_knowledge_graph(text, source, cortex_url)
+    # Return as PACTGraph for backward compatibility
+    return PACTGraph(**result.model_dump())

@@ -10,6 +10,7 @@ class JobStatus(str, Enum):
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+    FINALIZED = "FINALIZED"
     # Backward-compatible aliases
     PENDING = QUEUED
     PROCESSING = RUNNING
@@ -26,6 +27,9 @@ class PaperState(TypedDict, total=False):
     extracted_json: Dict[str, Any]
     critiques: List[str]
     revision_count: int
+    project_id: Optional[str]  # UUID of the project this workflow belongs to
+    project_context: Optional[Dict[str, Any]]  # Project metadata as plain dict (JSON-serializable)
+    doc_hash: Optional[str]  # SHA256 hash of the source PDF (for text cache lookup)
 
 
 class JobInfo(TypedDict, total=False):

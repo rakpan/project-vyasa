@@ -8,7 +8,7 @@ This directory contains the core logic for Project Vyasa, a high-performance res
 src/
 ├── shared/
 │   ├── __init__.py
-│   └── schema.py          # Pydantic models for PACT ontology
+│   └── schema.py          # Pydantic models for knowledge graph
 ├── ingestion/
 │   ├── __init__.py
 │   └── extractor.py        # SGLang-optimized extraction
@@ -22,11 +22,11 @@ src/
 
 ### `shared/schema.py`
 
-Defines Pydantic models for the PACT ontology:
+Defines Pydantic models for the knowledge graph:
 - **Entities**: `Vulnerability`, `Mechanism`, `Constraint`, `Outcome`
 - **Relations**: `MITIGATES`, `ENABLES`, `REQUIRES` (via `RelationType` enum)
 - **GraphTriple**: Represents subject-predicate-object triples
-- **PACTGraph**: Complete extraction result container
+- **KnowledgeGraph**: Complete extraction result container
 
 All models are type-safe and validated using Pydantic v2.
 
@@ -36,13 +36,13 @@ SGLang-optimized extraction function that:
 - Connects to Cortex (SGLang) service via `CORTEX_URL` environment variable
 - Uses regex constraints to enforce strict JSON schema compliance
 - Supports batch processing
-- Returns validated `PACTGraph` objects
+- Returns validated `KnowledgeGraph` objects
 
 **Usage:**
 ```python
-from src.ingestion import extract_pact_graph
+from src.ingestion import extract_knowledge_graph
 
-result = extract_pact_graph(text="Your research text here", source="document_id")
+result = extract_knowledge_graph(text="Your research text here", source="document_id")
 ```
 
 ### `orchestrator/supervisor.py`

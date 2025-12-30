@@ -7,10 +7,14 @@ from .schema import (
     Outcome,
     Entity,
     GraphTriple,
-    PACTGraph,
+    KnowledgeGraph,
     RelationType,
     EntityType,
+    ManuscriptBlock,
+    PatchObject,
 )
+# Backward compatibility alias (deprecated)
+PACTGraph = KnowledgeGraph
 from .config import (
     CORTEX_URL,
     CORTEX_SERVICE_URL,
@@ -41,9 +45,12 @@ __all__ = [
     "Outcome",
     "Entity",
     "GraphTriple",
-    "PACTGraph",
+    "KnowledgeGraph",
+    "PACTGraph",  # Deprecated alias
     "RelationType",
     "EntityType",
+    "ManuscriptBlock",
+    "PatchObject",
     # Config exports
     "CORTEX_URL",
     "CORTEX_SERVICE_URL",

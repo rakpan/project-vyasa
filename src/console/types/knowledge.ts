@@ -67,11 +67,12 @@ export interface GraphTriple {
   object: string;
   subject_type: EntityType;
   object_type: EntityType;
-  confidence?: number;
+  confidence?: number; // 0.0 to 1.0
+  evidence?: string;    // The source text snippet
   source?: string;
 }
 
-export interface PACTGraph {
+export interface KnowledgeGraph {
   vulnerabilities: Vulnerability[];
   mechanisms: Mechanism[];
   constraints: Constraint[];
@@ -81,31 +82,33 @@ export interface PACTGraph {
 }
 
 // Legacy Triple interface for backward compatibility
-// Maps to GraphTriple but without PACT-specific fields
+// Maps to GraphTriple but without entity type fields
 export interface Triple {
   subject: string;
   predicate: string;
   object: string;
-  confidence?: number;
+  confidence?: number; // 0.0 to 1.0
+  evidence?: string;  // The source text snippet
   usedFallback?: boolean;
 }
 
 /**
- * Convert PACTGraph triples to legacy Triple format for UI compatibility
+ * Convert KnowledgeGraph triples to legacy Triple format for UI compatibility
  */
-export function pactTriplesToLegacy(triples: GraphTriple[]): Triple[] {
+export function knowledgeTriplesToLegacy(triples: GraphTriple[]): Triple[] {
   return triples.map(triple => ({
     subject: triple.subject,
     predicate: triple.predicate,
     object: triple.object,
     confidence: triple.confidence,
+    evidence: triple.evidence,
   }));
 }
 
 /**
- * Convert legacy Triple format to PACT GraphTriple (with defaults)
+ * Convert legacy Triple format to KnowledgeGraph GraphTriple (with defaults)
  */
-export function legacyTriplesToPACT(triples: Triple[]): GraphTriple[] {
+export function legacyTriplesToKnowledge(triples: Triple[]): GraphTriple[] {
   return triples.map(triple => ({
     subject: triple.subject,
     predicate: (triple.predicate as RelationType) || 'ENABLES',
@@ -113,6 +116,15 @@ export function legacyTriplesToPACT(triples: Triple[]): GraphTriple[] {
     subject_type: 'Mechanism', // Default, should be inferred
     object_type: 'Outcome', // Default, should be inferred
     confidence: triple.confidence,
+    evidence: triple.evidence,
   }));
 }
+
+// Legacy aliases for backward compatibility (deprecated)
+/** @deprecated Use KnowledgeGraph instead */
+export type PACTGraph = KnowledgeGraph;
+/** @deprecated Use knowledgeTriplesToLegacy instead */
+export const pactTriplesToLegacy = knowledgeTriplesToLegacy;
+/** @deprecated Use legacyTriplesToKnowledge instead */
+export const legacyTriplesToPACT = legacyTriplesToKnowledge;
 

@@ -21,25 +21,32 @@ import { createPortal } from "react-dom"
 import { ChevronDown, Sparkles, Cpu, Server } from "lucide-react"
 import { OllamaIcon } from "@/components/ui/ollama-icon"
 
-// Base models - NVIDIA NeMo as default (first in list)
+// Base models - Project Vyasa Committee of Experts Architecture
 const baseModels = [
   {
-    id: "nvidia-nemotron",
-    name: "NVIDIA Llama 3.3 Nemotron Super 49B",
+    id: "worker-qwen",
+    name: "Qwen 2.5 (Worker)",
     icon: <Cpu className="h-4 w-4 text-green-500" />,
-    description: "NVIDIA hosted Nemotron Super 49B v1.5 model",
-    model: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-    apiKeyName: "NVIDIA_API_KEY",
-    baseURL: "https://integrate.api.nvidia.com/v1",
+    description: "Worker service - Structured JSON extraction and tagging",
+    // Technical fallback: HuggingFace model path (should be overridden via NEXT_PUBLIC_WORKER_MODEL_NAME)
+    model: process.env.NEXT_PUBLIC_WORKER_MODEL_NAME || "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
+    baseURL: process.env.NEXT_PUBLIC_WORKER_URL || "http://cortex-worker:30001",
   },
   {
-    id: "nvidia-nemotron-nano",
-    name: "NVIDIA Nemotron Nano 9B v2",
-    icon: <Cpu className="h-4 w-4 text-green-500" />,
-    description: "NVIDIA hosted Nemotron Nano 9B v2 - Faster and more efficient",
-    model: "nvidia/nvidia-nemotron-nano-9b-v2",
-    apiKeyName: "NVIDIA_API_KEY",
-    baseURL: "https://integrate.api.nvidia.com/v1",
+    id: "brain-llama",
+    name: "Llama 3.3 (Brain)",
+    icon: <Cpu className="h-4 w-4 text-blue-500" />,
+    description: "Brain service - High-level reasoning and validation",
+    model: process.env.NEXT_PUBLIC_BRAIN_MODEL_NAME || "meta-llama/Llama-3.3-70B-Instruct",
+    baseURL: process.env.NEXT_PUBLIC_BRAIN_URL || "http://cortex-brain:30000",
+  },
+  {
+    id: "vision-qwen",
+    name: "Qwen 2 VL (Vision)",
+    icon: <Cpu className="h-4 w-4 text-purple-500" />,
+    description: "Vision service - Figure/table/chart interpretation",
+    model: process.env.NEXT_PUBLIC_VISION_MODEL_NAME || "Qwen/Qwen2-VL-72B-Instruct",
+    baseURL: process.env.NEXT_PUBLIC_VISION_URL || "http://cortex-vision:30002",
   },
   // Preset Ollama model
   {

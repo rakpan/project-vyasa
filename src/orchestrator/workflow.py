@@ -6,6 +6,7 @@ from langgraph.graph import StateGraph, END
 
 from .state import PaperState
 from .nodes import cartographer_node, critic_node, saver_node, vision_node
+from .normalize import normalize_extracted_json
 
 
 def _critic_router(state: PaperState) -> str:
@@ -42,4 +43,28 @@ def build_workflow():
     )
     graph.add_edge("saver", END)
 
-    return graph.compile()
+    compiled = graph.compile()
+
+    # Create a wrapper class that normalizes extracted_json after invocation
+    class NormalizedWorkflow:
+        """Wrapper around CompiledStateGraph that normalizes extracted_json."""
+        
+        def __init__(self, compiled_graph):
+            self._compiled = compiled_graph
+        
+        def invoke(self, state):
+            """Invoke the workflow and normalize extracted_json in the result."""
+            result_state = self._compiled.invoke(state)
+            if "extracted_json" in result_state:
+                result_state["extracted_json"] = normalize_extracted_json(result_state["extracted_json"])
+            return result_state
+        
+        def stream(self, state):
+            """Stream the workflow execution."""
+            return self._compiled.stream(state)
+        
+        def __getattr__(self, name):
+            """Delegate other attributes to the compiled graph."""
+            return getattr(self._compiled, name)
+
+    return NormalizedWorkflow(compiled)

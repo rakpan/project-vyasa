@@ -17,6 +17,7 @@ export async function GET(
   const path = params.path.join('/');
   const url = new URL(request.url);
   const queryString = url.search;
+  const isStream = path.includes('/stream');
 
   try {
     const response = await fetch(
@@ -24,11 +25,25 @@ export async function GET(
       {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': isStream ? 'text/event-stream' : 'application/json',
         },
       }
     );
 
+    // Handle SSE streaming
+    if (isStream && response.body) {
+      return new NextResponse(response.body, {
+        status: response.status,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        },
+      });
+    }
+
+    // Handle regular JSON responses
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });
   } catch (error) {

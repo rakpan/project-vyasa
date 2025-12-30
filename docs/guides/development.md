@@ -29,8 +29,8 @@
 
 ### Code Naming
 
-- **Classes**: PascalCase (`PACTExtractor`, `RoleRegistry`)
-- **Functions**: snake_case (`extract_pact_graph`, `get_role`)
+- **Classes**: PascalCase (`KnowledgeExtractor`, `RoleRegistry`)
+- **Functions**: snake_case (`extract_knowledge_graph`, `get_role`)
 - **Constants**: UPPER_SNAKE_CASE (`CORTEX_URL`, `ARANGODB_DB`)
 - **Variables**: snake_case (`cortex_url`, `role_name`)
 
@@ -74,8 +74,8 @@ def process_document(doc: Document) -> Graph:
 **All classes and functions must have docstrings:**
 
 ```python
-class PACTExtractor:
-    """Extracts PACT ontology entities and relations from text using SGLang.
+class KnowledgeExtractor:
+    """Extracts knowledge graph entities and relations from text using SGLang.
     
     This class connects to the Cortex service (SGLang) and uses constrained
     decoding (regex) to strictly enforce JSON schema compliance.
@@ -86,14 +86,14 @@ class PACTExtractor:
         role_registry: Registry for fetching dynamic role profiles.
     """
     
-    def extract_pact_graph(self, text: str) -> PACTGraph:
-        """Extract PACT ontology entities and relations from text.
+    def extract_knowledge_graph(self, text: str) -> KnowledgeGraph:
+        """Extract knowledge graph entities and relations from text.
         
         Args:
             text: Input text to extract from.
             
         Returns:
-            PACTGraph object containing entities, relations, and triples.
+            KnowledgeGraph object containing entities, relations, and triples.
             Returns an empty graph if extraction fails.
             
         Raises:
@@ -129,20 +129,27 @@ def call_cortex(prompt: str) -> Dict[str, Any]:
         return {"error": "Unknown error", "fallback": True}
 ```
 
-### Structured Logging
+### Logging Standards
 
-**Use JSON-structured logs for backend services:**
+**All production logs must use JSON format for easy parsing by log aggregation tools (Splunk, Datadog, jq).**
+
+The logger automatically detects the format via `LOG_FORMAT` environment variable:
+- `LOG_FORMAT=json` (default in Docker): Structured JSON logs
+- `LOG_FORMAT=text` (default in local dev): Human-readable text logs
+
+**Structured Logging Example:**
 
 ```python
 from ..shared.logger import get_logger
 
-logger = get_logger("ingestion", __name__)
+logger = get_logger("orchestrator", __name__)
 
-# Good: Structured logging
+# Good: Structured logging with context binding
 logger.info(
     "Extraction completed",
     extra={
         "payload": {
+            "project_id": "550e8400-e29b-41d4-a716-446655440000",
             "document_id": doc_id,
             "entities_count": len(entities),
             "relations_count": len(relations),
@@ -151,18 +158,59 @@ logger.info(
     }
 )
 
-# Bad: String formatting
+# Good: Direct key promotion (project_id, job_id, etc. are promoted to top-level)
+logger.info(
+    "Job started",
+    extra={
+        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+        "job_id": "job-123",
+        "duration_ms": 150
+    }
+)
+
+# Bad: String formatting (not parseable)
 logger.info(f"Extracted {len(entities)} entities from document {doc_id}")
 ```
 
+**JSON Output (LOG_FORMAT=json):**
+```json
+{
+  "timestamp": "2024-01-15T10:30:00.123Z",
+  "service": "orchestrator",
+  "level": "INFO",
+  "message": "Extraction completed",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "document_id": "doc-456",
+  "entities_count": 42,
+  "relations_count": 18,
+  "duration_ms": 1250
+}
+```
+
+**Text Output (LOG_FORMAT=text):**
+```
+2024-01-15 10:30:00,123 - orchestrator - INFO - Extraction completed
+```
+
+**Context Binding:**
+- Keys in `extra={"payload": {...}}` are merged into top-level JSON fields
+- Common keys (`project_id`, `job_id`, `document_id`, `error`, `duration_ms`) are automatically promoted
+- This enables easy filtering: `jq 'select(.project_id == "123")' logs.json`
+
 ## TypeScript/Next.js Code Style
+
+## Handling Proprietary Expertise
+
+- The public repo ships a **Factory Engine** only. Generic role prompts live in `src/scripts/defaults.json`.
+- To inject proprietary prompts or domain logic, create `data/private/expertise.json` (git-ignored) with a `roles` map. Matching role names override the defaults; new names are inserted.
+- Run `python -m src.scripts.seed_roles` (or `./deploy/start.sh` in Docker) to sync merged roles into ArangoDB. This lets you keep private expertise local while contributing to the shared engine.
 
 ### Type Safety
 
 **Use TypeScript interfaces matching Python Pydantic models:**
 
 ```typescript
-// types/pact.ts
+// types/knowledge.ts
 export interface GraphNode {
   id: string;
   label: string;
@@ -245,6 +293,77 @@ client = QdrantClient(
 
 ## Testing
 
+### Mock LLM Server
+
+**For UI/Integration tests without GPU resources:**
+
+Project Vyasa includes a mock LLM server that mimics the SGLang/OpenAI API. This allows you to run tests without requiring GPU resources or actual model servers.
+
+**Start the mock server:**
+```bash
+./scripts/run_mock_llm.sh
+# Or manually:
+python -m uvicorn src.mocks.server:app --host 0.0.0.0 --port 9000
+```
+
+**Use in tests:**
+Set environment variables to point to the mock server:
+```bash
+export WORKER_URL=http://localhost:9000
+export BRAIN_URL=http://localhost:9000
+export VISION_URL=http://localhost:9000
+```
+
+**Mock server behavior:**
+- **Cartographer scenario**: Detects "Cartographer" in system prompt, returns valid JSON with `triples` array
+- **Critic scenario**: Detects "Critic" in system prompt, returns `{"status": "pass", "critiques": []}`
+- **Default**: Returns generic mock response
+- **Vision endpoint**: Returns dummy vision extraction result
+
+**Example test setup:**
+```python
+import os
+os.environ["WORKER_URL"] = "http://localhost:9000"
+os.environ["BRAIN_URL"] = "http://localhost:9000"
+# Run your tests...
+```
+
+### Debug Prompt Logging
+
+**To persist full prompts and responses for debugging:**
+
+Set `DEBUG_PROMPTS=true` in your environment. This will write all LLM requests and responses to `logs/debug/req_{timestamp}_{uuid}.json`.
+
+**Enable debug logging:**
+```bash
+export DEBUG_PROMPTS=true
+# Or in .env:
+DEBUG_PROMPTS=true
+```
+
+**Debug log format:**
+```json
+{
+  "url": "http://cortex-worker:30001/v1/chat/completions",
+  "request": {
+    "payload": {
+      "model": "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
+      "messages": [...],
+      "temperature": 0.1
+    }
+  },
+  "response": {
+    "choices": [...],
+    "usage": {...}
+  },
+  "timestamp": "2024-01-15T10:30:00.123456"
+}
+```
+
+**Security:** Sensitive keys (api_key, authorization, password, etc.) are automatically redacted from debug logs.
+
+**Note:** Debug logs are written to `logs/debug/` which is gitignored. Always review logs before sharing.
+
 ### Unit Tests
 
 **Test individual functions with mocked dependencies:**
@@ -252,19 +371,19 @@ client = QdrantClient(
 ```python
 import pytest
 from unittest.mock import Mock, patch
-from src.ingestion.extractor import PACTExtractor
+from src.ingestion.extractor import KnowledgeExtractor
 
-def test_extract_pact_graph_success():
+def test_extract_knowledge_graph_success():
     """Test successful extraction."""
-    extractor = PACTExtractor(cortex_url="http://mock-cortex:30000")
+    extractor = KnowledgeExtractor(cortex_url="http://mock-cortex:30000")
     
     with patch("requests.post") as mock_post:
         mock_post.return_value.json.return_value = {
             "choices": [{"message": {"content": '{"entities": []}'}}]
         }
         
-        result = extractor.extract_pact_graph("Test text")
-        assert isinstance(result, PACTGraph)
+        result = extractor.extract_knowledge_graph("Test text")
+        assert isinstance(result, KnowledgeGraph)
 ```
 
 ### Integration Tests
@@ -358,4 +477,3 @@ url = os.getenv("CORTEX_URL", "http://vyasa-cortex:30000")
 - [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
 - [SGLang Documentation](https://sglang.readthedocs.io/)
 - [ArangoDB Python Driver](https://python-arango.readthedocs.io/)
-

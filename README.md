@@ -15,6 +15,21 @@ Traditional research workflows require manual extraction, validation, and synthe
 
 All running **locally** on your DGX—no cloud dependencies, no data leakage.
 
+## Native Vision (Core Philosophy)
+
+- **Factory, Not Chatbot**: We build artifacts (Graphs, Manuscripts), not conversations.
+- **Project-First**: Every action is downstream of a `project_id` (Thesis + RQs + Anti-Scope injected into prompts).
+- **Graph = System of Record**: If it is not persisted to ArangoDB, it did not happen.
+- **Governed Outputs**: Orchestrator guarantees schema contracts; no silent failures on DB writes.
+- **Block-Based**: Manuscripts are bound blocks (Text + ClaimIDs + CitationKeys), never raw strings.
+
+## The Four Kernels (Domains)
+
+- **Project Kernel (Intent)**: `ProjectConfig` (Thesis, RQs, Anti-Scope, Target Journal). No agent runs without it.
+- **Knowledge Kernel (Evidence)**: Ingestion + extraction of claims, tagging priority HIGH/LOW by project RQs; high recall, tag then rank.
+- **Manuscript Kernel (Production)**: Blocks and Patches; every block must bind to specific Claim IDs and Citation Keys. Humans accept/reject (redline review).
+- **Governance Kernel (Quality)**: Guards for drift, citation, evidence, contract. Roles/prompts are versioned in DB, not hardcoded.
+
 ## Architecture Overview
 
 Project Vyasa follows a **Committee of Experts Architecture** with functional naming:
@@ -53,10 +68,11 @@ Project Vyasa follows a **Committee of Experts Architecture** with functional na
    docker compose up -d
    ```
 
-3. **Seed Initial Roles**
+3. **Seed Initial Roles (idempotent)**
 
    ```bash
-   docker compose exec orchestrator python deploy/scripts/seed_roles.py
+   # If start.sh didn’t already seed:
+   docker compose exec orchestrator python -m src.scripts.seed_roles
    ```
 
 4. **Access Console**
@@ -85,6 +101,12 @@ Project Vyasa follows a **Committee of Experts Architecture** with functional na
 
 **Note**: All ports and GPU IDs are configurable via `deploy/.env` file.
 
+## DGX Spark Optimization (Grace Blackwell)
+
+- **FP4/MXFP4 Inference**: Cortex Brain/Worker use FP4/MXFP4 with `--mem-fraction-static` to fit unified memory; tune model paths via `deploy/.env`.
+- **CPU Pinning**: Compose pins ArangoDB/Orchestrator to efficiency cores and inference services to performance cores (`cpuset` in `deploy/docker-compose.yml`).
+- **KV Cache Guardrail**: `MAX_KV_CACHE_GB` (config) limits unified memory pressure when running concurrent model servers.
+
 ## Documentation
 
 - **[System Architecture](docs/architecture/system-map.md)**: C4 Container Diagram
@@ -107,7 +129,7 @@ project-vyasa/
 ├── src/
 │   ├── console/          # Next.js frontend
 │   ├── orchestrator/     # LangGraph supervisor
-│   ├── ingestion/        # PACT extractor
+│   ├── ingestion/        # Knowledge extractor
 │   ├── embedder/         # Sentence-Transformers service
 │   └── shared/           # Shared schemas and utilities
 ├── deploy/
@@ -122,9 +144,10 @@ project-vyasa/
 
 ## License
 
-[Your License Here]
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 ## Contributing
 
-See [Development Guide](docs/guides/development.md) for coding standards and contribution guidelines.
-
+We welcome contributions that align with the "Research Factory" philosophy. See the Development Guide for coding standards (Strict JSON, Pydantic-first, no "prompt and pray").

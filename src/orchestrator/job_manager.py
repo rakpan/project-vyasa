@@ -81,9 +81,11 @@ def update_job_status(
             job["error"] = error
         if status == JobStatus.RUNNING and job.get("started_at") is None:
             job["started_at"] = datetime.now(timezone.utc)
-        if status in (JobStatus.SUCCEEDED, JobStatus.FAILED):
+        if status in (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.FINALIZED):
             job["completed_at"] = datetime.now(timezone.utc)
             if status == JobStatus.SUCCEEDED:
+                job["progress"] = 1.0
+            if status == JobStatus.FINALIZED:
                 job["progress"] = 1.0
 
     update_job_record(

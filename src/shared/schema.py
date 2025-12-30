@@ -1,25 +1,25 @@
 """
-PACT Ontology Schema for Project Vyasa
+Knowledge Graph Schema for Project Vyasa
 
-Defines Pydantic models for the PACT (Vulnerability, Mechanism, Constraint, Outcome) ontology.
+Defines Pydantic models for the knowledge graph (Vulnerability, Mechanism, Constraint, Outcome entities).
 All entities and relations are type-safe and validated.
 """
 
 from enum import Enum
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict, Any
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 import re
 
 
 class RelationType(str, Enum):
-    """Valid relation types in the PACT ontology."""
+    """Valid relation types in the knowledge graph."""
     MITIGATES = "MITIGATES"
     ENABLES = "ENABLES"
     REQUIRES = "REQUIRES"
 
 
 class EntityType(str, Enum):
-    """Valid entity types in the PACT ontology."""
+    """Valid entity types in the knowledge graph."""
     VULNERABILITY = "Vulnerability"
     MECHANISM = "Mechanism"
     CONSTRAINT = "Constraint"
@@ -27,7 +27,7 @@ class EntityType(str, Enum):
 
 
 class Vulnerability(BaseModel):
-    """Vulnerability entity in the PACT ontology."""
+    """Vulnerability entity in the knowledge graph."""
     model_config = ConfigDict(
         populate_by_name=True,
         json_schema_extra={
@@ -50,7 +50,7 @@ class Vulnerability(BaseModel):
 
 
 class Mechanism(BaseModel):
-    """Mechanism entity in the PACT ontology."""
+    """Mechanism entity in the knowledge graph."""
     model_config = ConfigDict(
         populate_by_name=True,
         json_schema_extra={
@@ -71,7 +71,7 @@ class Mechanism(BaseModel):
 
 
 class Constraint(BaseModel):
-    """Constraint entity in the PACT ontology."""
+    """Constraint entity in the knowledge graph."""
     model_config = ConfigDict(
         populate_by_name=True,
         json_schema_extra={
@@ -92,7 +92,7 @@ class Constraint(BaseModel):
 
 
 class Outcome(BaseModel):
-    """Outcome entity in the PACT ontology."""
+    """Outcome entity in the knowledge graph."""
     model_config = ConfigDict(
         populate_by_name=True,
         json_schema_extra={
@@ -138,6 +138,11 @@ class GraphTriple(BaseModel):
     object_type: EntityType = Field(..., description="Type of the object entity")
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Confidence score (0.0 to 1.0)")
     source: Optional[str] = Field(None, description="Source document or reference")
+    project_id: str = Field(..., description="Project ID this triple belongs to")
+    doc_hash: str = Field(..., description="Source document hash (SHA256)")
+    source_pointer: "SourcePointer" = Field(..., description="Required pointer to source text/evidence")
+    is_expert_verified: bool = Field(default=False, description="Whether an expert has verified this triple")
+    expert_notes: Optional[str] = Field(default=None, description="Optional notes from expert review")
     
     @field_validator('predicate')
     @classmethod
@@ -162,15 +167,15 @@ class GraphTriple(BaseModel):
         return v
 
 
-class PACTGraph(BaseModel):
-    """Complete PACT graph extraction result."""
+class KnowledgeGraph(BaseModel):
+    """Complete knowledge graph extraction result."""
     vulnerabilities: List[Vulnerability] = Field(default_factory=list, description="List of vulnerabilities")
     mechanisms: List[Mechanism] = Field(default_factory=list, description="List of mechanisms")
     constraints: List[Constraint] = Field(default_factory=list, description="List of constraints")
     outcomes: List[Outcome] = Field(default_factory=list, description="List of outcomes")
     triples: List[GraphTriple] = Field(default_factory=list, description="List of graph triples")
     source: Optional[str] = Field(None, description="Source document identifier")
-    
+
     model_config = ConfigDict(
         populate_by_name=True,
         json_schema_extra={
@@ -185,6 +190,180 @@ class PACTGraph(BaseModel):
     )
 
 
+class SourcePointer(BaseModel):
+    """Pointer back to source text for evidence binding."""
+    doc_hash: str = Field(..., description="sha256 or similar content hash of the source document")
+    page: int = Field(..., ge=1, description="1-based page number")
+    bbox: List[float] = Field(..., min_length=4, max_length=4, description="Normalized [x1,y1,x2,y2] (0-1000 scale)")
+    snippet: str = Field(..., description="Exact text excerpt from the source")
+
+    @field_validator("bbox")
+    @classmethod
+    def validate_bbox(cls, v: List[float]) -> List[float]:
+        if len(v) != 4:
+            raise ValueError("bbox must have exactly 4 values [x1,y1,x2,y2]")
+        for coord in v:
+            if coord < 0 or coord > 1000:
+                raise ValueError("bbox coordinates must be normalized to 0-1000")
+        return v
+
+
+class Claim(BaseModel):
+    """Claim with evidence binding back to the source."""
+    text: str
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    source_pointer: SourcePointer
+    project_id: str = Field(..., description="Project ID for this claim")
+    doc_hash: str = Field(..., description="Source document hash")
+    is_expert_verified: bool = False
+
+
+class ProvenanceEntry(BaseModel):
+    """Entry in the provenance log tracking where knowledge came from."""
+    project_id: str = Field(..., description="Project ID that contributed this knowledge")
+    job_id: str = Field(..., description="Job ID that contributed this knowledge")
+    contributed_at: str = Field(..., description="ISO timestamp when this knowledge was contributed")
+    source_pointer: SourcePointer = Field(..., description="Source pointer from the original extraction")
+
+
+class CanonicalKnowledge(BaseModel):
+    """Canonical knowledge entry in the global repository.
+    
+    This represents expert-vetted, merged knowledge that has been synthesized
+    from multiple projects and jobs. Every entry tracks its provenance.
+    """
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "entity_id": "plc_security",
+                "entity_name": "Programmable Logic Controller Security",
+                "entity_type": "Vulnerability",
+                "description": "Security vulnerabilities in PLC systems",
+                "source_pointers": [
+                    {
+                        "doc_hash": "sha256:...",
+                        "page": 1,
+                        "bbox": [100, 200, 300, 400],
+                        "snippet": "PLC systems are vulnerable to..."
+                    }
+                ],
+                "provenance_log": [
+                    {
+                        "project_id": "proj-123",
+                        "job_id": "job-456",
+                        "contributed_at": "2024-01-15T10:30:00Z",
+                        "source_pointer": {...}
+                    }
+                ],
+                "conflict_flags": [],
+                "created_at": "2024-01-15T10:30:00Z",
+                "updated_at": "2024-01-15T10:30:00Z"
+            }
+        }
+    )
+    
+    id: Optional[str] = Field(None, alias="_id", description="ArangoDB document ID")
+    key: Optional[str] = Field(None, alias="_key", description="ArangoDB document key")
+    
+    # Entity/Relationship identification
+    entity_id: str = Field(..., description="Unique identifier for this entity/relationship")
+    entity_name: str = Field(..., description="Canonical name of the entity/relationship")
+    entity_type: EntityType = Field(..., description="Type of entity (Vulnerability, Mechanism, etc.)")
+    
+    # For relationships (triples)
+    subject: Optional[str] = Field(None, description="Subject entity (for relationships)")
+    predicate: Optional[RelationType] = Field(None, description="Predicate (for relationships)")
+    object: Optional[str] = Field(None, description="Object entity (for relationships)")
+    
+    # Content
+    description: Optional[str] = Field(None, description="Description or summary of the knowledge")
+    source_pointers: List[SourcePointer] = Field(default_factory=list, description="All source pointers from contributing projects")
+    
+    # Provenance tracking
+    provenance_log: List[ProvenanceEntry] = Field(default_factory=list, description="List of projects/jobs that contributed")
+    
+    # Conflict management
+    conflict_flags: List[str] = Field(default_factory=list, description="Flags for contradictions requiring systemic review")
+    
+    # Metadata
+    created_at: str = Field(..., description="ISO timestamp when first created")
+    updated_at: str = Field(..., description="ISO timestamp when last updated")
+    expert_notes: Optional[str] = Field(None, description="Optional expert review notes")
+
+
+class ManuscriptBlock(BaseModel):
+    """A block-level document section with traceability to claims and citations.
+    
+    Every block must bind to specific Claim_IDs and Citation_Keys for full traceability.
+    Blocks are versioned for auditability - each update creates a new version.
+    """
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "block_id": "intro_001",
+                "section_title": "Introduction",
+                "content": "# Introduction\n\nThis paper presents...",
+                "order_index": 0,
+                "claim_ids": ["claim_123", "claim_456"],
+                "citation_keys": ["smith2023", "jones2024"],
+                "project_id": "project-uuid",
+                "version": 1,
+            }
+        }
+    )
+    
+    id: Optional[str] = Field(None, alias="_id", description="ArangoDB document ID")
+    key: Optional[str] = Field(None, alias="_key", description="ArangoDB document key")
+    block_id: str = Field(..., description="Unique block identifier within project")
+    section_title: str = Field(..., description="Section title (e.g., 'Introduction', 'Methodology')")
+    content: str = Field(..., description="Block content in Markdown format")
+    order_index: int = Field(default=0, description="Order index for section sequencing")
+    claim_ids: List[str] = Field(default_factory=list, description="Linked triple/claim IDs from knowledge graph")
+    citation_keys: List[str] = Field(default_factory=list, description="BibTeX citation keys referenced in this block")
+    project_id: Optional[str] = Field(None, description="Project identifier this block belongs to")
+    version: int = Field(default=1, ge=1, description="Version number for auditability")
+    created_at: Optional[str] = Field(None, description="ISO timestamp when block was created")
+    updated_at: Optional[str] = Field(None, description="ISO timestamp when block was last updated")
+    is_expert_verified: bool = Field(default=False, description="Whether an expert has verified this block")
+    expert_notes: Optional[str] = Field(None, description="Optional notes from expert review")
+
+
+class PatchObject(BaseModel):
+    """Proposed edits for a manuscript block (redline review model).
+    
+    Patches are proposed by AI agents and must be accepted/rejected by humans.
+    This enables block-level replace/insert/delete operations with full audit trail.
+    """
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "original_block_id": "intro_001",
+                "proposed_content": "# Introduction\n\n[Revised content...]",
+                "rationale": "Clarify the research question based on expert feedback",
+                "risk_flag": "Low",
+                "status": "Pending",
+                "project_id": "project-uuid",
+            }
+        }
+    )
+    
+    id: Optional[str] = Field(None, alias="_id", description="ArangoDB document ID")
+    key: Optional[str] = Field(None, alias="_key", description="ArangoDB document key")
+    original_block_id: str = Field(..., description="ID of the block being edited")
+    proposed_content: str = Field(..., description="Proposed new content (Markdown)")
+    rationale: str = Field(..., description="Reason for this edit proposal")
+    risk_flag: Literal["High", "Med", "Low"] = Field(default="Med", description="Risk assessment level")
+    status: Literal["Pending", "Accepted", "Rejected"] = Field(default="Pending", description="Review status")
+    project_id: Optional[str] = Field(None, description="Project identifier")
+    created_at: Optional[str] = Field(None, description="ISO timestamp when patch was created")
+    updated_at: Optional[str] = Field(None, description="ISO timestamp when patch was last updated")
+    reviewed_by: Optional[str] = Field(None, description="User ID who reviewed this patch")
+    review_notes: Optional[str] = Field(None, description="Optional review comments")
+
+
 class RoleProfile(BaseModel):
     """Dynamic role configuration stored in the knowledge graph."""
     model_config = ConfigDict(
@@ -193,7 +372,7 @@ class RoleProfile(BaseModel):
             "example": {
                 "name": "The Cartographer",
                 "description": "Extracts structured entities and relations from text",
-                "system_prompt": "You are a PACT ontology extractor...",
+                "system_prompt": "You are a knowledge graph extractor...",
                 "version": 1,
                 "allowed_tools": ["extract", "validate"],
                 "focus_entities": ["Vulnerability", "Mechanism", "Constraint", "Outcome"],

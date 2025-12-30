@@ -176,6 +176,7 @@ docker-compose.override.yml
 # ============================================
 # Generic Database data
 data/
+data/private/
 *.db
 *.sqlite
 *.sqlite3
@@ -199,6 +200,14 @@ qdrant_data/
 qdrant_storage/
 snapshots/
 
+# Project Vyasa Private Data
+*.expert.json
+logs/debug/
+
+# Project Exports
+exports/research/
+exports/
+
 # Ollama & SGLang
 ollama_data/
 .ollama/
@@ -210,6 +219,7 @@ models--*
 # Logs
 # ============================================
 logs/
+logs/debug/
 *.log
 npm-debug.log*
 yarn-debug.log*

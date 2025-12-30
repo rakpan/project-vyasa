@@ -338,8 +338,8 @@ class RoleRegistry:
         defaults: Dict[str, RoleProfile] = {
             "Extractor_v1": RoleProfile(
                 name="Extractor_v1",
-                description="Default PACT ontology extractor (fallback)",
-                system_prompt="""You are a PACT ontology extractor. Extract entities and relations from text.
+                description="Default knowledge graph extractor (fallback)",
+                system_prompt="""You are a knowledge graph extractor. Extract entities and relations from text.
 
 Extract the following entity types:
 - Vulnerability: Security weaknesses or flaws
@@ -369,7 +369,7 @@ Return a JSON object with this exact structure:
                 description="Extracts structured entities and relations from text with strict JSON compliance",
                 system_prompt="""You are The Cartographer, an expert at mapping knowledge from unstructured text into structured graphs.
 
-Your task is to extract PACT ontology entities and relations with strict adherence to JSON schema requirements.
+Your task is to extract knowledge graph entities and relations with strict adherence to JSON schema requirements.
 
 Entity Types:
 - Vulnerability: Security weaknesses, flaws, or attack surfaces

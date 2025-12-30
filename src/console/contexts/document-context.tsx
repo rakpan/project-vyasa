@@ -416,10 +416,11 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
           requestBody.llmProvider = "ollama";
           requestBody.ollamaModel = model.model || "llama3.1:8b";
           console.log(`🦙 Using Ollama model: ${requestBody.ollamaModel}`);
-        } else if (model.id === "nvidia-nemotron" || model.id === "nvidia-nemotron-nano") {
-          requestBody.llmProvider = "nvidia";
-          requestBody.nvidiaModel = model.model; // Pass the actual model name
-          console.log(`🖥️ Using NVIDIA model: ${model.model}`);
+        } else if (model.id === "worker-qwen" || model.id === "brain-llama" || model.id === "vision-qwen") {
+          // Project Vyasa Committee of Experts models
+          requestBody.llmProvider = model.provider || "worker";
+          requestBody.model = model.model;
+          console.log(`🖥️ Using ${model.name}: ${model.model}`);
         }
       } catch (e) {
         // Ignore parsing errors, will use default

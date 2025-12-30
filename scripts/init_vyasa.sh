@@ -1,49 +1,54 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 # ==========================================
 # PROJECT VYASA - INITIALIZATION SCRIPT
 # ==========================================
-# This script sets up the directory structure and 
-# downloads the necessary NVIDIA playbooks for the fusion architecture.
+# Sets up local Python environment and seeds core roles.
+# Requires Python 3.11+ and Docker stack running (ArangoDB available).
 
-PROJECT_NAME="project-vyasa"
-NVIDIA_REPO_URL="https://github.com/NVIDIA/dgx-spark-playbooks.git"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REQ_FILE="$PROJECT_ROOT/requirements.txt"
+VENV_DIR="$PROJECT_ROOT/.venv"
 
-echo "--> Initializing $PROJECT_NAME..."
+echo "--> Initializing Project Vyasa environment at $PROJECT_ROOT"
 
-# 1. Create Directory Structure
-echo "--> Creating directory structure..."
-mkdir -p $PROJECT_NAME/{deploy,src/ingestion,src/orchestrator,src/shared,notebooks,playbooks_ref}
-cd $PROJECT_NAME
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "[ERROR] python3 not found. Install Python 3.11+ first." >&2
+  exit 1
+fi
 
-# 2. Fetch NVIDIA Playbooks (Reference Modules)
-echo "--> Cloning NVIDIA DGX Spark Playbooks..."
-# We clone to a temp directory to keep the workspace clean
-git clone --depth 1 $NVIDIA_REPO_URL _temp_repo
+python3 - <<'PY'
+import sys
+import platform
+major, minor = sys.version_info[:2]
+if major < 3 or (major == 3 and minor < 11):
+    print(f"[ERROR] Python 3.11+ required, found {platform.python_version()}", file=sys.stderr)
+    sys.exit(1)
+PY
 
-echo "--> Extracting relevant modules..."
-# Copy only the playbooks we need for the Fusion architecture
-# Note: Path structure based on standard NVIDIA repo layout
-cp -r _temp_repo/nvidia/txt2kg playbooks_ref/txt2kg 2>/dev/null || echo "Warning: txt2kg not found"
-cp -r _temp_repo/nvidia/ollama playbooks_ref/ollama 2>/dev/null || echo "Warning: ollama not found"
-cp -r _temp_repo/nvidia/build-and-deploy-a-multi-agent-chatbot playbooks_ref/multi-agent 2>/dev/null || echo "Warning: multi-agent not found"
-cp -r _temp_repo/nvidia/sglang-inference-server playbooks_ref/sglang 2>/dev/null || echo "Warning: sglang not found"
+echo "--> Creating virtual environment ($VENV_DIR)..."
+python3 -m venv "$VENV_DIR"
+source "$VENV_DIR/bin/activate"
 
-# Clean up
-rm -rf _temp_repo
-echo "✓ Modules extracted to ./playbooks_ref/"
+echo "--> Installing Python dependencies..."
+pip install --upgrade pip
+pip install -r "$REQ_FILE"
 
+echo "--> Seeding roles into ArangoDB (requires stack running)..."
+if python -m src.scripts.seed_roles; then
+  echo "✓ Seeded roles successfully."
+else
+  echo "[WARN] Seeding failed. Ensure ArangoDB is running via deploy/start.sh, then rerun: source .venv/bin/activate && python -m src.scripts.seed_roles" >&2
+fi
 
 echo ""
 echo "=========================================="
 echo "PROJECT VYASA SETUP COMPLETE"
 echo "=========================================="
-echo "Location: $(pwd)"
-echo ""
-echo "Next Steps:"
-echo "1. cd $PROJECT_NAME"
-echo "2. make up            # Start the fusion stack"
-echo "3. make logs          # Watch the supervisor load the model"
-echo "4. open src/          # Start coding your orchestrator logic"
-echo ""
+echo "Virtualenv: $VENV_DIR"
+echo "Next steps:"
+echo "1) source .venv/bin/activate"
+echo "2) ./deploy/start.sh (to start stack)"
+echo "3) pytest (to validate)"

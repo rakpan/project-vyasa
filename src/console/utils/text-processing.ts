@@ -21,7 +21,7 @@
 
 import type { Triple } from '@/types/graph'
 
-const CHUNK_SIZE = 20000 // Optimized for Gemma3:27b on DGX Spark
+const CHUNK_SIZE = 20000 // Optimized for knowledge graph extraction on DGX
 const OVERLAP_SIZE = 1000 // For context preservation between chunks
 
 /**
