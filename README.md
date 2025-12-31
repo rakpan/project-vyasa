@@ -1,27 +1,42 @@
-# Project Vyasa: The AI Research Factory
+# Project Vyasa — The AI Research Factory
 
-> **A local-first, DGX-powered knowledge graph engine for research automation.**
+> **A local-first framework for executing evidence-bound research workflows.**
 
-Project Vyasa is a local-first knowledge graph engine that transforms unstructured research documents into structured, verifiable artifacts. Built on NVIDIA DGX infrastructure, it leverages a Committee of Experts architecture to automate the classification and synthesis of complex research corpora.
+Project Vyasa is a local-first **research execution framework** that operationalizes how evidence is extracted, validated, governed, and composed into research artifacts.
+
+Rather than generating free-form text, Vyasa enforces a factory model where:
+- claims must bind to evidence,
+- citations must resolve,
+- manuscripts are assembled from governed blocks,
+- and humans remain the final authority.
+
+Vyasa is optimized for DGX-class systems to support multi-model reasoning and high-throughput local inference. It is fundamentally a **discipline for research**, not a chat interface and not an ETL pipeline.
 
 ## The Name
 
-The project is named after the legendary sage Veda Vyasa, whose name literally means "Compiler" or "Arranger" in Sanskrit.
+The project is named after the legendary sage **Veda Vyasa**, whose name literally means *Compiler* or *Arranger* in Sanskrit.
 
-- **The Original Information Architect**: Vyasa is credited with taking the single, primordial body of Vedic knowledge and classifying it into four distinct branches—Rig, Yajur, Sama, and Atharva—to make it accessible to humanity.
-- **The Chronicler**: Just as the sage compiled the Mahabharata and the Puranas to bridge abstract philosophy with human narrative, this project bridges raw PDF data with actionable research manuscripts.
-- **Philosophy of Arrangement**: We follow his "Veda-Nishtha" (loyalty to knowledge) by treating the Graph as the System of Record—acting not as an "inventor" of facts, but as an Arranger of Evidence.
+- **The Original Information Architect**  
+   Vyasa is credited with taking a single, primordial body of knowledge and classifying it into distinct branches to make it usable at scale.
+
+- **The Chronicler**  
+   By compiling the *Mahabharata* and the *Puranas*, Vyasa bridged abstract philosophy with human narrative. Project Vyasa bridges raw documents with evidence-bound research manuscripts.
+
+- **Philosophy of Arrangement**  
+   Vyasa did not invent knowledge — he structured it.  Likewise, this system does not invent facts. It **arranges evidence**.
+
+The knowledge graph is the system of record.  If it is not persisted, it did not happen.
 
 ## The Why
 
-Traditional research workflows require manual extraction, validation, and synthesis of information from papers, reports, and documents. Project Vyasa automates this process:
+Modern research workflows fail in predictable ways:
 
-- **Extract**: Transform unstructured text into structured entities and relations
-- **Validate**: Identify logic gaps, missing evidence, and contradictions
-- **Synthesize**: Generate summaries and insights from the knowledge graph
-- **Query**: Semantic search across your research corpus
+- Evidence is extracted implicitly or manually.
+- AI tools generate fluent text without enforceable provenance.
+- Citations drift, logic gaps go unnoticed, and validation happens late.
+- Reproducibility depends on human memory rather than systems.
 
-All running **locally** on your DGX—no cloud dependencies, no data leakage.
+Project Vyasa addresses this by treating research as an **engineered pipeline**, not a writing task.All running **locally**, optimized for DGX Spark. No data leakage.
 
 ## Architecture Docs
 - Quickstart and diagrams: [docs/architecture/00-overview.md](docs/architecture/00-overview.md)
