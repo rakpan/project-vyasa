@@ -99,6 +99,9 @@ type ThreeLinkObject = {
   [key: string]: any
 }
 
+// Brand color constant (matches CSS variable --brand-nvidia: 81 100% 36% = #76b900)
+const BRAND_COLOR = '#76b900';
+
 // Add the fuzzyCompare function before the getLinkId function
 const fuzzyCompare = (str1: string, str2: string): boolean => {
   if (!str1 || !str2) return false;
@@ -263,7 +266,7 @@ const assignClusterColors = (nodes: any[], enableColors: boolean, useSemanticClu
         if (clusterId !== undefined && clusterIdToIndex[clusterId] !== undefined) {
           return clusterColors[clusterIdToIndex[clusterId]];
         }
-        return node.color || '#76b900';
+        return node.color || BRAND_COLOR;
       })()
     }));
   }
@@ -1187,7 +1190,7 @@ export function ForceGraphWrapper({
       const coloredNodes = assignClusterColors(nodesToUse, true, useSemanticClusters);
       graphRef.current.nodeColor((node: any) => {
         const coloredNode = coloredNodes.find((n: any) => getNodeId(n) === getNodeId(node));
-        return coloredNode?.color || '#76b900';
+        return coloredNode?.color || BRAND_COLOR;
       });
       graphRef.current.linkColor(() => '#ffffff30');
       graphRef.current.linkWidth(() => 1);
@@ -1306,7 +1309,7 @@ export function ForceGraphWrapper({
           const coloredNodes = assignClusterColors(nodesToUse, true, useSemanticClusters);
           graphRef.current.nodeColor((node: any) => {
             const coloredNode = coloredNodes.find((n: any) => getNodeId(n) === getNodeId(node));
-            return coloredNode?.color || '#76b900';
+            return coloredNode?.color || BRAND_COLOR;
           });
         } else {
           // Reset to default colors
@@ -1315,7 +1318,7 @@ export function ForceGraphWrapper({
             switch (group) {
               case 'document': return '#f8f8f2';
               case 'important': return '#8be9fd';
-              default: return '#76b900';
+              default: return BRAND_COLOR;
             }
           });
         }
@@ -1384,7 +1387,7 @@ export function ForceGraphWrapper({
                 return originalNode.color;
               }
             }
-            return '#76b900'; // Default: green
+            return BRAND_COLOR; // Default: green
           })
           .linkWidth((link: any) => {
             const sourceId = getNodeId(link.source);
@@ -1642,7 +1645,7 @@ export function ForceGraphWrapper({
                     const coloredNodes = assignClusterColors(clusteredData.nodes, true, true); // Use semantic clusters
                     graphRef.current.nodeColor((node: any) => {
                       const coloredNode = coloredNodes.find(n => getNodeId(n) === getNodeId(node));
-                      return coloredNode?.color || node.color || '#76b900';
+                      return coloredNode?.color || node.color || BRAND_COLOR;
                     });
                     graphRef.current.refresh();
                   }
@@ -2619,7 +2622,7 @@ export function ForceGraphWrapper({
               const coloredNodes = assignClusterColors(nodesToUse, true, useSemanticClusters);
               graphRef.current.nodeColor((node: any) => {
                 const coloredNode = coloredNodes.find((n: any) => getNodeId(n) === getNodeId(node));
-                return coloredNode?.color || '#76b900';
+                return coloredNode?.color || BRAND_COLOR;
               });
             } else {
               // Reset to default colors
@@ -2628,7 +2631,7 @@ export function ForceGraphWrapper({
                 switch (group) {
                   case 'document': return '#f8f8f2';
                   case 'important': return '#8be9fd';
-                  default: return '#76b900';
+                  default: return BRAND_COLOR;
                 }
               });
             }
@@ -2745,7 +2748,7 @@ export function ForceGraphWrapper({
   };
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-gray-900">
+    <div className="relative w-full h-full overflow-hidden bg-background">
       {/* Graph container */}
       <div 
         ref={containerRef} 
@@ -2757,7 +2760,7 @@ export function ForceGraphWrapper({
         <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-20">
           <div className="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12 mb-4"></div>
           <p className="text-white mb-2">{loadingStep}</p>
-          <div className="w-64 bg-gray-700 rounded-full h-2.5">
+          <div className="w-64 bg-secondary rounded-full h-2.5">
             <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${loadingProgress}%` }}></div>
           </div>
         </div>
@@ -2803,7 +2806,7 @@ export function ForceGraphWrapper({
         {isClusteringAvailable && (
           <button
             onClick={toggleClustering}
-            className={`px-3 py-1.5 rounded text-white text-xs shadow ${isClusteringEnabled ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-700/80 hover:bg-gray-600/90'}`}
+            className={`px-3 py-1.5 rounded text-white text-xs shadow ${isClusteringEnabled ? 'bg-blue-600 hover:bg-blue-500' : 'bg-secondary/80 hover:bg-secondary/90'}`}
           >
             {isClusteringEnabled ? 'Disable GPU Clustering' : 'Enable GPU Clustering'}
           </button>
@@ -2823,7 +2826,7 @@ export function ForceGraphWrapper({
         {isClusteringEnabled && (
             <button 
               onClick={() => setDebugInfo(prev => prev.includes('cluster-viz') ? '' : 'cluster-viz')}
-              className={`px-3 py-1.5 rounded text-white text-xs shadow ${debugInfo.includes('cluster-viz') ? 'bg-purple-600 hover:bg-purple-500' : 'bg-gray-700/80 hover:bg-gray-600/90'}`}
+              className={`px-3 py-1.5 rounded text-white text-xs shadow ${debugInfo.includes('cluster-viz') ? 'bg-purple-600 hover:bg-purple-500' : 'bg-secondary/80 hover:bg-secondary/90'}`}
             >
               Toggle Cluster Viz
             </button>
@@ -2835,7 +2838,7 @@ export function ForceGraphWrapper({
       </div>
 
       {/* Top-Right Info Panel */}
-      <div className="absolute top-4 right-24 z-10 bg-gray-800/80 p-3 rounded text-xs text-gray-300 shadow w-48">
+      <div className="absolute top-4 right-24 z-10 bg-card/80 p-3 rounded text-xs text-muted-foreground shadow w-48">
         <p><span className="font-semibold text-white">Mode:</span> {interactionMode}</p>
         <ul className="list-disc list-inside mt-1 space-y-0.5">
           <li>Drag to rotate view</li>
@@ -2851,7 +2854,7 @@ export function ForceGraphWrapper({
 
       {/* Selected Node Panel */}
       {selectedNode && (
-        <div className="absolute top-1/2 left-4 -translate-y-1/2 z-10 bg-gray-800/90 p-4 rounded-lg shadow-lg max-w-md text-sm text-gray-200 w-1/3">
+        <div className="absolute top-1/2 left-4 -translate-y-1/2 z-10 bg-card/90 p-4 rounded-lg shadow-lg max-w-md text-sm text-card-foreground w-1/3">
           <div className="flex justify-between items-center mb-3">
             <h4 className="font-bold text-base text-white break-all">Selected: {selectedNode.name || selectedNode.id}</h4>
             <button onClick={clearSelection} className="text-gray-400 hover:text-white">
@@ -2864,7 +2867,7 @@ export function ForceGraphWrapper({
                 <p className="font-semibold mb-1 text-gray-300">Connections ({nodeConnections.length}):</p>
                 <ul className="space-y-1">
                   {nodeConnections.map((conn, index) => (
-                    <li key={index} className="flex items-center justify-between bg-gray-700/50 px-2 py-1 rounded">
+                    <li key={index} className="flex items-center justify-between bg-secondary/50 px-2 py-1 rounded">
                       <span className="italic mr-1">{conn.type === 'outgoing' ? '→' : '←'} {conn.label || 'related'}</span>
                       <button 
                         onClick={() => focusOnNode(conn.type === 'outgoing' ? conn.target : conn.source)}

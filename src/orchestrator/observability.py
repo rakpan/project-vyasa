@@ -19,12 +19,25 @@ from ..shared.logger import get_logger
 
 logger = get_logger("orchestrator", __name__)
 
+# Prefer nvidia-ml-py; fall back to pynvml for compatibility
 try:
-    import pynvml  # type: ignore
+    import nvidia_smi as pynvml  # type: ignore
+except Exception:  # noqa: BLE001
+    try:
+        import warnings
+        warnings.filterwarnings("ignore", category=FutureWarning, module="pynvml")
+        import pynvml  # type: ignore
+    except Exception:  # pragma: no cover
+        pynvml = None
 
-    pynvml.nvmlInit()
-    _nvml_available = True
-except Exception:  # pragma: no cover
+if pynvml:
+    try:
+        pynvml.nvmlInit()
+        _nvml_available = True
+    except Exception:  # pragma: no cover
+        _nvml_available = False
+        logger.warning("pynvml initialization failed; GPU stats will be omitted")
+else:  # pragma: no cover
     _nvml_available = False
     logger.warning("pynvml not available; GPU stats will be omitted")
 

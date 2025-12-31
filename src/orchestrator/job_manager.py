@@ -13,19 +13,34 @@ from .state import JobStatus, JobInfo, _job_registry, _registry_lock, _job_semap
 from ..shared.logger import get_logger
 from .job_store import create_job_record, update_job_record, get_job_record, set_job_result_record
 from .normalize import normalize_extracted_json
+from ..shared.utils import get_utc_now
 
 logger = get_logger("orchestrator", __name__)
 
 
-def create_job(initial_state: Dict, idempotency_key: Optional[str] = None) -> str:
+def create_job(
+    initial_state: Dict,
+    idempotency_key: Optional[str] = None,
+    parent_job_id: Optional[str] = None,
+    job_version: int = 1,
+    reprocess_reason: Optional[str] = None,
+    applied_reference_ids: Optional[list] = None,
+) -> str:
     """Create a new job and return its ID (persisted)."""
-    job_id = create_job_record(initial_state, idempotency_key=idempotency_key)
+    job_id = create_job_record(
+        initial_state,
+        idempotency_key=idempotency_key,
+        parent_job_id=parent_job_id,
+        job_version=job_version,
+        reprocess_reason=reprocess_reason,
+        applied_reference_ids=applied_reference_ids,
+    )
 
     with _registry_lock:
         _job_registry[job_id] = JobInfo(
             job_id=job_id,
             status=JobStatus.QUEUED,
-            created_at=datetime.now(timezone.utc),
+            created_at=get_utc_now(),
             started_at=None,
             completed_at=None,
             current_step=None,
@@ -39,10 +54,16 @@ def create_job(initial_state: Dict, idempotency_key: Optional[str] = None) -> st
 
 
 def get_job(job_id: str) -> Optional[JobInfo]:
-    """Get job information by ID."""
+    """Get job information by ID.
+    
+    Note: This returns JobInfo which is a subset of full job data.
+    For full job metadata (parent_job_id, job_version, etc.), use get_job_record().
+    """
     record = get_job_record(job_id) or {}
     with _registry_lock:
         mem_job = _job_registry.get(job_id)
+    
+    # Prefer record over memory if both exist
     if record:
         # Normalize record to JobInfo shape
         return JobInfo(
@@ -70,7 +91,7 @@ def update_job_status(
     """Update job status and metadata."""
     with _registry_lock:
         if job_id not in _job_registry:
-            _job_registry[job_id] = JobInfo(job_id=job_id, status=status, created_at=datetime.now(timezone.utc))
+            _job_registry[job_id] = JobInfo(job_id=job_id, status=status, created_at=get_utc_now())
         job = _job_registry[job_id]
         job["status"] = status
         if current_step is not None:
@@ -80,9 +101,9 @@ def update_job_status(
         if error is not None:
             job["error"] = error
         if status == JobStatus.RUNNING and job.get("started_at") is None:
-            job["started_at"] = datetime.now(timezone.utc)
+            job["started_at"] = get_utc_now()
         if status in (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.FINALIZED):
-            job["completed_at"] = datetime.now(timezone.utc)
+            job["completed_at"] = get_utc_now()
             if status == JobStatus.SUCCEEDED:
                 job["progress"] = 1.0
             if status == JobStatus.FINALIZED:

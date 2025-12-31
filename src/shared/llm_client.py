@@ -7,15 +7,22 @@ with optional debug logging when DEBUG_PROMPTS=true.
 
 import json
 import os
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Tuple
+
 import requests
+from requests import Timeout as RequestsTimeout
 
 from .logger import get_logger
+from ..orchestrator.telemetry import extract_usage_from_response  # type: ignore
+from .utils import get_utc_now
+from .config import TIMEOUT_MATRIX
 
 logger = get_logger("llm_client", __name__)
+_telemetry_emitter = None
 
 # Sensitive keys to redact from debug logs
 SENSITIVE_KEYS = {
@@ -99,6 +106,19 @@ def _write_debug_log(
         logger.warning(f"Failed to write debug log: {e}")
 
 
+def _get_telemetry_emitter():
+    """Lazy-load telemetry emitter to avoid import cycles."""
+    global _telemetry_emitter
+    if _telemetry_emitter is None:
+        try:
+            from ..orchestrator.telemetry import TelemetryEmitter  # type: ignore
+
+            _telemetry_emitter = TelemetryEmitter()
+        except Exception:
+            _telemetry_emitter = None
+    return _telemetry_emitter
+
+
 def call_model(
     url: str,
     payload: Dict[str, Any],
@@ -140,6 +160,7 @@ def call_model(
     
     # Make the HTTP request
     try:
+        start = datetime.now()
         if files:
             # Multipart/form-data request (for vision endpoints)
             response = requests.post(
@@ -160,10 +181,31 @@ def call_model(
         
         response.raise_for_status()
         response_data = response.json()
+        duration_ms = (datetime.now() - start).total_seconds() * 1000
         
         # Append response to debug log
         _write_debug_log(url, request_data, response_data)
-        
+        emitter = _get_telemetry_emitter()
+        if emitter:
+            emitter.emit_event(
+                "llm_call_completed",
+                {
+                    "job_id": payload.get("job_id"),
+                    "project_id": payload.get("project_id"),
+                    "node_name": payload.get("node") or payload.get("task") or "llm_client",
+                    "timestamp": get_utc_now().isoformat(),
+                    "duration_ms": duration_ms,
+                    "metadata": {
+                        "usage": extract_usage_from_response(response_data) or {},
+                        "url": url,
+                        "model": payload.get("model"),
+                        "path": "call_model",
+                        "success": True,
+                        "tokens": extract_usage_from_response(response_data) or {},
+                    },
+                },
+            )
+
         return response_data
         
     except requests.exceptions.RequestException as e:
@@ -185,3 +227,184 @@ def call_model(
         )
         raise
 
+
+def _normalize_tools(allowed_tools: Optional[list]) -> list:
+    """Normalize tools into OpenAI-compatible objects."""
+    if not allowed_tools:
+        return []
+    tools: list = []
+    for tool in allowed_tools:
+        if isinstance(tool, dict):
+            tools.append(tool)
+        elif isinstance(tool, str):
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool,
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            )
+    return tools
+
+
+def chat(
+    *,
+    primary_url: str,
+    model: str,
+    messages: list,
+    request_params: Optional[Dict[str, Any]] = None,
+    state: Optional[Dict[str, Any]] = None,
+    node_name: str = "llm_node",
+    expert_name: str = "Worker",
+    fallback_url: Optional[str] = None,
+    fallback_model: Optional[str] = None,
+    fallback_expert_name: str = "Brain",
+    timeout: int = 60,
+    max_retries: int = 1,
+    allowed_tools: Optional[list] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Standard chat interface with retry + fallback and telemetry.
+
+    Returns:
+        (response_json, meta) where meta includes duration_ms, usage, expert_name, model_id, url_base, path.
+    """
+    emitter = _get_telemetry_emitter()
+    tools = _normalize_tools(allowed_tools)
+    payload_base = {"messages": messages, "model": model}
+    if tools:
+        payload_base["tools"] = tools
+    if request_params:
+        payload_base.update(request_params)
+
+    attempts = [("primary", primary_url, model, expert_name)]
+    if fallback_url:
+        attempts.append(("fallback", fallback_url, fallback_model or model, fallback_expert_name))
+
+    last_error: Optional[Exception] = None
+
+    for path, url_base, model_id, exp_name in attempts:
+        for attempt in range(1, max_retries + 2):  # initial try + retries
+            start = time.monotonic()
+            try:
+                resp = requests.post(
+                    f"{url_base.rstrip('/')}/v1/chat/completions",
+                    json=payload_base if path == "primary" else {**payload_base, "model": model_id},
+                    timeout=TIMEOUT_MATRIX.get("SGLANG_CALL", timeout),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                duration_ms = (time.monotonic() - start) * 1000
+                usage = extract_usage_from_response(data) or {}
+
+                if emitter:
+                    emitter.emit_event(
+                        "llm_call_completed",
+                        {
+                            "job_id": state.get("job_id") if isinstance(state, dict) else None,
+                            "project_id": state.get("project_id") if isinstance(state, dict) else None,
+                            "node_name": node_name,
+                            "timestamp": get_utc_now().isoformat(),
+                            "duration_ms": duration_ms,
+                            "metadata": {
+                                "expert_name": exp_name,
+                                "model_id": model_id,
+                                "url": f"{url_base.rstrip('/')}/v1/chat/completions",
+                                "path": path,
+                                "attempt": attempt,
+                                "success": True,
+                                "tokens": usage,
+                                "usage": usage,
+                            },
+                        },
+                    )
+
+                # Emit explicit fallback signal when path is fallback and primary existed
+                if path == "fallback" and attempts[0][1] != url_base and emitter:
+                    emitter.emit_event(
+                        "expert_fallback",
+                        {
+                            "job_id": state.get("job_id") if isinstance(state, dict) else None,
+                            "project_id": state.get("project_id") if isinstance(state, dict) else None,
+                            "node_name": node_name,
+                            "timestamp": get_utc_now().isoformat(),
+                            "duration_ms": duration_ms,
+                            "metadata": {
+                                "primary": attempts[0][3],
+                                "fallback": exp_name,
+                                "reason": str(last_error) if last_error else "primary failure",
+                            },
+                        },
+                    )
+
+                return data, {
+                    "duration_ms": duration_ms,
+                    "usage": usage,
+                    "expert_name": exp_name,
+                    "model_id": model_id,
+                    "url_base": url_base.rstrip("/"),
+                    "path": path,
+                    "attempt": attempt,
+                }
+            except RequestsTimeout as exc:
+                duration_ms = (time.monotonic() - start) * 1000
+                if emitter:
+                    emitter.emit_event(
+                        "llm_call_completed",
+                        {
+                            "job_id": state.get("job_id") if isinstance(state, dict) else None,
+                            "project_id": state.get("project_id") if isinstance(state, dict) else None,
+                            "node_name": node_name,
+                            "timestamp": get_utc_now().isoformat(),
+                            "duration_ms": duration_ms,
+                            "metadata": {
+                                "expert_name": exp_name,
+                                "expert_type": exp_name,
+                                "model_id": model_id,
+                                "url": f"{url_base.rstrip('/')}/v1/chat/completions",
+                                "path": path,
+                                "attempt": attempt,
+                                "success": False,
+                                "error": "TIMEOUT_EXCEEDED",
+                                "error_code": "TIMEOUT_EXCEEDED",
+                            },
+                        },
+                    )
+                if attempt > max_retries:
+                    last_error = exc
+                    break
+                time.sleep(0.5)
+                continue
+            except requests.RequestException as exc:  # noqa: PERF203
+                duration_ms = (time.monotonic() - start) * 1000
+                last_error = exc
+                if emitter:
+                    emitter.emit_event(
+                        "llm_call_completed",
+                        {
+                            "job_id": state.get("job_id") if isinstance(state, dict) else None,
+                            "project_id": state.get("project_id") if isinstance(state, dict) else None,
+                            "node_name": node_name,
+                            "timestamp": get_utc_now().isoformat(),
+                            "duration_ms": duration_ms,
+                            "metadata": {
+                                "expert_name": exp_name,
+                                "model_id": model_id,
+                                "url": f"{url_base.rstrip('/')}/v1/chat/completions",
+                                "path": path,
+                                "attempt": attempt,
+                                "success": False,
+                                "error": str(exc),
+                            },
+                        },
+                    )
+                if attempt > max_retries:
+                    break  # move to fallback or raise
+                time.sleep(0.5)
+
+    # If all attempts exhausted, raise last error
+    if last_error:
+        raise last_error
+    raise RuntimeError("LLM chat failed without an exception")

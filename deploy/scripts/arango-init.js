@@ -56,6 +56,11 @@ try {
       description: 'Document metadata collection'
     },
     {
+      name: 'projects',
+      type: 'document',
+      description: 'Project configurations (Thesis, RQs, Anti-Scope, Seed Corpus)'
+    },
+    {
       name: 'manuscript_blocks',
       type: 'document',
       description: 'Manuscript blocks with version history and citation binding'
@@ -74,6 +79,16 @@ try {
       name: 'canonical_knowledge',
       type: 'document',
       description: 'Global repository of expert-vetted, merged knowledge with provenance tracking'
+    },
+    {
+      name: 'node_aliases',
+      type: 'document',
+      description: 'Alias relationships for merged graph nodes (used by /extractions/merge endpoint)'
+    },
+    {
+      name: 'pdf_text_cache',
+      type: 'document',
+      description: 'Cached PDF page text layers for evidence verification (keyed by doc_hash and page)'
     }
   ];
 
@@ -175,6 +190,100 @@ try {
         if (!e.message.includes('already exists')) {
           console.warn(`Warning creating index on canonical_knowledge.${idx.fields.join(',')}: ${e.message}`);
         }
+      }
+    }
+  }
+
+  // Create indexes for node_aliases collection
+  const aliasesCollection = db._collection('node_aliases');
+  if (aliasesCollection) {
+    try {
+      aliasesCollection.ensureIndex({
+        type: 'persistent',
+        fields: ['source_node_id'],
+        unique: false
+      });
+      console.log('✅ Index created on node_aliases.source_node_id');
+    } catch (e) {
+      if (!e.message.includes('already exists')) {
+        console.warn(`Warning creating index on node_aliases.source_node_id: ${e.message}`);
+      }
+    }
+
+    try {
+      aliasesCollection.ensureIndex({
+        type: 'persistent',
+        fields: ['target_node_id'],
+        unique: false
+      });
+      console.log('✅ Index created on node_aliases.target_node_id');
+    } catch (e) {
+      if (!e.message.includes('already exists')) {
+        console.warn(`Warning creating index on node_aliases.target_node_id: ${e.message}`);
+      }
+    }
+  }
+
+  // Create indexes for pdf_text_cache collection
+  const pdfCacheCollection = db._collection('pdf_text_cache');
+  if (pdfCacheCollection) {
+    try {
+      pdfCacheCollection.ensureIndex({
+        type: 'persistent',
+        fields: ['doc_hash', 'page'],
+        unique: true
+      });
+      console.log('✅ Index created on pdf_text_cache.doc_hash,page (unique)');
+    } catch (e) {
+      if (!e.message.includes('already exists')) {
+        console.warn(`Warning creating index on pdf_text_cache.doc_hash,page: ${e.message}`);
+      }
+    }
+  }
+
+  // Create indexes for manuscript_blocks collection
+  const manuscriptCollection = db._collection('manuscript_blocks');
+  if (manuscriptCollection) {
+    try {
+      manuscriptCollection.ensureIndex({
+        type: 'persistent',
+        fields: ['project_id', 'block_id', 'version'],
+        unique: true
+      });
+      console.log('✅ Index created on manuscript_blocks.project_id,block_id,version (unique)');
+    } catch (e) {
+      if (!e.message.includes('already exists')) {
+        console.warn(`Warning creating index on manuscript_blocks.project_id,block_id,version: ${e.message}`);
+      }
+    }
+
+    try {
+      manuscriptCollection.ensureIndex({
+        type: 'persistent',
+        fields: ['project_id'],
+        unique: false
+      });
+      console.log('✅ Index created on manuscript_blocks.project_id');
+    } catch (e) {
+      if (!e.message.includes('already exists')) {
+        console.warn(`Warning creating index on manuscript_blocks.project_id: ${e.message}`);
+      }
+    }
+  }
+
+  // Create indexes for projects collection
+  const projectsCollection = db._collection('projects');
+  if (projectsCollection) {
+    try {
+      projectsCollection.ensureIndex({
+        type: 'persistent',
+        fields: ['created_at'],
+        unique: false
+      });
+      console.log('✅ Index created on projects.created_at');
+    } catch (e) {
+      if (!e.message.includes('already exists')) {
+        console.warn(`Warning creating index on projects.created_at: ${e.message}`);
       }
     }
   }

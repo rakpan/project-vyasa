@@ -31,8 +31,8 @@ from ..shared.config import (
     ARANGODB_USER,
     get_arango_password,
     get_brain_url,
-    BRAIN_MODEL_NAME,
 )
+from ..shared.model_registry import get_model_config
 import requests
 
 logger = get_logger("orchestrator", __name__)
@@ -348,9 +348,13 @@ class SynthesisService:
         new_type = new_claim.get("subject_type") or new_claim.get("object_type")
         existing_type = existing.get("entity_type")
         if new_name_norm and new_name_norm == existing_name_norm and (not new_type or not existing_type or new_type == existing_type):
+            # Even on deterministic name/type match, ensure no contradictions
+            if self._has_contradiction(new_claim, existing):
+                return {"is_match": False, "is_conflict": True, "reason": "deterministic match blocked by contradiction"}
             return {"is_match": True, "is_conflict": False, "reason": "deterministic name/type match"}
 
         brain_url = get_brain_url()
+        brain_model = get_model_config("brain").model_id
         
         prompt = [
             {
@@ -390,10 +394,10 @@ Are these the same entity? Do they contradict?""",
             response = requests.post(
                 f"{brain_url}/v1/chat/completions",
                 json={
-                    "model": BRAIN_MODEL_NAME,
-                    "messages": prompt,
-                    "temperature": 0.3,
-                    "max_tokens": 200,
+                "model": brain_model,
+                "messages": prompt,
+                "temperature": 0.3,
+                "max_tokens": 200,
                 },
                 timeout=30,
             )

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # scripts/run_mock_llm.sh - Start Mock LLM Server for Testing
+# Description : Launches a mock LLM HTTP server for local tests (no GPU needed).
+# Dependencies: docker
+# Usage       : ./scripts/run_mock_llm.sh
 
 set -euo pipefail
 
@@ -20,5 +23,4 @@ echo "Press Ctrl+C to stop."
 echo ""
 
 cd "$PROJECT_ROOT"
-python -m uvicorn src.mocks.server:app --host 0.0.0.0 --port "$PORT" --reload
-
+python3 -m uvicorn src.mocks.server:app --host 0.0.0.0 --port "$PORT" --reload

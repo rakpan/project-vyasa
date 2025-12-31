@@ -344,7 +344,7 @@ export default function Graph3DPage() {
             <p className="mb-4 text-white">Loading graph data...</p>
             <div className="w-16 h-16 border-4 border-gray-700 border-t-green-500 rounded-full animate-spin mx-auto"></div>
             {debugInfo && (
-              <p className="mt-4 text-xs text-gray-400">{debugInfo}</p>
+              <p className="mt-4 text-xs text-muted-foreground">{debugInfo}</p>
             )}
           </div>
         )}
@@ -353,7 +353,7 @@ export default function Graph3DPage() {
           <div className="bg-black/80 border border-red-900 text-red-400 px-6 py-4 rounded-lg max-w-lg">
             <p>{error}</p>
             {debugInfo && (
-              <p className="mt-2 text-xs text-gray-500">{debugInfo}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{debugInfo}</p>
             )}
             <div className="mt-4 flex gap-2">
               <button 
@@ -364,7 +364,7 @@ export default function Graph3DPage() {
               </button>
               <button 
                 onClick={() => window.location.href = '/'}
-                className="bg-gray-800 hover:bg-gray-700 text-white py-1 px-3 rounded text-sm"
+                className="bg-secondary hover:bg-secondary/80 text-white py-1 px-3 rounded text-sm"
               >
                 Return to Home
               </button>
@@ -397,7 +397,7 @@ export default function Graph3DPage() {
               {/* WebGPU Mode Toggle */}
               {/* <button
                 onClick={() => setUseEnhancedWebGPU(!useEnhancedWebGPU)}
-                className="bg-gray-800/80 hover:bg-gray-700/80 px-3 py-1 rounded text-xs text-white border border-gray-600 transition-colors"
+                className="bg-card/80 hover:bg-card/90 px-3 py-1 rounded text-xs text-foreground border border-border transition-colors"
               >
                 {useEnhancedWebGPU ? '🔧 Enhanced WebGPU' : '🎮 Standard 3D'}
               </button> */}
@@ -414,7 +414,7 @@ export default function Graph3DPage() {
 
             {/* Debug Info */}
             {debugInfo && (
-              <div className="bg-gray-800/80 px-2 py-1 rounded text-xs text-gray-300">{debugInfo}</div>
+              <div className="bg-card/80 px-2 py-1 rounded text-xs text-muted-foreground">{debugInfo}</div>
             )}
 
             {/* Enhanced Clustering Controls Panel */}
@@ -434,7 +434,7 @@ export default function Graph3DPage() {
                   <div className="flex items-center justify-between">
                     <div className="space-y-1">
                       <label className="text-sm font-medium">Enable Clustering</label>
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-muted-foreground">
                         GPU-accelerated graph clustering
                       </p>
                     </div>
@@ -446,11 +446,11 @@ export default function Graph3DPage() {
 
                   {enableClustering && (
                     <>
-                      <Separator className="bg-gray-600" />
+                      <Separator className="bg-border" />
                       
                       {/* Collapsible Clustering Method Options */}
                       <Collapsible open={clusteringOptionsExpanded} onOpenChange={setClusteringOptionsExpanded}>
-                        <CollapsibleTrigger className="flex items-center justify-between w-full p-2 rounded-lg hover:bg-gray-800/50 transition-colors">
+                        <CollapsibleTrigger className="flex items-center justify-between w-full p-2 rounded-lg hover:bg-accent transition-colors">
                           <div className="flex items-center gap-2">
                             <Settings className="w-4 h-4" />
                             <span className="text-sm font-medium">Clustering Options</span>
@@ -470,16 +470,16 @@ export default function Graph3DPage() {
                               Clustering Method
                             </Label>
                             <Select value={clusteringMethod} onValueChange={setClusteringMethod}>
-                              <SelectTrigger className="bg-gray-800 border-gray-600 text-white">
+                              <SelectTrigger className="bg-card border-border text-foreground">
                                 <SelectValue />
                               </SelectTrigger>
-                              <SelectContent className="bg-gray-800 border-gray-600 text-white">
+                              <SelectContent className="bg-card border-border text-foreground">
                                 <SelectItem value="spatial">🌐 Spatial - Position-based</SelectItem>
                                 <SelectItem value="semantic">🧠 Semantic - Name similarity</SelectItem>
                                 <SelectItem value="hybrid">⚡ Hybrid - Smart combination</SelectItem>
                               </SelectContent>
                             </Select>
-                            <p className="text-xs text-gray-400">
+                            <p className="text-xs text-muted-foreground">
                               {clusteringMethod === "spatial" && "Groups nodes by 3D coordinates"}
                               {clusteringMethod === "semantic" && "Groups nodes by name/content similarity"}
                               {clusteringMethod === "hybrid" && "Combines semantic and spatial features"}
@@ -490,10 +490,10 @@ export default function Graph3DPage() {
                           <div className="space-y-2">
                             <Label className="text-sm font-medium">Algorithm</Label>
                             <Select value={semanticAlgorithm} onValueChange={setSemanticAlgorithm}>
-                              <SelectTrigger className="bg-gray-800 border-gray-600 text-white">
+                              <SelectTrigger className="bg-card border-border text-foreground">
                                 <SelectValue />
                               </SelectTrigger>
-                              <SelectContent className="bg-gray-800 border-gray-600 text-white">
+                              <SelectContent className="bg-card border-border text-foreground">
                                 <SelectItem value="hierarchical">🌳 Hierarchical</SelectItem>
                                 <SelectItem value="kmeans">🎯 K-Means</SelectItem>
                                 <SelectItem value="dbscan">🔍 DBSCAN</SelectItem>
@@ -510,11 +510,11 @@ export default function Graph3DPage() {
                                 value={numberOfClusters || ""}
                                 onChange={(e) => setNumberOfClusters(e.target.value ? parseInt(e.target.value) : null)}
                                 placeholder="Auto"
-                                className="bg-gray-800 border-gray-600 text-white"
+                                className="bg-card border-border text-foreground"
                                 min="2"
                                 max="50"
                               />
-                              <p className="text-xs text-gray-400">Leave empty for automatic selection</p>
+                              <p className="text-xs text-muted-foreground">Leave empty for automatic selection</p>
                             </div>
                           )}
 
@@ -530,7 +530,7 @@ export default function Graph3DPage() {
                                 step={0.05}
                                 className="w-full"
                               />
-                              <p className="text-xs text-gray-400">
+                              <p className="text-xs text-muted-foreground">
                                 {similarityThreshold.toFixed(2)} - Higher values create fewer, tighter clusters
                               </p>
                             </div>
@@ -586,7 +586,7 @@ export default function Graph3DPage() {
                                 />
                               </div>
                               
-                              <p className="text-xs text-gray-400">
+                              <p className="text-xs text-muted-foreground">
                                 Total: {(nameWeight + contentWeight + spatialWeight).toFixed(1)}
                               </p>
                             </div>
@@ -594,13 +594,13 @@ export default function Graph3DPage() {
                         </CollapsibleContent>
                       </Collapsible>
 
-                      <Separator className="bg-gray-600" />
+                      <Separator className="bg-border" />
 
                       {/* Cluster Colors Toggle */}
                       <div className="flex items-center justify-between">
                         <div className="space-y-1">
                           <label className="text-sm font-medium">Cluster Colors</label>
-                          <p className="text-xs text-gray-400">
+                          <p className="text-xs text-muted-foreground">
                             Color nodes by cluster assignment
                           </p>
                         </div>
@@ -615,7 +615,7 @@ export default function Graph3DPage() {
                   {/* Performance Metrics */}
                   {performanceMetrics && (
                     <>
-                      <Separator className="bg-gray-600" />
+                      <Separator className="bg-border" />
                       <div className="space-y-2">
                         <label className="text-sm font-medium flex items-center gap-2">
                           <Zap className="w-3 h-3" />
@@ -643,7 +643,7 @@ export default function Graph3DPage() {
 
                   {/* Clustering Status */}
                   {enableClustering && (
-                    <Alert className="bg-black/50 border-gray-600">
+                    <Alert className="bg-black/50 border-border">
                       <Monitor className="h-4 w-4" />
                       <AlertDescription className="text-xs">
                         {clusteringMethod === "spatial" && "Using spatial coordinate clustering"}
@@ -704,7 +704,7 @@ export default function Graph3DPage() {
             <div className="flex items-center justify-center h-full">
               <div className="bg-black/80 border border-red-900 text-red-400 px-6 py-4 rounded-lg max-w-lg text-center">
                 <p>Unable to render graph - invalid data structure</p>
-                <p className="mt-2 text-xs text-gray-500">
+                <p className="mt-2 text-xs text-muted-foreground">
                   The graph data must contain either nodes and links arrays or a triples array
                 </p>
               </div>

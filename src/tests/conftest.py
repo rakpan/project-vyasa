@@ -13,6 +13,10 @@ import pytest
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
+import pytest
+
+pytest.importorskip("fastapi")
+
 from src.shared.config import (
     ARANGODB_DB,
     ARANGODB_PASSWORD,
@@ -350,4 +354,3 @@ def real_qdrant():
         pytest.skip("qdrant-client not installed")
     except Exception as e:
         pytest.skip(f"Qdrant connection failed: {e}")
-

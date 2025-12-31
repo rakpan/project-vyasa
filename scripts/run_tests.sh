@@ -2,6 +2,9 @@
 #
 # Test runner script for Project Vyasa
 #
+# Purpose: Executes pytest test suite with proper Python path configuration.
+# Ensures pytest can correctly find the src module using absolute imports.
+#
 # Usage:
 #   ./scripts/run_tests.sh                    # Run all tests
 #   ./scripts/run_tests.sh --unit             # Run only unit tests
@@ -15,6 +18,9 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 
 cd "$PROJECT_ROOT"
+
+# Export PYTHONPATH to ensure pytest can find the src module
+export PYTHONPATH="${PYTHONPATH:-}:${PROJECT_ROOT}"
 
 # Default: run unit tests only
 TEST_ARGS=()
@@ -36,11 +42,23 @@ else
     TEST_ARGS=("$@")
 fi
 
+# Check if pytest is installed
+if ! python3 -m pytest --version >/dev/null 2>&1; then
+    echo "Error: pytest is not installed."
+    echo ""
+    echo "Install dependencies from requirements.txt:"
+    echo "  pip install -r requirements.txt"
+    echo ""
+    echo "Or install pytest directly:"
+    echo "  pip install pytest pytest-asyncio httpx"
+    exit 1
+fi
+
 echo "Running tests from: $PROJECT_ROOT"
-echo "Python path: ${PYTHONPATH:-<not set>}"
-echo "Command: python -m pytest ${TEST_ARGS[*]}"
+echo "PYTHONPATH: $PYTHONPATH"
+echo "Command: python3 -m pytest ${TEST_ARGS[*]}"
 echo ""
 
-# Run pytest using python -m pytest (automatically adds current directory to path)
-python -m pytest "${TEST_ARGS[@]}"
+# Run pytest using python3 -m pytest (automatically adds current directory to path)
+python3 -m pytest "${TEST_ARGS[@]}"
 

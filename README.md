@@ -2,7 +2,15 @@
 
 > **A local-first, DGX-powered knowledge graph engine for research automation.**
 
-Project Vyasa is not just a script—it's a complete research factory that transforms unstructured documents into structured knowledge graphs. Built on NVIDIA DGX infrastructure, it combines SGLang inference, LangGraph orchestration, and graph databases to create a self-contained, privacy-preserving research automation system.
+Project Vyasa is a local-first knowledge graph engine that transforms unstructured research documents into structured, verifiable artifacts. Built on NVIDIA DGX infrastructure, it leverages a Committee of Experts architecture to automate the classification and synthesis of complex research corpora.
+
+## Why "Vyasa"
+
+The project is named after the legendary sage Veda Vyasa, whose name literally means "Compiler" or "Arranger" in Sanskrit.
+
+- **The Original Information Architect**: Vyasa is credited with taking the single, primordial body of Vedic knowledge and classifying it into four distinct branches—Rig, Yajur, Sama, and Atharva—to make it accessible to humanity.
+- **The Chronicler**: Just as the sage compiled the Mahabharata and the Puranas to bridge abstract philosophy with human narrative, this project bridges raw PDF data with actionable research manuscripts.
+- **Philosophy of Arrangement**: We follow his "Veda-Nishtha" (loyalty to knowledge) by treating the Graph as the System of Record—acting not as an "inventor" of facts, but as an Arranger of Evidence.
 
 ## The Why
 
@@ -14,6 +22,10 @@ Traditional research workflows require manual extraction, validation, and synthe
 - **Query**: Semantic search across your research corpus
 
 All running **locally** on your DGX—no cloud dependencies, no data leakage.
+
+## Architecture Docs
+- Quickstart and diagrams: [docs/architecture/00-overview.md](docs/architecture/00-overview.md)
+- Full set: [docs/architecture](docs/architecture)
 
 ## Native Vision (Core Philosophy)
 
@@ -48,42 +60,159 @@ Project Vyasa follows a **Committee of Experts Architecture** with functional na
 
 ### Prerequisites
 
-- NVIDIA DGX with Docker and Docker Compose
-- NVIDIA Container Toolkit configured
-- At least 2 GPUs (one for Cortex, one for Drafter)
+- **NVIDIA DGX Spark (GB10)** or compatible system with:
+  - Docker and Docker Compose
+  - NVIDIA Container Toolkit configured
+  - At least 128GB unified memory (for DGX Spark)
+  - Multiple GPUs for Cortex services
 
-### Setup
+### Step-by-Step Setup
 
-1. **Configure Environment**
+#### Step 1: Preflight Check
 
-   ```bash
-   cp deploy/.env.example deploy/.env
-   # Edit deploy/.env with your configuration
-   ```
+Before starting, validate your environment:
 
-2. **Launch Services**
+```bash
+./scripts/preflight_check.sh
+```
 
-   ```bash
-   cd deploy
-   docker compose up -d
-   ```
+This checks:
+- ✅ NVIDIA GB10 superchip detection
+- ✅ Unified memory (120GB+ required, 24GB headroom recommended)
+- ✅ Knowledge Harvester dataset directory (`/raid/datasets/`)
+- ✅ Port availability (30000, 30001, 8529)
+- ✅ Expertise configuration file (optional)
 
-3. **Seed Initial Roles (idempotent)**
+**If checks fail**: Resolve issues before proceeding.
 
-   ```bash
-   # If start.sh didn’t already seed:
-   docker compose exec orchestrator python -m src.scripts.seed_roles
-   ```
+#### Step 2: Configure Environment
 
-4. **Access Console**
+```bash
+cd deploy
+cp .env.example .env
+# Edit .env with your model paths, GPU IDs, and secrets
+```
 
-   Open `http://localhost:3000` and log in with your `CONSOLE_PASSWORD`.
+**Required settings**:
+- `ARANGO_ROOT_PASSWORD` - ArangoDB root password
+- `QDRANT_API_KEY` - Qdrant API key
+- `CONSOLE_PASSWORD` - Console login password
+- `HF_TOKEN` - HuggingFace Hub access token (required for model downloads; get from https://huggingface.co/settings/tokens)
+- `BRAIN_MODEL_PATH`, `WORKER_MODEL_PATH`, `VISION_MODEL_PATH` - Model paths (HuggingFace Hub paths like `meta-llama/Llama-3.3-70B-Instruct` or local filesystem paths)
+- `BRAIN_GPU_IDS`, `WORKER_GPU_IDS`, `VISION_GPU_IDS` - GPU assignments
 
-### Smoke Test
+#### Step 3: Start the System
 
-1. Upload a PDF document through the Console
-2. Verify extraction creates nodes and edges in the graph
-3. Query the graph to confirm data persistence
+**Option A: Sequential Startup (Recommended for first-time setup)**
+
+This ensures proper dependency ordering and health verification:
+
+```bash
+./scripts/init_vyasa.sh
+```
+
+This script:
+1. Sources secrets and environment variables
+2. Starts Graph (ArangoDB) and Vector (Qdrant)
+3. Starts Cortex models (Brain/Worker/Vision) and waits for readiness
+4. Starts Orchestrator (waits for Cortex)
+5. Starts Console (waits for Orchestrator)
+
+**Option B: Quick Start (For subsequent runs)**
+
+If services are already configured:
+
+```bash
+cd deploy
+./start.sh
+```
+
+This script:
+- Starts all services via Docker Compose
+- Waits for ArangoDB health
+- Seeds initial roles
+- Polls orchestrator health
+
+#### Step 4: Verify System Status
+
+Check all services are running:
+
+```bash
+cd deploy
+docker compose ps
+```
+
+All services should show `Up` status. Check logs if any service fails:
+
+```bash
+docker compose logs <service-name>
+# Example: docker compose logs cortex-worker
+```
+
+#### Step 5: Access the Console
+
+Open your browser:
+
+**http://localhost:3000**
+
+Log in with your `CONSOLE_PASSWORD` (set in `deploy/.env`).
+
+**Navigation basics**
+- Root `/` redirects to `/projects` (canonical entry).
+- From **Projects**, open a project to see recent jobs and “Resume” links; a recent job will deep-link to the Research Workbench with `jobId`/`projectId`/`pdfUrl` populated.
+- **Research Workbench** requires `jobId` and `projectId`; `pdfUrl` is optional (3-panel layout when present, 2-panel when absent). If required params are missing, you’ll be redirected back to Projects with a toast.
+
+#### Step 6: Create Your First Project
+
+1. Navigate to **Projects** → **New Project**
+2. Fill in:
+   - **Title**: e.g., "Security Analysis of Web Applications"
+   - **Thesis**: Your core research argument
+   - **Research Questions**: One per line
+   - **Anti-Scope**: Topics to exclude (optional)
+3. Click **Create Project**
+
+#### Step 7: Upload and Process Documents
+
+1. In the project workbench, upload a PDF to the **Seed Corpus**
+2. The system will automatically process it:
+   - Extract knowledge graph (entities, relations)
+   - Tag claims as HIGH/LOW priority based on Research Questions
+   - Validate evidence binding
+   - Store in ArangoDB
+
+### Stopping the System
+
+```bash
+cd deploy
+./stop.sh
+```
+
+Or manually:
+
+```bash
+cd deploy
+docker compose down
+```
+
+### Script Reference
+
+| Script | Location | Purpose |
+|--------|----------|---------|
+| **Preflight Check** | `scripts/preflight_check.sh` | Validates hardware, memory, ports before startup |
+| **Sequential Startup** | `scripts/init_vyasa.sh` | Orchestrates sequential service startup with health checks |
+| **Quick Start** | `deploy/start.sh` | Fast startup for already-configured systems |
+| **Stop** | `deploy/stop.sh` | Gracefully shuts down all services |
+| **Console Navigation** | `docs/runbooks/console-navigation.md` | Describes Projects → Job → Workbench flow, guards, and layout rules |
+| **Operational CLI** | `scripts/vyasa-cli.sh` | Operational utilities (merge nodes, etc.) |
+| **Test Runner** | `scripts/run_tests.sh` | Run pytest test suite |
+| **Mock LLM** | `scripts/run_mock_llm.sh` | Start mock LLM server for testing |
+
+**When to use which script**:
+- **First time setup**: `preflight_check.sh` → `init_vyasa.sh`
+- **Subsequent runs**: `deploy/start.sh`
+- **Development/testing**: `scripts/run_tests.sh`, `scripts/run_mock_llm.sh`
+- **Operations**: `scripts/vyasa-cli.sh merge ...`
 
 ## Service Ports
 
@@ -109,10 +238,11 @@ Project Vyasa follows a **Committee of Experts Architecture** with functional na
 
 ## Documentation
 
+- **[Quick Start Guide](QUICK_START.md)**: Fastest path to running Project Vyasa (5-minute setup)
+- **[Getting Started Guide](docs/runbooks/getting-started.md)**: Detailed step-by-step setup instructions
 - **[System Architecture](docs/architecture/system-map.md)**: C4 Container Diagram
 - **[Agent Workflow](docs/architecture/agent-workflow.md)**: LangGraph State Machine
 - **[Development Guide](docs/guides/development.md)**: Coding standards and conventions
-- **[Getting Started](docs/runbooks/getting-started.md)**: Detailed setup instructions
 
 ## Key Features
 
@@ -126,20 +256,28 @@ Project Vyasa follows a **Committee of Experts Architecture** with functional na
 
 ```
 project-vyasa/
-├── src/
-│   ├── console/          # Next.js frontend
-│   ├── orchestrator/     # LangGraph supervisor
-│   ├── ingestion/        # Knowledge extractor
-│   ├── embedder/         # Sentence-Transformers service
-│   └── shared/           # Shared schemas and utilities
-├── deploy/
-│   ├── docker-compose.yml
-│   ├── .env.example
-│   └── scripts/          # Initialization scripts
-└── docs/
-    ├── architecture/    # System design docs
-    ├── decisions/        # Architecture Decision Records
-    └── runbooks/         # Operational guides
+├── src/                    # Source code
+│   ├── console/            # Next.js frontend
+│   ├── orchestrator/       # LangGraph supervisor
+│   ├── ingestion/          # Knowledge extractor
+│   ├── embedder/           # Sentence-Transformers service
+│   └── shared/             # Shared schemas and utilities
+├── deploy/                  # Deployment configuration
+│   ├── docker-compose.yml   # Service definitions
+│   ├── .env.example         # Environment template
+│   ├── start.sh             # Quick start script
+│   ├── stop.sh              # Shutdown script
+│   └── scripts/             # Initialization scripts
+├── scripts/                 # Operational scripts
+│   ├── preflight_check.sh   # Pre-startup validation
+│   ├── init_vyasa.sh        # Sequential startup (first-time)
+│   ├── vyasa-cli.sh         # Operational CLI (merge, etc.)
+│   ├── run_tests.sh         # Test runner
+│   └── run_mock_llm.sh      # Mock LLM for testing
+└── docs/                    # Documentation
+    ├── architecture/        # System design docs
+    ├── decisions/           # Architecture Decision Records
+    └── runbooks/            # Operational guides
 ```
 
 ## License

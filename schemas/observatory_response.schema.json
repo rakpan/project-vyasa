@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-vyasa/schemas/observatory_response.schema.json",
+  "title": "Vyasa Observatory Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["quality", "context", "performance", "hardware", "volume"],
+  "properties": {
+    "quality": { "$ref": "#/$defs/qualityPanel" },
+    "context": { "$ref": "#/$defs/contextPanel" },
+    "performance": { "$ref": "#/$defs/performancePanel" },
+    "hardware": { "$ref": "#/$defs/hardwarePanel" },
+    "volume": { "$ref": "#/$defs/volumePanel" }
+  },
+  "$defs": {
+    "status": {
+      "type": "string",
+      "enum": ["online", "warning", "critical"],
+      "description": "Panel health indicator"
+    },
+    "pointNumber": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp", "value"],
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 UTC timestamp"
+        },
+        "value": {
+          "type": "number",
+          "description": "Numeric KPI value"
+        }
+      }
+    },
+    "pointInteger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp", "value"],
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 UTC timestamp"
+        },
+        "value": {
+          "type": "integer",
+          "description": "Integer KPI value"
+        }
+      }
+    },
+    "seriesNumber": {
+      "type": "array",
+      "description": "60-point rolling window ordered oldest → newest",
+      "items": { "$ref": "#/$defs/pointNumber" },
+      "minItems": 60,
+      "maxItems": 60
+    },
+    "seriesInteger": {
+      "type": "array",
+      "description": "60-point rolling window ordered oldest → newest",
+      "items": { "$ref": "#/$defs/pointInteger" },
+      "minItems": 60,
+      "maxItems": 60
+    },
+    "qualityPanel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary", "series"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["conflict_rate", "unsupported_rate"],
+          "properties": {
+            "conflict_rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Conflicts per vetted claim (ratio)"
+            },
+            "unsupported_rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Unsupported findings per vetted claim (ratio)"
+            }
+          }
+        },
+        "series": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["conflict_rate", "unsupported_rate"],
+          "properties": {
+            "conflict_rate": { "$ref": "#/$defs/seriesNumber" },
+            "unsupported_rate": { "$ref": "#/$defs/seriesNumber" }
+          }
+        }
+      }
+    },
+    "contextPanel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary", "series"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tokens_per_claim", "retrieval_hit_rate_at_5"],
+          "properties": {
+            "tokens_per_claim": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Average tokens consumed per vetted claim"
+            },
+            "retrieval_hit_rate_at_5": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Fraction where correct source is in top-5 retrieval results"
+            }
+          }
+        },
+        "series": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tokens_per_claim", "retrieval_hit_rate_at_5"],
+          "properties": {
+            "tokens_per_claim": { "$ref": "#/$defs/seriesNumber" },
+            "retrieval_hit_rate_at_5": { "$ref": "#/$defs/seriesNumber" }
+          }
+        }
+      }
+    },
+    "performancePanel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary", "series"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["p95_latency_ms", "tokens_per_sec"],
+          "properties": {
+            "p95_latency_ms": {
+              "type": "number",
+              "minimum": 0,
+              "description": "End-to-end p95 latency in milliseconds"
+            },
+            "tokens_per_sec": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["prefill", "decode"],
+              "properties": {
+                "prefill": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Tokens/sec during prompt ingestion"
+                },
+                "decode": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Tokens/sec during generation"
+                }
+              }
+            }
+          }
+        },
+        "series": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["p95_latency_ms", "tokens_per_sec"],
+          "properties": {
+            "p95_latency_ms": { "$ref": "#/$defs/seriesNumber" },
+            "tokens_per_sec": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["prefill", "decode"],
+              "properties": {
+                "prefill": { "$ref": "#/$defs/seriesNumber" },
+                "decode": { "$ref": "#/$defs/seriesNumber" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "hardwarePanel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary", "series"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uma_utilization_pct", "kv_cache_fill_pct"],
+          "properties": {
+            "uma_utilization_pct": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 128,
+              "description": "Unified memory utilization percent (0–128 maps to 0–128GB)"
+            },
+            "kv_cache_fill_pct": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "KV cache fill level percent"
+            }
+          }
+        },
+        "series": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uma_utilization_pct", "kv_cache_fill_pct"],
+          "properties": {
+            "uma_utilization_pct": { "$ref": "#/$defs/seriesNumber" },
+            "kv_cache_fill_pct": { "$ref": "#/$defs/seriesNumber" }
+          }
+        }
+      }
+    },
+    "volumePanel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary", "series"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minted_claims_24h"],
+          "properties": {
+            "minted_claims_24h": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Vetted claims minted in the last 24h (expert-verified)"
+            }
+          }
+        },
+        "series": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minted_claims_24h"],
+          "properties": {
+            "minted_claims_24h": { "$ref": "#/$defs/seriesInteger" }
+          }
+        }
+      }
+    }
+  }
+}

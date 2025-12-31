@@ -27,5 +27,6 @@ export interface ProjectSummary {
   id: string;
   title: string;
   created_at: string; // ISO format timestamp
+  seed_files?: string[]; // Optional, may be included in list response
 }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#
 # Local test runner for Project Vyasa.
-#
+# Description : Runs unit/integration tests and API smoke checks locally.
+# Dependencies: python3, pytest, curl
 # Usage:
 #   ./scripts/test_local.sh                      # Run unit tests only
 #   ./scripts/test_local.sh --with-integration   # Run unit + integration tests
@@ -36,7 +36,7 @@ if [[ "${1:-}" == "--smoke-api" ]]; then
     create_resp="$(curl -s -X POST "${BASE_URL}/api/projects" \
         -H "Content-Type: application/json" \
         -d '{"title":"Test Project","thesis":"Smoke Test","research_questions":["RQ1"]}')"
-    PROJECT_ID="$(python - <<'PY'
+    PROJECT_ID="$(python3 - <<'PY'
 import json,sys
 data=json.loads(sys.stdin.read() or "{}")
 pid=data.get("id")
@@ -56,7 +56,7 @@ PY <<<"$create_resp")"
     submit_resp="$(curl -s -X POST "${BASE_URL}/workflow/submit" \
         -F "file=@${PDF_PATH}" \
         -F "project_id=${PROJECT_ID}")"
-    JOB_ID="$(python - <<'PY'
+    JOB_ID="$(python3 - <<'PY'
 import json,sys
 data=json.loads(sys.stdin.read() or "{}")
 job=data.get("job_id")
@@ -64,7 +64,7 @@ if not job:
     raise SystemExit("Job submission failed or missing job_id")
 print(job)
 PY <<<"$submit_resp")"
-    status="$(python - <<'PY'
+    status="$(python3 - <<'PY'
 import json,sys
 data=json.loads(sys.stdin.read() or "{}")
 print(data.get("status","unknown"))
@@ -74,9 +74,15 @@ PY <<<"$submit_resp")"
     exit 0
 fi
 
-if ! command -v pytest &> /dev/null; then
+# Check if pytest is installed as a Python module (since we use python3 -m pytest)
+if ! python3 -m pytest --version >/dev/null 2>&1; then
     echo "Error: pytest is not installed."
-    echo "Install it with: pip install pytest pytest-asyncio httpx reportlab"
+    echo ""
+    echo "Install dependencies from requirements.txt:"
+    echo "  pip install -r requirements.txt"
+    echo ""
+    echo "Or install pytest directly:"
+    echo "  pip install pytest pytest-asyncio httpx"
     exit 1
 fi
 
@@ -94,7 +100,7 @@ fi
 
 # Run pytest
 cd "$PROJECT_ROOT"
-pytest "$SRC_DIR/tests/" \
+python3 -m pytest "$SRC_DIR/tests/" \
     -v \
     --tb=short \
     --strict-markers \

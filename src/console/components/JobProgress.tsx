@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { Loader2 } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { createAbortableFetch, createIsMountedRef, startPolling } from "@/lib/async"
 
 type JobStatusResponse = {
   status: "running" | "completed" | "failed" | string
@@ -22,35 +23,59 @@ export function JobProgress({ jobId, onComplete }: JobProgressProps) {
   const [fetchError, setFetchError] = useState<string | null>(null)
 
   useEffect(() => {
-    let active = true
     if (!jobId) return
 
-    const fetchStatus = async () => {
-      try {
-        const res = await fetch(`/jobs/${jobId}/status`)
-        if (!res.ok) {
-          const text = await res.text()
-          throw new Error(text || "Failed to fetch job status")
-        }
-        const json = (await res.json()) as JobStatusResponse
-        if (!active) return
-        setStatus(json)
-        setFetchError(null)
-        if (json.status === "completed" && onComplete) {
-          onComplete()
-        }
-      } catch (err) {
-        if (!active) return
-        setFetchError(err instanceof Error ? err.message : "Failed to fetch job status")
-      }
-    }
+    // Track component mount status to prevent setState after unmount
+    const mountedRef = createIsMountedRef()
 
-    fetchStatus()
-    const interval = setInterval(fetchStatus, 2000)
+    // Start polling with proper cleanup
+    const pollingController = startPolling({
+      intervalMs: 2000,
+      immediate: true,
+      fn: async (signal) => {
+        try {
+          // Use abortable fetch to ensure cancellation on unmount
+          const { promise } = createAbortableFetch<JobStatusResponse>(
+            `/jobs/${jobId}/status`,
+            { signal }
+          )
 
+          const json = await promise
+
+          // Only update state if component is still mounted
+          if (mountedRef.isMounted()) {
+            setStatus(json)
+            setFetchError(null)
+            if (json.status === "completed" && onComplete) {
+              onComplete()
+            }
+          }
+        } catch (err) {
+          // Ignore AbortError (expected when stopping)
+          if (err instanceof Error && err.name === "AbortError") {
+            return
+          }
+
+          // Only update error state if component is still mounted
+          if (mountedRef.isMounted()) {
+            setFetchError(
+              err instanceof Error ? err.message : "Failed to fetch job status"
+            )
+          }
+        }
+      },
+      onError: (error) => {
+        // Error handler only called for non-abort errors
+        if (mountedRef.isMounted() && error.name !== "AbortError") {
+          setFetchError(error.message || "Failed to fetch job status")
+        }
+      },
+    })
+
+    // Cleanup: mark as unmounted and stop polling
     return () => {
-      active = false
-      clearInterval(interval)
+      mountedRef.unmount()
+      pollingController.stop("Component unmounted")
     }
   }, [jobId, onComplete])
 

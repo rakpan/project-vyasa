@@ -1,0 +1,104 @@
+# Forbidden Vocabulary Configuration for Project Vyasa
+#
+# Purpose:
+# Enforce precise, defensible, non-marketing language suitable for
+# attorney-style, architectural, and academic write-ups.
+#
+# Guidance:
+# - Avoid overstatement, consultancy fluff, and unverifiable claims
+# - Prefer neutral, observable, or testable language
+# - Alternatives are intentionally conservative
+
+forbidden_words:
+  - word: "crisis"
+    alternative: "significant challenge" or "material condition"
+
+  - word: "problem"
+    alternative: "issue" or "constraint"
+
+  - word: "ensure"
+    alternative: "support" or "provide"
+
+  - word: "ensures"
+    alternative: "supports" or "provides"
+
+  - word: "ensuring"
+    alternative: "supporting" or "providing"
+
+  - word: "assure"
+    alternative: "provide confidence" or "demonstrate"
+
+  - word: "assurance"
+    alternative: "evidence" or "validation"
+
+  - word: "robust"
+    alternative: "well-defined" or "fault-tolerant"
+
+  - word: "comprehensive"
+    alternative: "well-scoped" or "end-to-end"
+
+  - word: "critical"
+    alternative: "material" or "high-impact"
+
+  - word: "crucial"
+    alternative: "important" or "necessary"
+
+  - word: "delve"
+    alternative: "examine" or "analyze"
+
+  - word: "embark"
+    alternative: "initiate" or "begin"
+
+  - word: "foster"
+    alternative: "enable" or "support"
+
+  - word: "partner"
+    alternative: "work with" or "collaborate with"
+
+  - word: "expert"
+    alternative: "specialized" or "experienced"
+
+  - word: "complex"
+    alternative: "multi-faceted" or "non-trivial"
+
+  - word: "digital transformation"
+    alternative: "system modernization" or "platform evolution"
+
+  - word: "giant"
+    alternative: "large-scale" or "established"
+
+  - word: "stark"
+    alternative: "clear" or "pronounced"
+
+  - word: "best-in-class"
+    alternative: "industry-aligned" or "widely adopted"
+
+  - word: "state-of-the-art"
+    alternative: "current-generation" or "modern"
+
+  - word: "cutting-edge"
+    alternative: "recent" or "emerging"
+
+  - word: "game-changing"
+    alternative: "materially impactful"
+
+  - word: "seamless"
+    alternative: "integrated" or "low-friction"
+
+  - word: "holistic"
+    alternative: "cross-domain" or "end-to-end"
+
+  - word: "leverage"
+    alternative: "use" or "apply"
+
+  - word: "journey"
+    alternative: "process" or "execution path"
+
+  - word: "visionary"
+    alternative: "forward-looking" or "proposed"
+
+  - word: "guarantee"
+    alternative: "target" or "objective"
+
+  - word: "transformative"
+    alternative: "structural" or "meaningful"

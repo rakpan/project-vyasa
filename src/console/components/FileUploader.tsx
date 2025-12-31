@@ -46,7 +46,17 @@ export function FileUploader({
     )
   }
 
+  const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100MB in bytes
+
   const validateFile = (file: File): boolean => {
+    // Validate file size
+    if (file.size > MAX_FILE_SIZE) {
+      setError(
+        `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed size (100MB). Please upload a smaller file.`
+      )
+      return false
+    }
+
     const validTypes = [".pdf", ".md", ".txt", ".json"]
     const isValid = validTypes.some((ext) => file.name.toLowerCase().endsWith(ext))
     if (!isValid) {

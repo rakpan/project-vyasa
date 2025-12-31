@@ -1071,7 +1071,7 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
 
         {/* Info panel */}
         <div className="absolute bottom-2 left-2 text-xs bg-black/70 px-3 py-2 rounded flex items-center gap-2">
-          <span className="text-gray-400">Force-Directed Graph</span>
+          <span className="text-muted-foreground">Force-Directed Graph</span>
           {simulation?.isRunning && (
             <span className="text-primary animate-pulse">
               Simulating... {Math.round((simulation.iteration / 300) * 100)}%
@@ -1144,7 +1144,7 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
           <div className="absolute bottom-2 right-2 bg-black/70 rounded px-2 py-1 flex items-center gap-2">
             <button
               onClick={handleDecreaseNodeLimit}
-              className="text-white text-xs px-2 py-0.5 bg-gray-700 rounded hover:bg-gray-600"
+              className="text-white text-xs px-2 py-0.5 bg-secondary rounded hover:bg-secondary/80"
               disabled={nodeLimit <= 25}
               type="button"
               onMouseEnter={(e) => handleButtonMouseEnter(e, "Show fewer nodes")}
@@ -1155,7 +1155,7 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
             <span className="text-xs text-white">{nodeLimit} nodes</span>
             <button
               onClick={handleIncreaseNodeLimit}
-              className="text-white text-xs px-2 py-0.5 bg-gray-700 rounded hover:bg-gray-600"
+              className="text-white text-xs px-2 py-0.5 bg-secondary rounded hover:bg-secondary/80"
               disabled={nodeLimit >= 500}
               type="button"
               onMouseEnter={(e) => handleButtonMouseEnter(e, "Show more nodes")}
@@ -1170,24 +1170,24 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
         {selectedNode && (
           <div className="absolute top-2 left-2 bg-black/80 text-white text-sm px-4 py-3 rounded max-w-xs">
             <h3 className="font-bold text-primary mb-1">{selectedNode}</h3>
-            <div className="text-xs text-gray-300">
+            <div className="text-xs text-foreground">
               {simulation?.links.filter((link) => link.source === selectedNode || link.target === selectedNode)
                 .length || 0}{" "}
               connections
             </div>
             <div className="mt-2 text-xs max-h-[400px] overflow-auto">
               <div className="mb-2">
-                <div className="text-gray-400 text-xs uppercase mb-1">Outgoing</div>
+                <div className="text-muted-foreground text-xs uppercase mb-1">Outgoing</div>
                 {simulation?.links
                   .filter((link) => link.source === selectedNode)
                   .map((link, i) => (
                     <div key={`out-${i}`} className="flex items-center gap-1 mb-1">
-                      <span className="text-gray-400">→</span>
+                      <span className="text-muted-foreground">→</span>
                       <span className="text-primary">{link.label}</span>
-                      <span className="text-gray-300">→</span>
+                      <span className="text-foreground">→</span>
                       <span>{link.target}</span>
                     </div>
-                  )) || <div className="text-gray-500 italic">None</div>}
+                  )) || <div className="text-muted-foreground italic">None</div>}
               </div>
               
               <div>
@@ -1197,16 +1197,16 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
                   .map((link, i) => (
                     <div key={`in-${i}`} className="flex items-center gap-1 mb-1">
                       <span>{link.source}</span>
-                      <span className="text-gray-300">→</span>
+                      <span className="text-foreground">→</span>
                       <span className="text-primary">{link.label}</span>
-                      <span className="text-gray-400">→</span>
+                      <span className="text-muted-foreground">→</span>
                     </div>
-                  )) || <div className="text-gray-500 italic">None</div>}
+                  )) || <div className="text-muted-foreground italic">None</div>}
               </div>
               
               <button 
                 onClick={() => setSelectedNode(null)}
-                className="mt-4 bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs"
+                className="mt-4 bg-secondary hover:bg-secondary/80 text-white px-3 py-1 rounded text-xs"
               >
                 Clear selection
               </button>
@@ -1230,7 +1230,7 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
 
         {/* Add CPU fallback indicator */}
         {cpuClustering && (
-          <div className="absolute bottom-2 left-2 bg-gray-900/80 text-white text-xs px-2 py-1 rounded">
+          <div className="absolute bottom-2 left-2 bg-background/80 text-white text-xs px-2 py-1 rounded">
             Using CPU clustering fallback
           </div>
         )}

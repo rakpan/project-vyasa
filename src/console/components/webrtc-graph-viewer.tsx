@@ -400,7 +400,7 @@ export function WebRTCGraphViewer({
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="relative bg-gray-900 rounded-lg overflow-hidden">
+            <div className="relative bg-background rounded-lg overflow-hidden">
               <img
                 ref={imgRef}
                 alt="GPU-rendered graph visualization"

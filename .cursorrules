@@ -12,10 +12,13 @@ You are an expert AI Research Engineer building "Project Vyasa," a high-performa
 Use strictly functional names in code and APIs (project, claim, block, patch, guard). Avoid metaphor names for core components.
 
 - **Orchestrator** (`orchestrator` @ :8000): Python + LangGraph. Owns state machines, workflow loops, retries, and tool calls.
-- **Cortex** (`cortex-*` @ :30000+): SGLang model servers.
-  - **Worker Model:** `Llama-3.3-Nemotron-Super-49B-v1.5` (Extraction, Tagging, strict JSON)
-  - **Brain Model:** `Llama-3.3-70B` (Synthesis, critique, reasoning).
-  - **Vision Model:** `Qwen2-VL-72B` (Figure/table/chart interpretation).
+- **Cortex** (`cortex-*` @ :30000+):
+  - **The Cartographer** (Worker): High-recall triple/entity extraction.
+  - **The Librarian** (Librarian): Chunking and semantic summary generation.
+  - **The Lead Counsel** (New): Strategic triage (Summary vs. Detail) and format selection.
+  - **The Logician** (New): Mathematical autoformalization (Python/SymPy/LaTeX).
+  - **The Synthesizer** (New): Attorney-style, evidence-led prose generation.
+  - **The Critic** (Critic): Logic, schema, and evidentiary validation.
 - **Graph** (`graph` @ :8529): ArangoDB. Stores Projects, Documents, Claims, Manuscripts, Revisions, Reviews.
 - **Console** (`console` @ :3000): Next.js. Project management + editorial workbench (section editor + redline review).
 - **Vector** (`vector` @ :6333): Retrieval index behind an interface (Qdrant or pgvector). Used for semantic search over chunks/claims.
@@ -46,6 +49,12 @@ Organize code into these four domains (folders/modules/services). Do not blur re
 - **Responsibility:** Safety & validation gates.
 - **Key Objects:** `Guard` (Drift, Citation, Evidence, Contract).
 - **Logic:** Roles (prompts) are versioned configuration in the DB, not hardcoded strings in code.
+- **Vocabulary Guardrails**: The Synthesizer must strictly avoid words defined in `forbidden_vocab.yaml`. The Critic is the final gate; it must fail any block containing prohibited terms.
+
+### E. Strategic Synthesis (Logic Expansion)
+- **Mathematical Representation**: If a section involves quantitative trends, trigger **The Logician** to generate symbolic proofs ($LaTeX$) and Python verification code.
+- **Attorney-Style Rigor**: Prose must be evidence-led, removing redundancy by summarizing "explained-before" context while providing detailed interpretation for foundational proofs.
+- **OOB Bridge (Sideloading)**: External research (Perplexity) is ingested as a `human_injected` Knowledge Fragment. It must be processed by the Cartographer before triggering a "Reprocess" run.
 
 ## 4. Coding Standards
 
@@ -61,6 +70,10 @@ Organize code into these four domains (folders/modules/services). Do not blur re
   - `extracted_json.triples` must always exist and be a list (possibly empty).
 - **Error Handling:** Fail fast on invalid inputs. Wrap all network/DB calls with try/except, log clearly, and surface failures in job status or API responses. No silent success.
 - **Idempotency:** Any write-heavy operations (save extraction, apply patch) must be idempotent via keys/hashes.
+- **Immutable State Management**: Nodes MUST NOT mutate the `PaperState` dict in-place. Every node must return a new dictionary: `return {**state, "new_key": value}`.
+- **Unified LLM Gateway**: NO direct `requests.post` to SGLang. All inference MUST pass through `llm_client.chat()` to ensure uniform telemetry (duration_ms, tokens, expert_metadata).
+- **Role-Driven Prompts**: System prompts are NOT hardcoded strings. They must be loaded dynamically from the `RoleRegistry` (ArangoDB/defaults.json) at runtime.
+- **Precision Management**: Expert precision is role-specific (e.g., Worker=INT4, Brain=FP8, Logician=FP16) to optimize DGX Spark VRAM.
 
 ### TypeScript (Frontend)
 - **Workbench UX:** Prioritize density and data visibility over marketing gloss.
@@ -87,3 +100,14 @@ Organize code into these four domains (folders/modules/services). Do not blur re
   - Save failures must propagate (job FAILED or API error).
 - **Local-first.**
   - External reviewers are opt-in and isolated (Section 5).
+  - **State Schema Enforcement**: `PaperState` must be validated at node entry/exit. "Empty success" is a failure; jobs must be marked `FAILED` if schema drift is detected.
+- **DGX Resource Guardrails**: 
+    - GPU Pinning: Models must be pinned to specific `CUDA_VISIBLE_DEVICES`.
+    - KV-Cache Backpressure: Pause or queue jobs if KV cache utilization > 0.95.
+- **UTC Sovereignty**: All timestamps MUST be `datetime.now(timezone.utc).isoformat()`. No naive/local timestamps.
+- **PDF-Optionality**: The Workbench must support a 2-panel layout if `pdfUrl` is missing, ensuring OOB research is accessible.
+
+## 7. Navigation & UX Contracts
+- **Canonical Entry**: `/` must redirect to `/projects`.
+- **Metadata Persistence**: Reprocess/Resume flows must preserve `pdfUrl` in query params to maintain visual context.
+- **Symbolic Visibility**: Claims with mathematical verification must render the underlying LaTeX and code in the UI for human audit.

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import { createAbortableFetch, createIsMountedRef, startPolling } from "@/lib/async"
 
 type Pulse = {
   memory_pressure: number
@@ -20,29 +21,54 @@ export function SparkPulseMini() {
   const [history, setHistory] = useState<number[]>([])
 
   useEffect(() => {
-    let mounted = true
-    const fetchPulse = async () => {
-      try {
-        const res = await fetch("/system/pulse")
-        if (!res.ok) throw new Error("Failed to fetch pulse")
-        const json = (await res.json()) as Pulse
-        if (mounted) {
-          setPulse(json)
-          setError(null)
-          // Update history for sparkline (keep last 20 points)
-          setHistory((prev) => [...prev.slice(-19), json.memory_pressure])
+    // Track component mount status to prevent setState after unmount
+    const mountedRef = createIsMountedRef()
+
+    // Start polling with proper cleanup
+    const pollingController = startPolling({
+      intervalMs: 3000,
+      immediate: true,
+      fn: async (signal) => {
+        try {
+          // Use abortable fetch to ensure cancellation on unmount
+          const { promise } = createAbortableFetch<Pulse>(
+            "/system/pulse",
+            { signal }
+          )
+
+          const json = await promise
+
+          // Only update state if component is still mounted
+          if (mountedRef.isMounted()) {
+            setPulse(json)
+            setError(null)
+            // Update history for sparkline (keep last 20 points)
+            setHistory((prev) => [...prev.slice(-19), json.memory_pressure])
+          }
+        } catch (err) {
+          // Ignore AbortError (expected when stopping)
+          if (err instanceof Error && err.name === "AbortError") {
+            return
+          }
+
+          // Only update error state if component is still mounted
+          if (mountedRef.isMounted()) {
+            setError("No telemetry")
+          }
         }
-      } catch (err) {
-        if (mounted) {
+      },
+      onError: (error) => {
+        // Error handler only called for non-abort errors
+        if (mountedRef.isMounted() && error.name !== "AbortError") {
           setError("No telemetry")
         }
-      }
-    }
-    fetchPulse()
-    const interval = setInterval(fetchPulse, 3000)
+      },
+    })
+
+    // Cleanup: mark as unmounted and stop polling
     return () => {
-      mounted = false
-      clearInterval(interval)
+      mountedRef.unmount()
+      pollingController.stop("Component unmounted")
     }
   }, [])
 

@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useCallback, useMemo, useState } from "react"
+import React, { useEffect, useCallback, useMemo, useState, useRef } from "react"
 import ReactFlow, {
   Node,
   Edge,
@@ -77,7 +77,7 @@ const CONFIDENCE_LABELS = [
 
 function getConfidenceVariant(confidence?: number) {
   if (confidence === undefined || confidence === null) {
-    return { label: "N/A", className: "bg-gray-500 text-white" }
+    return { label: "N/A", className: "bg-muted text-muted-foreground" }
   }
   const match = CONFIDENCE_LABELS.find((c) => confidence >= c.threshold) || CONFIDENCE_LABELS[2]
   return match
@@ -170,6 +170,7 @@ export function LiveGraphWorkbench({ jobId, orchestratorUrl = "/api/proxy/orches
         const newEdges = transformEdges(event.edges)
 
         // Merge with existing nodes/edges (avoid duplicates)
+        // Use functional updates to avoid dependency on nodes state
         setNodes((nds) => {
           const existingIds = new Set(nds.map((n) => n.id))
           const uniqueNewNodes = newNodes.filter((n) => !existingIds.has(n.id))
@@ -182,10 +183,14 @@ export function LiveGraphWorkbench({ jobId, orchestratorUrl = "/api/proxy/orches
           const uniqueNewEdges = newEdges.filter((e) => !existingIds.has(e.id))
           const merged = [...eds, ...uniqueNewEdges]
 
-          // Apply layout to all nodes
-          const allNodes = [...nodes, ...uniqueNewNodes]
-          const { nodes: layoutedNodes } = getLayoutedElements(allNodes, merged)
-          setNodes(layoutedNodes)
+          // Apply layout to all nodes using functional setNodes to get current state
+          setNodes((nds) => {
+            const existingIds = new Set(nds.map((n) => n.id))
+            const uniqueNewNodes = newNodes.filter((n) => !existingIds.has(n.id))
+            const allNodes = [...nds, ...uniqueNewNodes]
+            const { nodes: layoutedNodes } = getLayoutedElements(allNodes, merged)
+            return layoutedNodes
+          })
 
           return merged
         })
@@ -199,14 +204,24 @@ export function LiveGraphWorkbench({ jobId, orchestratorUrl = "/api/proxy/orches
         setIsConnected(false)
       }
     },
-    [transformNodes, transformEdges, setNodes, setEdges, nodes]
+    [transformNodes, transformEdges, setNodes, setEdges]
   )
+
+  // Store EventSource in ref to prevent leaks on rerender
+  const eventSourceRef = useRef<EventSource | null>(null)
 
   // SSE connection
   useEffect(() => {
     if (!jobId) return
 
+    // Close existing connection before opening a new one
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
+
     const eventSource = new EventSource(`${orchestratorUrl}/jobs/${jobId}/stream`)
+    eventSourceRef.current = eventSource
 
     eventSource.onmessage = (e) => {
       try {
@@ -222,10 +237,14 @@ export function LiveGraphWorkbench({ jobId, orchestratorUrl = "/api/proxy/orches
       setError("Connection lost. Please refresh.")
       setIsConnected(false)
       eventSource.close()
+      eventSourceRef.current = null
     }
 
     return () => {
-      eventSource.close()
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
     }
   }, [jobId, orchestratorUrl, handleGraphUpdate])
 
@@ -409,7 +428,7 @@ export function LiveGraphWorkbench({ jobId, orchestratorUrl = "/api/proxy/orches
             <div
               className={cn(
                 "w-2 h-2 rounded-full",
-                isConnected ? "bg-emerald-500" : "bg-gray-400"
+                isConnected ? "bg-emerald-500" : "bg-muted"
               )}
             />
             <span className="text-xs text-muted-foreground">

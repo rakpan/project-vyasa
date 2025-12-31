@@ -90,6 +90,14 @@ const config: Config = {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        brand: {
+          nvidia: "hsl(var(--brand-nvidia))",
+        },
+        integrity: {
+          silver: "hsl(var(--integrity-silver))",
+          gold: "hsl(var(--integrity-gold))",
+          platinum: "hsl(var(--integrity-platinum))",
+        },
         // Add these custom text colors
         "text-dark": "#333333",
         "text-light": "#E6E6E6",

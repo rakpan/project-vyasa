@@ -139,7 +139,7 @@ export function VectorConnection({ className }: VectorConnectionProps) {
               </button>
               <br />
               <span className="text-xs text-gray-600">Or using Docker Compose: </span>
-              <code className="mx-1 px-1 bg-gray-100 rounded">docker compose restart qdrant</code>
+              <code className="mx-1 px-1 bg-muted rounded">docker compose restart qdrant</code>
             </p>
           )}
         </div>

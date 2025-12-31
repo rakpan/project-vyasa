@@ -9,11 +9,18 @@ services:
     command: python3 -m sglang.launch_server --model-path ${BRAIN_MODEL_PATH} --host 0.0.0.0 --port 30000 --tp-size 2 --quantization mxfp4 --mem-fraction-static 0.70 --max-running-requests 2
     environment:
       - HF_TOKEN=${HF_TOKEN}
-      - NVIDIA_VISIBLE_DEVICES=${BRAIN_GPU_IDS}
+      - CUDA_VISIBLE_DEVICES=0
+      - HF_HOME=/raid/vyasa/hf_cache
+      - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
     cpuset: "10-19"
+    shm_size: "16gb"
+    mem_limit: "64g"
     ports:
       - "${PORT_BRAIN}:30000"
     restart: unless-stopped
+    volumes:
+      - /raid/vyasa/hf_cache:/raid/vyasa/hf_cache
+      - /raid/vyasa/model_cache:/root/.cache/huggingface
     networks:
       - ${NETWORK_NAME}
     healthcheck:
@@ -32,11 +39,18 @@ services:
     command: python3 -m sglang.launch_server --model-path ${WORKER_MODEL_PATH} --host 0.0.0.0 --port 30001 --tp-size 1 --quantization fp4 --mem-fraction-static 0.70 --max-running-requests 4 --context-length 16384
     environment:
       - HF_TOKEN=${HF_TOKEN}
-      - NVIDIA_VISIBLE_DEVICES=${WORKER_GPU_IDS}
+      - CUDA_VISIBLE_DEVICES=1
+      - HF_HOME=/raid/vyasa/hf_cache
+      - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
     cpuset: "10-19"
+    shm_size: "16gb"
+    mem_limit: "32g"
     ports:
       - "${PORT_WORKER}:30001"
     restart: unless-stopped
+    volumes:
+      - /raid/vyasa/hf_cache:/raid/vyasa/hf_cache
+      - /raid/vyasa/model_cache:/root/.cache/huggingface
     networks:
       - ${NETWORK_NAME}
     healthcheck:
@@ -54,11 +68,17 @@ services:
     command: python3 -m sglang.launch_server --model-path ${VISION_MODEL_PATH} --host 0.0.0.0 --port 30002 --tp-size 2 --quantization int8 --mem-fraction-static 0.75 --max-running-requests 2
     environment:
       - HF_TOKEN=${HF_TOKEN}
-      - NVIDIA_VISIBLE_DEVICES=${VISION_GPU_IDS}
+      - CUDA_VISIBLE_DEVICES=${VISION_GPU_IDS}
+      - HF_HOME=/raid/vyasa/hf_cache
+      - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
     cpuset: "10-19"
+    shm_size: "16gb"
     ports:
       - "${PORT_VISION}:30002"
     restart: unless-stopped
+    volumes:
+      - /raid/vyasa/hf_cache:/raid/vyasa/hf_cache
+      - /raid/vyasa/model_cache:/root/.cache/huggingface
     networks:
       - ${NETWORK_NAME}
     healthcheck:
@@ -73,12 +93,13 @@ services:
   drafter:
     image: ${DRAFTER_IMAGE}
     environment:
-      - NVIDIA_VISIBLE_DEVICES=${DRAFTER_GPU_IDS}
+      - CUDA_VISIBLE_DEVICES=0
     cpuset: "0-9"
+    shm_size: "16gb"
     ports:
       - "${PORT_DRAFTER}:11434"
     volumes:
-      - ollama_data:/root/.ollama
+      - /raid/vyasa/ollama:/root/.ollama
     restart: unless-stopped
     networks:
       - ${NETWORK_NAME}
@@ -98,7 +119,7 @@ services:
     environment:
       - ARANGO_ROOT_PASSWORD=${ARANGO_ROOT_PASSWORD}
     volumes:
-      - memory_data:/var/lib/arangodb3
+      - /raid/vyasa/arangodb:/var/lib/arangodb3
       - ./scripts/arango-init.js:/docker-entrypoint-initdb.d/arango-init.js:ro
     networks:
       - ${NETWORK_NAME}
@@ -118,7 +139,7 @@ services:
     environment:
       - QDRANT_API_KEY=${QDRANT_API_KEY}
     volumes:
-      - qdrant_data:/qdrant/storage
+      - /raid/vyasa/qdrant:/qdrant/storage
       - ./scripts/qdrant-init.sh:/scripts/qdrant-init.sh:ro
     entrypoint: ["/bin/sh", "-c"]
     command: |
@@ -171,10 +192,18 @@ services:
     build:
       context: ../src/embedder
     cpuset: "0-9"
+    shm_size: "16gb"
     ports:
       - "${PORT_EMBEDDER}:80"
     environment:
-      - MODEL_NAME=${EMBEDDER_MODEL_NAME}
+      - EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH}
+      - HF_TOKEN=${HF_TOKEN}
+      - CUDA_VISIBLE_DEVICES=1
+      - HF_HOME=/raid/vyasa/hf_cache
+      - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
+    volumes:
+      - /raid/vyasa/hf_cache:/raid/vyasa/hf_cache
+      - /raid/vyasa/model_cache:/root/.cache/huggingface
     restart: unless-stopped
     networks:
       - ${NETWORK_NAME}
@@ -189,13 +218,15 @@ services:
   orchestrator:
     image: ${ORCHESTRATOR_IMAGE}
     working_dir: /app
-    command: ["python", "-m", "flask", "--app", "src.orchestrator.server", "run", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "src.orchestrator.main:app", "--host", "0.0.0.0", "--port", "8000"]
     cpuset: "0-9"
     ports:
       - "8000:8000"
     volumes:
       - ../src:/app
       - ./scripts:/app/deploy/scripts:ro
+      - /raid/vyasa/telemetry:/raid/telemetry
+      - /raid/vyasa/scratch:/raid/scratch
     environment:
       - BRAIN_URL=http://cortex-brain:30000
       - WORKER_URL=http://cortex-worker:30001

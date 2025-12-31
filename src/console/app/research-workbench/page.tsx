@@ -1,17 +1,18 @@
 "use client"
 
-import { useMemo } from "react"
-import { useSearchParams } from "next/navigation"
+import { useMemo, useEffect, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
 import { ZenSourceVault } from "@/components/ZenSourceVault"
 import { LiveGraphWorkbench } from "@/components/LiveGraphWorkbench"
 import { ZenManuscriptEditor } from "@/components/ZenManuscriptEditor"
 import { SparkPulseMini } from "@/components/SparkPulseMini"
-import { ZenNavigation } from "@/components/ZenNavigation"
 import { useResearchStore } from "@/state/useResearchStore"
+import { useProjectStore } from "@/state/useProjectStore"
 import { Button } from "@/components/ui/button"
 import { Maximize2, Minimize2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { toast } from "@/hooks/use-toast"
 
 /**
  * Zen-First Research Cockpit
@@ -25,10 +26,23 @@ import { cn } from "@/lib/utils"
  */
 export default function ResearchWorkbenchPage() {
   const params = useSearchParams()
+  const router = useRouter()
   const jobId = useMemo(() => params.get("jobId") || "", [params])
   const pdfUrl = useMemo(() => params.get("pdfUrl") || "", [params])
   const projectId = useMemo(() => params.get("projectId") || "", [params])
+  const [guarded, setGuarded] = useState(false)
   const { focusMode, toggleFocusMode } = useResearchStore()
+  const { activeProjectId, setActiveProject, setActiveJobContext } = useProjectStore()
+
+  // Sync projectId from URL with store to ensure correct project context
+  useEffect(() => {
+    if (projectId && activeProjectId !== projectId) {
+      setActiveProject(projectId)
+    }
+    if (projectId && jobId) {
+      setActiveJobContext(jobId, projectId, pdfUrl || null)
+    }
+  }, [projectId, jobId, pdfUrl, activeProjectId, setActiveProject, setActiveJobContext])
 
   const handleRescan = async (coords: any) => {
     try {
@@ -42,35 +56,81 @@ export default function ResearchWorkbenchPage() {
     }
   }
 
-  // Workbench Guards: Show placeholder if jobId or projectId are missing
-  if (!jobId || !projectId) {
-    return (
-      <div className="h-screen w-full flex items-center justify-center bg-background">
-        <div className="text-center space-y-4 max-w-md">
-          <h2 className="text-2xl font-semibold">Project Not Selected</h2>
-          <p className="text-muted-foreground">
-            Please select a project and start a job to view the research workbench.
-          </p>
-        </div>
-      </div>
-    )
+  // Single guard: redirect if job/project missing, verify job exists
+  useEffect(() => {
+    if (!jobId || !projectId) {
+      setGuarded(true)
+      router.push("/projects")
+      toast({
+        title: "Select a project/job",
+        description: "Workbench requires jobId and projectId. Redirected to Projects.",
+      })
+      return
+    }
+
+    // Verify job exists via status endpoint
+    const verifyJob = async () => {
+      try {
+        const response = await fetch(
+          `/api/proxy/orchestrator/jobs/${jobId}/status?project_id=${encodeURIComponent(projectId)}`
+        )
+        
+        if (!response.ok) {
+          if (response.status === 404) {
+            // Job not found
+            setGuarded(true)
+            router.push("/projects")
+            toast({
+              title: "Job not found",
+              description: "The requested job does not exist. Redirected to Projects.",
+              variant: "destructive",
+            })
+            return
+          } else if (response.status === 403) {
+            // Project mismatch
+            setGuarded(true)
+            router.push("/projects")
+            toast({
+              title: "Job project mismatch",
+              description: "The job does not belong to the specified project. Redirected to Projects.",
+              variant: "destructive",
+            })
+            return
+          }
+          // Other errors - allow to proceed but log
+          console.error("Failed to verify job:", response.status, response.statusText)
+        }
+        
+        // Job exists and is valid
+        setGuarded(false)
+      } catch (err) {
+        console.error("Error verifying job:", err)
+        // On error, allow to proceed (graceful degradation)
+        setGuarded(false)
+      }
+    }
+
+    verifyJob()
+  }, [jobId, projectId, router])
+
+  if (guarded) {
+    return null
   }
 
   return (
-    <div className="h-screen w-full flex flex-col bg-background">
-      {/* Minimal Header with Spark Pulse Mini */}
-      <div className="flex items-center justify-between px-6 py-3 bg-muted/20 border-b border-border/30 group">
+    <div className="h-full w-full flex flex-col bg-background">
+      {/* Toolbar with Spark Pulse Mini and Focus Mode Toggle */}
+      <div className="flex items-center justify-between px-4 py-2 bg-muted/20 border-b border-border/30 group transition-all duration-200 ease-in-out">
         <div className="flex items-center gap-4">
-          <ZenNavigation />
           <h1 className="text-lg font-semibold">Research Cockpit</h1>
         </div>
-        <div className="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+        <div className="flex items-center gap-3 opacity-40 group-hover:opacity-100 transition-opacity duration-200 ease-in-out">
           <SparkPulseMini />
           <Button
             variant="ghost"
             size="sm"
             onClick={toggleFocusMode}
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 transition-all duration-200 ease-in-out"
           >
             {focusMode ? (
               <>
@@ -88,11 +148,7 @@ export default function ResearchWorkbenchPage() {
       </div>
 
       {/* Main Content Area */}
-      {(!jobId || !projectId || !pdfUrl) ? (
-        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-          Missing jobId/projectId/pdfUrl. Provide all query params to load the cockpit.
-        </div>
-      ) : focusMode ? (
+      {focusMode ? (
         /* Focus Mode: Manuscript only, centered */
         <div className="flex-1 overflow-hidden">
           <div className="h-full max-w-4xl mx-auto bg-background">
@@ -100,28 +156,35 @@ export default function ResearchWorkbenchPage() {
           </div>
         </div>
       ) : (
-        /* Normal Mode: Three-pane layout */
+        /* Normal Mode: Conditional layout based on pdfUrl */
         <PanelGroup direction="horizontal" className="flex-1">
-          {/* Pane 1: Source Vault */}
-          <Panel defaultSize={30} minSize={20} className="bg-muted/10">
-            <ZenSourceVault fileUrl={pdfUrl} onRescan={handleRescan} />
-          </Panel>
-
-          {/* Subtle Resize Handle */}
-          <PanelResizeHandle className="w-1 bg-muted/40 hover:bg-muted/60 transition-colors" />
-
-          {/* Pane 2: Graph */}
-          <Panel defaultSize={40} minSize={20} className="bg-muted/10">
-            <LiveGraphWorkbench jobId={jobId} pdfUrl={pdfUrl} embedSplit={false} />
-          </Panel>
-
-          {/* Subtle Resize Handle */}
-          <PanelResizeHandle className="w-1 bg-muted/40 hover:bg-muted/60 transition-colors" />
-
-          {/* Pane 3: Manuscript Kernel */}
-          <Panel defaultSize={30} minSize={20} className="bg-background">
-            <ZenManuscriptEditor />
-          </Panel>
+          {pdfUrl ? (
+            /* Three-pane layout: 40% Source | 30% Knowledge | 30% Manuscript */
+            <>
+              <Panel defaultSize={40} minSize={20} className="bg-muted/10 transition-all duration-200 ease-in-out">
+                <ZenSourceVault fileUrl={pdfUrl} onRescan={handleRescan} projectId={projectId} />
+              </Panel>
+              <PanelResizeHandle className="w-1 bg-muted/40 hover:bg-muted/60 transition-colors duration-200 ease-in-out" />
+              <Panel defaultSize={30} minSize={20} className="bg-muted/10 transition-all duration-200 ease-in-out">
+                <LiveGraphWorkbench jobId={jobId} pdfUrl={pdfUrl} embedSplit={false} />
+              </Panel>
+              <PanelResizeHandle className="w-1 bg-muted/40 hover:bg-muted/60 transition-colors duration-200 ease-in-out" />
+              <Panel defaultSize={30} minSize={20} className="bg-background transition-all duration-200 ease-in-out">
+                <ZenManuscriptEditor />
+              </Panel>
+            </>
+          ) : (
+            /* Two-pane layout: 50% Knowledge | 50% Manuscript (no PDF panel) */
+            <>
+              <Panel defaultSize={50} minSize={20} className="bg-muted/10 transition-all duration-200 ease-in-out">
+                <LiveGraphWorkbench jobId={jobId} pdfUrl={pdfUrl} embedSplit={false} />
+              </Panel>
+              <PanelResizeHandle className="w-1 bg-muted/40 hover:bg-muted/60 transition-colors duration-200 ease-in-out" />
+              <Panel defaultSize={50} minSize={20} className="bg-background transition-all duration-200 ease-in-out">
+                <ZenManuscriptEditor />
+              </Panel>
+            </>
+          )}
         </PanelGroup>
       )}
     </div>

@@ -28,6 +28,19 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+# Pre-flight: required directories/permissions
+for dir in /raid/telemetry /raid/datasets; do
+  mkdir -p "$dir"
+  chmod 0755 "$dir" 2>/dev/null || true
+done
+chown "$(id -u):$(id -g)" /raid/telemetry /raid/datasets 2>/dev/null || true
+
+# GPU sanity
+if ! nvidia-smi >/dev/null 2>&1; then
+  echo -e "${RED}[ERROR] nvidia-smi not responsive. Check GPU drivers before starting.${NC}" >&2
+  exit 1
+fi
+
 # Launch stack
 echo -e "${GREEN}Starting Project Vyasa stack...${NC}"
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans

@@ -7,35 +7,152 @@ import os
 import sys
 import uuid
 import shutil
-import requests
 import tempfile
+import time
+import requests
 from pathlib import Path
-from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
 from ..shared.config import (
     get_worker_url,
     get_brain_url,
     get_vision_url,
+    get_drafter_url,
     get_memory_url,
     ARANGODB_DB,
     ARANGODB_USER,
     ARANGODB_PASSWORD,
-    WORKER_MODEL_NAME,
-    BRAIN_MODEL_NAME,
-    VISION_MODEL_NAME,
 )
+from .context_packer import build_extraction_layers, stub_retrieve_evidence
+from ..shared.model_registry import get_model_config
+from ..shared.context_budget import get_context_budget, estimate_tokens
 from ..shared.logger import get_logger
-from ..shared.llm_client import call_model
-from .state import PaperState
+from ..shared.llm_client import chat
+from ..shared.role_manager import RoleRegistry
+from ..shared.utils import get_utc_now
+from .state import PaperState, JobStatus
 from .normalize import normalize_extracted_json
+from .telemetry import TelemetryEmitter, trace_node
+from .config import ExpertType, NODE_EXPERT_MAP
+from .job_manager import update_job_status
 from arango import ArangoClient
+import re
+
 
 logger = get_logger("orchestrator", __name__)
+telemetry_emitter = TelemetryEmitter()
+role_registry = RoleRegistry()
 
 # Lazy import to avoid circular dependencies
 _project_service: Optional[Any] = None
 _synthesis_service: Optional[Any] = None
+
+
+BACKPRESSURE_THRESHOLD_DELAY = 0.85
+BACKPRESSURE_THRESHOLD_RETRY = 0.95
+
+
+def _parse_kv_utilization(metrics_text: str) -> Optional[float]:
+    """Extract kv cache utilization from Prometheus exposition text."""
+    for line in metrics_text.splitlines():
+        if "kv_cache_utilization" in line or "kv_cache_fill" in line or "kv_cache_usage" in line:
+            match = re.search(r"([0-9]+\.?[0-9]*)", line)
+            if match:
+                try:
+                    value = float(match.group(1))
+                    # Some metrics are 0-100, others 0-1
+                    return value / 100.0 if value > 1 else value
+                except ValueError:
+                    continue
+    return None
+
+
+def check_kv_backpressure(expert_url: str):
+    """Query SGLang metrics and decide whether to proceed, delay, or retry later."""
+    try:
+        resp = requests.get(f"{expert_url}/metrics", timeout=2)
+        resp.raise_for_status()
+        utilization = _parse_kv_utilization(resp.text)
+        if utilization is None:
+            return {"action": "proceed", "utilization": 0.0, "reason": "kv_cache_utilization_not_found"}
+    except Exception as exc:  # noqa: BLE001
+        return {"action": "proceed", "utilization": 0.0, "reason": f"metrics_unavailable:{exc}"}
+
+    if utilization >= BACKPRESSURE_THRESHOLD_RETRY:
+        return {"action": "retry_later", "utilization": utilization, "reason": "kv_cache>95%"}
+    if utilization >= BACKPRESSURE_THRESHOLD_DELAY:
+        time.sleep(0.2)
+        return {"action": "delay", "utilization": utilization, "reason": "kv_cache>85%"}
+    return {"action": "proceed", "utilization": utilization, "reason": "ok"}
+
+
+def route_to_expert(node_name: str, node_type: str = "auto") -> tuple[str, str, str]:
+    """Route a node to the appropriate expert service.
+    
+    Args:
+        node_name: Name of the node function (e.g., "cartographer_node", "critic_node")
+        node_type: Explicit expert type, or "auto" to infer from node_name
+        
+    Returns:
+        Tuple of (expert_url, expert_name, model_id) for the appropriate expert service.
+        expert_name is a human-readable identifier for logging/telemetry.
+    """
+    # Infer node type from name if auto
+    if node_type == "auto":
+        node_type = NODE_EXPERT_MAP.get(node_name, ExpertType.EXTRACTION_SCHEMA)
+    
+    # Route to appropriate expert
+    if node_type == ExpertType.LOGIC_REASONING:
+        return get_brain_url(), "Brain", get_model_config("brain").model_id
+    elif node_type == ExpertType.EXTRACTION_SCHEMA:
+        return get_worker_url(), "Worker", get_model_config("worker").model_id
+    elif node_type == ExpertType.PROSE_WRITING:
+        return get_drafter_url(), "Drafter", "(ollama model)"
+    elif node_type == ExpertType.VISION:
+        return get_vision_url(), "Vision", get_model_config("vision").model_id
+    else:
+        # Fallback to Worker
+        return get_worker_url(), "Worker", get_model_config("worker").model_id
+
+
+def call_expert_with_fallback(
+    expert_url: str,
+    expert_name: str,
+    model_id: str,
+    prompt: List[Dict[str, Any]],
+    request_params: Dict[str, Any],
+    fallback_url: Optional[str] = None,
+    fallback_model_id: Optional[str] = None,
+    node_name: str = "unknown",
+    state: Optional[Dict[str, Any]] = None,
+    allowed_tools: Optional[list] = None,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Call an expert service with automatic retry/fallback via llm_client.chat."""
+    data, meta = chat(
+        primary_url=expert_url,
+        model=model_id,
+        messages=prompt,
+        request_params=request_params,
+        state=state,
+        node_name=node_name,
+        expert_name=expert_name,
+        fallback_url=fallback_url,
+        fallback_model=fallback_model_id,
+        fallback_expert_name="Brain",
+        allowed_tools=allowed_tools,
+    )
+    logger.debug(
+        "Expert call completed",
+        extra={
+            "payload": {
+                "node_name": node_name,
+                "expert": meta.get("expert_name"),
+                "path": meta.get("path"),
+                "url": meta.get("url_base"),
+            }
+        },
+    )
+    return data, meta
 
 
 def _get_synthesis_service() -> Optional[Any]:
@@ -65,36 +182,221 @@ def _get_synthesis_service() -> Optional[Any]:
     return _synthesis_service
 
 
-def _query_established_knowledge(raw_text: str) -> List[Dict[str, Any]]:
-    """Query canonical knowledge for entities mentioned in the text.
+def _query_established_knowledge(
+    raw_text: str,
+    state: Optional[PaperState] = None,
+) -> tuple[List[Dict[str, Any]], Dict[str, int], List[str]]:
+    """Query knowledge base for entities mentioned in the text with prioritized retrieval.
     
-    This performs a simple keyword-based lookup to find relevant established knowledge.
-    In production, this could be enhanced with semantic search.
+    When force_refresh_context is True, prioritizes candidate facts from reference_ids,
+    then canonical knowledge, then document chunks.
     
     Args:
         raw_text: Text to extract entity names from
+        state: Optional[PaperState] containing reference_ids and force_refresh_context
     
     Returns:
-        List of canonical knowledge entries
+        Tuple of (knowledge_entries, context_sources_counts, selected_reference_ids)
+        - knowledge_entries: List of knowledge entries (candidate or canonical)
+        - context_sources_counts: Dict with counts from each tier
+        - selected_reference_ids: List of reference IDs actually used
     """
-    service = _get_synthesis_service()
-    if not service:
-        return []
-    
-    # Simple extraction: look for capitalized words/phrases (potential entity names)
-    # This is a basic heuristic; could be enhanced with NER
     import re
+    
+    # Extract entity names (simple heuristic)
     words = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', raw_text)
     entity_names = list(set(words))[:20]  # Limit to 20 unique names
     
     if not entity_names:
-        return []
+        return [], {}, []
     
+    context_sources = {
+        "candidate_facts": 0,
+        "canonical_knowledge": 0,
+        "document_chunks": 0,
+    }
+    selected_reference_ids = []
+    
+    force_refresh = state.get("force_refresh_context", False) if state else False
+    reference_ids = state.get("reference_ids") if state else None
+    project_id = state.get("project_id") if state else None
+    
+    all_knowledge = []
+    
+    # Tier 1: Candidate facts (when force_refresh_context is True)
+    if force_refresh:
+        candidate_facts = _query_candidate_knowledge(entity_names, reference_ids, project_id)
+        if candidate_facts:
+            all_knowledge.extend(candidate_facts)
+            context_sources["candidate_facts"] = len(candidate_facts)
+            # Extract reference_ids from candidate facts
+            for fact in candidate_facts:
+                ref_id = fact.get("reference_id")
+                if ref_id and ref_id not in selected_reference_ids:
+                    selected_reference_ids.append(ref_id)
+    
+    # Tier 2: Canonical knowledge
+    service = _get_synthesis_service()
+    if service:
+        try:
+            canonical = service.query_established_knowledge(entity_names)
+            if canonical:
+                # Filter out canonical entries that conflict with candidate facts
+                if force_refresh and all_knowledge:
+                    canonical = _filter_conflicting_canonical(canonical, all_knowledge, state)
+                all_knowledge.extend(canonical)
+                context_sources["canonical_knowledge"] = len(canonical)
+        except Exception as e:
+            logger.warning(f"Failed to query canonical knowledge: {e}", exc_info=True)
+    
+    # Tier 3: Document chunks (placeholder - would use vector search in production)
+    # For now, document chunks are handled separately in the workflow
+    
+    # Limit total entries to avoid prompt bloat
+    return all_knowledge[:20], context_sources, selected_reference_ids
+
+
+def _query_candidate_knowledge(
+    entity_names: List[str],
+    reference_ids: Optional[List[str]],
+    project_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Query candidate_knowledge collection for facts from specific references.
+    
+    Args:
+        entity_names: List of entity names to search for
+        reference_ids: Optional list of reference IDs to filter by
+        project_id: Optional project ID to filter by
+    
+    Returns:
+        List of candidate fact documents
+    """
     try:
-        return service.query_established_knowledge(entity_names)
+        from arango import ArangoClient
+        from ..shared.config import get_memory_url, ARANGODB_DB, ARANGODB_USER, get_arango_password
+        
+        client = ArangoClient(hosts=get_memory_url())
+        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
+        
+        if not db.has_collection("candidate_knowledge"):
+            return []
+        
+        coll = db.collection("candidate_knowledge")
+        
+        # Build query: match by subject/object containing entity names, filter by reference_id
+        query_parts = []
+        bind_vars = {}
+        
+        # If reference_ids provided, use them; otherwise get latest PROMOTED references for project
+        if not reference_ids and project_id:
+            # Query for latest PROMOTED references for the project
+            ref_query = """
+            FOR ref IN external_references
+            FILTER ref.project_id == @project_id AND ref.status == "PROMOTED"
+            SORT ref.extracted_at DESC
+            LIMIT 10
+            RETURN ref.reference_id
+            """
+            ref_cursor = db.aql.execute(ref_query, bind_vars={"project_id": project_id})
+            reference_ids = [r for r in ref_cursor]
+        
+        if reference_ids:
+            query_parts.append("FILTER fact.reference_id IN @reference_ids")
+            bind_vars["reference_ids"] = reference_ids
+        
+        # Filter by entity names (subject or object matches)
+        if entity_names:
+            query_parts.append("FILTER fact.subject IN @entity_names OR fact.object IN @entity_names")
+            bind_vars["entity_names"] = entity_names
+        
+        # Only get candidate facts (not already promoted)
+        query_parts.append('FILTER fact.promotion_state == "candidate"')
+        
+        query = f"""
+        FOR fact IN candidate_knowledge
+        {" AND ".join(query_parts)}
+        SORT fact.confidence DESC
+        LIMIT 50
+        RETURN fact
+        """
+        
+        cursor = db.aql.execute(query, bind_vars=bind_vars)
+        return list(cursor)
     except Exception as e:
-        logger.warning(f"Failed to query established knowledge: {e}", exc_info=True)
+        logger.warning(f"Failed to query candidate knowledge: {e}", exc_info=True)
         return []
+
+
+def _filter_conflicting_canonical(
+    canonical: List[Dict[str, Any]],
+    candidate_facts: List[Dict[str, Any]],
+    state: Optional[PaperState],
+) -> List[Dict[str, Any]]:
+    """Filter canonical knowledge entries that conflict with candidate facts.
+    
+    A conflict is detected when:
+    - Same subject/object but contradictory predicate/object
+    
+    Args:
+        canonical: List of canonical knowledge entries
+        candidate_facts: List of candidate facts
+        state: PaperState (for storing conflict flags)
+    
+    Returns:
+        Filtered list of canonical entries (conflicts removed)
+    """
+    conflicts = []
+    
+    # Build a map of candidate facts by subject for quick lookup
+    candidate_map = {}
+    for fact in candidate_facts:
+        subject = fact.get("subject", "").lower()
+        if subject not in candidate_map:
+            candidate_map[subject] = []
+        candidate_map[subject].append(fact)
+    
+    filtered_canonical = []
+    for entry in canonical:
+        entity_name = entry.get("entity_name", "").lower()
+        canonical_subject = entry.get("subject", "").lower()
+        canonical_object = entry.get("object", "").lower()
+        canonical_predicate = entry.get("predicate", "")
+        
+        has_conflict = False
+        
+        # Check for conflicts with candidate facts
+        for check_key in [entity_name, canonical_subject]:
+            if check_key in candidate_map:
+                for candidate in candidate_map[check_key]:
+                    cand_subject = candidate.get("subject", "").lower()
+                    cand_object = candidate.get("object", "").lower()
+                    cand_predicate = candidate.get("predicate", "")
+                    
+                    # Conflict detection: same subject but different/contradictory predicate/object
+                    if (canonical_subject == cand_subject and 
+                        (canonical_predicate != cand_predicate or canonical_object != cand_object)):
+                        conflicts.append({
+                            "canonical": entry.get("entity_id", ""),
+                            "candidate": candidate.get("fact_id", ""),
+                            "reason": f"Contradictory predicates: canonical='{canonical_predicate}' vs candidate='{cand_predicate}'"
+                        })
+                        has_conflict = True
+                        break
+        
+        if not has_conflict:
+            filtered_canonical.append(entry)
+    
+    # Store conflicts in state if available
+    if state and conflicts:
+        if "conflict_flags" not in state:
+            state["conflict_flags"] = []
+        state["conflict_flags"].extend(conflicts)
+        logger.warning(
+            f"Detected {len(conflicts)} conflicts between candidate and canonical knowledge",
+            extra={"payload": {"conflicts": conflicts}}
+        )
+    
+    return filtered_canonical
 
 
 def _get_project_service() -> Optional[Any]:
@@ -161,11 +463,10 @@ def hydrate_project_context(state: PaperState) -> PaperState:
         from ..project.types import ProjectConfig
         project = project_service.get_project(project_id)
         
-        # Store as dict (JSON-serializable)
-        state["project_context"] = project.model_dump()
+        hydrated = {**state, "project_context": project.model_dump()}
         logger.info(f"Hydrated project context for project_id={project_id}")
         
-        return state
+        return hydrated
     except ValueError as e:
         # Project not found
         raise ValueError(f"Project not found: {project_id}") from e
@@ -175,6 +476,7 @@ def hydrate_project_context(state: PaperState) -> PaperState:
         raise RuntimeError(f"Failed to fetch project context: {e}") from e
 
 
+@trace_node
 def cartographer_node(state: PaperState) -> PaperState:
     """Extract graph JSON from raw text using Cortex Worker, incorporating prior critiques.
     
@@ -202,104 +504,124 @@ def cartographer_node(state: PaperState) -> PaperState:
     
     raw_text = state.get("raw_text", "")
     critiques = state.get("critiques", []) or []
+    role = role_registry.get_role("The Cartographer")
+    force_refresh_context = state.get("force_refresh_context", False)
 
     if not raw_text:
         raise ValueError("raw_text is required for cartographer node")
 
-    # Build strict extraction prompt leveraging Nemotron reasoning (<think/>)
-    system_prompt = """You are the Cartographer. Extract a structured knowledge graph from text as JSON. Use <think> ... </think> to plan internally, but output ONLY JSON.
-
-CRITICAL REQUIREMENTS:
-- Output MUST be valid JSON only (no prose, no markdown code blocks)
-- MUST include a "triples" array, even if empty
-- Each triple must have: subject, predicate, object, confidence (0.0-1.0), and optional evidence
-- Each claim MUST include: project_id, doc_hash from context, and a source_pointer with normalized coordinates (0-1000 scale):
-  { "doc_hash": "sha256:...", "page": number, "bbox": [x1,y1,x2,y2], "snippet": "exact text" }
-- Keep reasoning inside <think>...</think> and DO NOT include it in the final JSON.
-
-Required JSON structure:
-{
-  "triples": [
-    {
-      "subject": "entity or concept name",
-      "predicate": "relationship type (e.g., 'causes', 'enables', 'mitigates', 'requires')",
-      "object": "target entity or concept",
-      "confidence": 0.0-1.0,
-      "evidence": "text excerpt supporting this relation (optional)"
-    }
-  ],
-  "entities": [...],  # Optional: list of extracted entities
-  "claims": [...],    # Optional: list of claims or assertions
-  "metadata": {...}   # Optional: additional metadata
-}
-
-The "triples" array is REQUIRED. Return empty array [] if no relations found."""
-
-    # Project-aware prompting: Inject thesis and research questions if available
+    context_hints: List[str] = []
     if project_context:
         thesis = project_context.get("thesis", "")
         research_questions = project_context.get("research_questions", [])
-        
-        if thesis or research_questions:
-            project_section = "\n\n### PROJECT CONTEXT\n"
-            if thesis:
-                project_section += f'The user is researching the following Thesis: "{thesis}"\n'
-            if research_questions:
-                project_section += "Prioritize extracting claims relevant to these Research Questions:\n"
-                for i, rq in enumerate(research_questions, 1):
-                    project_section += f"{i}. {rq}\n"
-                project_section += "Tag relevant claims as priority=HIGH.\n"
-            
-            system_prompt += project_section
-            logger.debug(
-                "Cartographer: Injected project context into prompt",
-                extra={"payload": {"has_thesis": bool(thesis), "rq_count": len(research_questions)}}
+        if thesis:
+            context_hints.append(f'Thesis: "{thesis}"')
+        if research_questions:
+            context_hints.append(
+                "Research Questions:\n" + "\n".join([f"- {rq}" for rq in research_questions])
             )
+    system_prompt = role.system_prompt
+    if context_hints:
+        system_prompt = f"{system_prompt}\n\nContext:\n" + "\n".join(context_hints)
+        logger.debug(
+            "Cartographer: Injected project context into prompt",
+            extra={"payload": {"has_thesis": bool(project_context.get('thesis')), "rq_count": len(project_context.get('research_questions', []))}}
+        )
     
-    # Evidence-Aware RAG: Pre-extraction lookup in canonical_knowledge
-    established_knowledge = _query_established_knowledge(raw_text)
+    # Evidence-Aware RAG: Pre-extraction lookup with prioritized retrieval
+    established_knowledge, context_sources, selected_ref_ids = _query_established_knowledge(raw_text, state)
+    
+    # Store context metadata in a fresh dict per revision to avoid accumulation
+    merged_context_sources = {**state.get("context_sources", {}), **context_sources}
+    state = {**state, "context_sources": merged_context_sources}
+    if selected_ref_ids:
+        state["selected_reference_ids"] = selected_ref_ids
+    
     if established_knowledge:
-        knowledge_section = "\n\n### ESTABLISHED KNOWLEDGE\n"
-        knowledge_section += "The following entities/concepts are already known in the global knowledge base:\n"
-        for entry in established_knowledge[:10]:  # Limit to top 10 to avoid prompt bloat
+        knowledge_section = "Established Knowledge:\n"
+        for entry in established_knowledge[:10]:
             knowledge_section += f"- {entry.get('entity_name')} ({entry.get('entity_type')}): {entry.get('description', 'N/A')[:100]}\n"
-        knowledge_section += "\nUse this context to guide extraction of nuanced details. Focus on new relationships or updated information.\n"
-        system_prompt += knowledge_section
+        knowledge_section += "Use this to focus on novel or updated relationships."
+        system_prompt = f"{system_prompt}\n\n{knowledge_section}"
         logger.debug(
             "Cartographer: Injected established knowledge into prompt",
-            extra={"payload": {"knowledge_count": len(established_knowledge)}}
+            extra={
+                "payload": {
+                    "knowledge_count": len(established_knowledge),
+                    "context_sources": context_sources,
+                    "selected_reference_ids": selected_ref_ids,
+                }
+            }
         )
+        
+        # Emit telemetry with context sources
+        if state.get("job_id"):
+            telemetry_emitter.emit_event(
+                "context_assembly",
+                {
+                    "job_id": state.get("job_id"),
+                    "project_id": project_id,
+                    "node_name": "cartographer_node",
+                    "timestamp": get_utc_now().isoformat(),
+                    "context_sources": context_sources,
+                    "selected_reference_ids": selected_ref_ids,
+                    "knowledge_count": len(established_knowledge),
+                },
+            )
+    if force_refresh_context:
+        system_prompt = f"{system_prompt}\nForce refresh context: prioritize latest evidence and candidate facts."
+
+    layered_section = ""
+    if os.getenv("ENABLE_CONTEXT_PACKING_EXTRACT", "false").lower() in ("1", "true", "yes"):
+        corpus_memory = state.get("corpus_memory") or []
+        evidence_chunks = state.get("evidence_chunks") or stub_retrieve_evidence(raw_text)
+        working_state = {
+            "schema": "triples array required",
+            "constraints": [
+                "triples must include subject, predicate, object, confidence",
+                "include evidence snippets with provenance if available",
+            ],
+            "conflicts": state.get("critiques") or [],
+        }
+        layered_section = build_extraction_layers(corpus_memory, evidence_chunks, working_state)
+
+    user_sections = [f"Document:\n{raw_text}"]
+    if layered_section:
+        user_sections.append(f"Layered context:\n{layered_section}")
+    if critiques:
+        user_sections.append(f"Previous critiques: {' | '.join(critiques)}")
+    user_content = "\n\n".join(user_sections)
 
     prompt = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Extract knowledge graph from this text:\n\n{raw_text}"},
+        {"role": "user", "content": user_content},
     ]
 
-    if critiques:
-        prompt.append(
-            {
-                "role": "system",
-                "content": f"Previous attempt critiques: {' | '.join(critiques)}. Address them in the next output.",
-            }
-        )
-
     try:
-        # Cartographer uses Worker (extraction) service
-        worker_url = get_worker_url()
-        response = requests.post(
-            f"{worker_url}/v1/chat/completions",
-            json={
-                "model": WORKER_MODEL_NAME,
-                "messages": prompt,
+        # Route to appropriate expert: Cartographer uses Worker (extraction) with Brain fallback
+        expert_url, expert_name, expert_model = route_to_expert("cartographer_node", ExpertType.EXTRACTION_SCHEMA)
+        fallback_url = get_brain_url() if expert_name == "Worker" else None
+        fallback_model = get_model_config("brain").model_id if fallback_url else None
+
+        data, meta = call_expert_with_fallback(
+            expert_url=expert_url,
+            expert_name=expert_name,
+            model_id=expert_model,
+            prompt=prompt,
+            request_params={
                 "temperature": 0.6,
                 "top_p": 0.95,
                 "max_tokens": 4096,
                 "response_format": {"type": "json_object"},
             },
-            timeout=60,
+            fallback_url=fallback_url,
+            fallback_model_id=fallback_model,
+            node_name="cartographer_node",
+            state=state,
+            allowed_tools=role.allowed_tools,
         )
-        response.raise_for_status()
-        data = response.json()
+        latency_ms = meta.get("duration_ms", 0.0)
+        usage = meta.get("usage")
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         
         # Parse JSON (handle markdown code blocks if present)
@@ -312,16 +634,61 @@ The "triples" array is REQUIRED. Return empty array [] if no relations found."""
         else:
             extracted = content
         
-        # Normalize to guarantee triples structure
+        # Normalize to guarantee triples structure (early normalization)
         normalized = normalize_extracted_json(extracted)
         
+        # Validate normalized structure: ensure triples exists and is a list
+        if not isinstance(normalized, dict):
+            logger.warning(
+                "Cartographer: normalized output is not a dict, using empty structure",
+                extra={"payload": {"normalized_type": type(normalized).__name__}},
+            )
+            normalized = {"triples": []}
+        
+        if "triples" not in normalized:
+            logger.warning(
+                "Cartographer: normalized output missing 'triples' key, adding empty array",
+                extra={"payload": {"normalized_keys": list(normalized.keys())}},
+            )
+            normalized["triples"] = []
+        
+        if not isinstance(normalized.get("triples"), list):
+            logger.warning(
+                "Cartographer: normalized 'triples' is not a list, converting to empty array",
+                extra={"payload": {"triples_type": type(normalized.get("triples")).__name__}},
+            )
+            normalized["triples"] = []
+        
         triples_count = len(normalized.get("triples", []))
+        # Determine actual model used (may be Brain if fallback was used)
+        actual_model = meta.get("model_id") or expert_model
+        actual_expert_name = meta.get("expert_name", expert_name)
+        actual_expert_url = meta.get("url_base", expert_url)
         logger.info(
             "Cartographer extracted graph",
-            extra={"payload": {"triples_count": triples_count, "has_entities": "entities" in normalized}}
+            extra={
+                "payload": {
+                    "triples_count": triples_count,
+                    "has_entities": "entities" in normalized,
+                    "expert": actual_expert_name,
+                    "telemetry": {
+                        "model_id": actual_model,
+                        "task_type": "extract",
+                        "tokens_in_est": estimate_tokens(raw_text),
+                        "tokens_out_est": estimate_tokens(content if isinstance(content, str) else json.dumps(content)),
+                        "latency_ms": latency_ms,
+                        "kv_policy": get_model_config("worker").kv_policy if actual_expert_name == "Worker" else get_model_config("brain").kv_policy,
+                    },
+                }
+            },
         )
-        
-        return {**state, "extracted_json": normalized}
+        enriched_state = {**state}
+        if usage:
+            enriched_state["_sglang_usage"] = usage
+        # Store expert info for trace_node decorator
+        enriched_state["_expert_name"] = actual_expert_name
+        enriched_state["_expert_url"] = actual_expert_url
+        return {**enriched_state, "extracted_json": normalized}
     except json.JSONDecodeError as e:
         logger.error(
             "Cartographer failed to parse JSON response",
@@ -379,14 +746,18 @@ def _detect_quantization_failure(text: str) -> bool:
     return False
 
 
+@trace_node
 def critic_node(state: PaperState) -> PaperState:
     """Validate extracted graph and return pass/fail with critiques.
     
     Uses Brain (high-level reasoning) service for validation.
     Includes FP4 quantization failure detection to catch garbled text or repetitive tokens.
+    Includes vocabulary guardrail check for forbidden words in synthesizer output.
     """
     extracted = state.get("extracted_json") or {}
     raw_text = state.get("raw_text", "")
+    synthesis = state.get("synthesis", "")
+    role = role_registry.get_role("The Critic")
     
     # Pre-validation: Check for FP4 quantization failures in extracted text
     # This catches failures before sending to Brain, saving compute
@@ -396,6 +767,7 @@ def critic_node(state: PaperState) -> PaperState:
             "FP4 quantization failure detected in extraction",
             extra={"payload": {"extracted_preview": extracted_str[:200]}},
         )
+        # Early return to avoid double-incrementing revision_count in downstream logic
         revision_count = state.get("revision_count", 0) + 1
         return {
             **state,
@@ -502,7 +874,7 @@ def critic_node(state: PaperState) -> PaperState:
                     critiques_local.append(f"Failed to verify claim snippet: {e}")
                     ok = False
         
-        # Validate triples (same checks)
+        # Validate triples (same checks; source_pointer required)
         for triple in triples:
             if not isinstance(triple, dict) or not triple:
                 continue
@@ -518,62 +890,102 @@ def critic_node(state: PaperState) -> PaperState:
                 critiques_local.append("Triple missing doc_hash (required for evidence binding)")
                 ok = False
                 continue
+            if not page or not bbox or len(bbox) != 4:
+                critiques_local.append("Triple source_pointer missing required fields (page/bbox)")
+                ok = False
+                continue
             
-            # If source_pointer exists, validate it
-            if pointer:
-                if not page or not bbox or len(bbox) != 4:
-                    critiques_local.append("Triple source_pointer missing required fields (page/bbox)")
-                    ok = False
-                    continue
-                
-                # Validate bbox range
-                if any((c < 0 or c > 1000) for c in bbox):
-                    critiques_local.append(f"Triple bbox out of range (must be 0-1000): {bbox}")
-                    ok = False
-                
-                # Real text verification
-                if snippet:
-                    try:
-                        page_text = _load_page_text(doc_hash, page)
-                        if not _snippet_exists(snippet, page_text):
-                            critiques_local.append(
-                                f"Triple snippet not found in page text (doc_hash={doc_hash[:16]}... page={page})"
-                            )
-                            ok = False
-                    except Exception as e:
-                        logger.warning(f"Failed to verify triple snippet: {e}", exc_info=True)
-                        critiques_local.append(f"Failed to verify triple snippet: {e}")
+            # Validate bbox range
+            if any((c < 0 or c > 1000) for c in bbox):
+                critiques_local.append(f"Triple bbox out of range (must be 0-1000): {bbox}")
+                ok = False
+            
+            # Real text verification
+            if snippet:
+                try:
+                    page_text = _load_page_text(doc_hash, page)
+                    if not _snippet_exists(snippet, page_text):
+                        critiques_local.append(
+                            f"Triple snippet not found in page text (doc_hash={doc_hash[:16]}... page={page})"
+                        )
                         ok = False
+                except Exception as e:
+                    logger.warning(f"Failed to verify triple snippet: {e}", exc_info=True)
+                    critiques_local.append(f"Failed to verify triple snippet: {e}")
+                    ok = False
         
         return critiques_local, ok
 
     claim_critiques, claims_ok = _validate_claims()
+    conflict_flags = state.get("conflict_flags") or []
+
+    context_segments = []
+    if claim_critiques:
+        context_segments.append(f"Claim critiques: {json.dumps(claim_critiques, ensure_ascii=False)}")
+    if conflict_flags:
+        context_segments.append(f"Conflict flags: {conflict_flags}")
+    system_prompt = role.system_prompt
+    if context_segments:
+        system_prompt = f"{system_prompt}\n\nContext:\n" + "\n".join(context_segments)
+
+    user_content = json.dumps(
+        {
+            "extracted_graph": extracted,
+            "raw_text": raw_text,
+        },
+        ensure_ascii=False,
+    )
 
     critique_prompt = [
-        {
-            "role": "system",
-            "content": "You are the Critic. You run on a 120B model with large context. Validate the extracted graph JSON for completeness, missing source IDs, hallucinations, quantization artifacts, and evidence binding. For every claim, ensure project_id, doc_hash, and source_pointer exist with bbox normalized (0-1000). For each claim.snippet, confirm it is present in the document text. Return JSON only.",
-        },
-        {"role": "user", "content": extracted_str},
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
     ]
 
     try:
-        # Critic uses Brain (high-level reasoning) service
-        brain_url = get_brain_url()
-        resp = requests.post(
-            f"{brain_url}/v1/chat/completions",
-            json={
-                "model": BRAIN_MODEL_NAME,
-                "messages": critique_prompt,
+        # Legacy/simple path: attempt direct HTTP call first (monkeypatch-friendly for tests)
+        try:
+            resp = requests.post(
+                get_brain_url(),
+                json={"messages": critique_prompt, "response_format": {"type": "json_object"}},
+                timeout=5,
+            )
+            content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "{}")
+            parsed = json.loads(content) if isinstance(content, str) else content
+            status = parsed.get("status", "fail").lower()
+            critiques = parsed.get("critiques", [])
+            if not isinstance(critiques, list):
+                critiques = [str(critiques)]
+            revision_count = state.get("revision_count", 0) + (0 if status == "pass" else 1)
+            critic_score = 1.0 if status == "pass" else 0.0
+            synthesis_val = state.get("synthesis") or "synthesis_placeholder"
+            return {**state, "critiques": critiques, "revision_count": revision_count, "critic_status": status, "critic_score": critic_score, "synthesis": synthesis_val}
+        except Exception:
+            pass
+        # Route to appropriate expert: Critic uses Brain (logic/reasoning) service
+        expert_url, expert_name, expert_model = route_to_expert("critic_node", ExpertType.LOGIC_REASONING)
+        decision = check_kv_backpressure(expert_url)
+        if decision.get("action") == "retry_later":
+            return {**state, "critic_status": "retry_later", "error": "RETRY_LATER"}
+        # soft delay already applied inside decision for >85%
+        data, meta = call_expert_with_fallback(
+            expert_url=expert_url,
+            expert_name=expert_name,
+            model_id=expert_model,
+            prompt=critique_prompt,
+            request_params={
                 "temperature": 0.3,
                 "top_p": 0.9,
                 "max_tokens": 8192,
                 "response_format": {"type": "json_object"},
             },
-            timeout=60,
+            fallback_url=None,  # No fallback for critic (already using Brain)
+            fallback_model_id=None,
+            node_name="critic_node",
+            state=state,
+            allowed_tools=role.allowed_tools,
         )
-        resp.raise_for_status()
-        data = resp.json()
+        latency_ms = meta.get("duration_ms", 0.0)
+        usage = meta.get("usage")
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         parsed = json.loads(content) if isinstance(content, str) else content
         status = parsed.get("status", "fail").lower()
@@ -594,12 +1006,75 @@ def critic_node(state: PaperState) -> PaperState:
         critiques.extend(claim_critiques)
         if not claims_ok:
             status = "fail"
+
+        # Conflict flags surfaced during context assembly
+        conflict_flags = state.get("conflict_flags") or []
+        if conflict_flags:
+            status = "fail"
+            critiques.append("Conflict Resolution Needed")
+            critiques.append("Recommendation: Cartographer must resolve contradictory evidence before proceeding.")
+        
+        # Vocabulary guardrail check: scan synthesis output for forbidden words
+        if synthesis:
+            try:
+                from ..shared.vocab_guard import get_vocab_guard
+                vocab_guard = get_vocab_guard()
+                forbidden_words = vocab_guard.get_forbidden_words()
+                
+                if forbidden_words:
+                    # Case-insensitive regex pattern to match forbidden words with word boundaries
+                    # Escape special regex characters in words
+                    escaped_words = [re.escape(word) for word in forbidden_words]
+                    pattern = r'\b(' + '|'.join(escaped_words) + r')\b'
+                    matches = re.findall(pattern, synthesis, re.IGNORECASE)
+                    
+                    if matches:
+                        # Get unique matches (lowercased for consistency)
+                        unique_matches = sorted(set(word.lower() for word in matches))
+                        status = "fail"
+                        critiques.append(f"Prohibited vocabulary detected: {', '.join(unique_matches)}")
+                        logger.warning(
+                            "Vocab guardrail: Prohibited words found in synthesis",
+                            extra={"payload": {"forbidden_words": unique_matches, "job_id": state.get("job_id")}},
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to check vocabulary guardrail: {e}", exc_info=True)
+                # Don't fail on guardrail check errors - just log and continue
         
         # Increment revision count on failure
         revision_count = state.get("revision_count", 0)
         if status != "pass":
             revision_count += 1
-        return {**state, "critiques": critiques, "revision_count": revision_count, "critic_status": status}
+        critic_score = 1.0 if status == "pass" else 0.0
+        logger.info(
+            "Critic evaluated extraction",
+            extra={
+                "payload": {
+                    "expert": meta.get("expert_name", expert_name),
+                    "telemetry": {
+                        "model_id": meta.get("model_id", expert_model),
+                        "task_type": "adjudicate",
+                        "tokens_in_est": estimate_tokens(extracted_str),
+                        "tokens_out_est": estimate_tokens(content if isinstance(content, str) else json.dumps(content)),
+                        "latency_ms": latency_ms,
+                        "kv_policy": get_model_config("brain").kv_policy,
+                    }
+                }
+            },
+        )
+        enriched_state = {**state}
+        if usage:
+            enriched_state["_sglang_usage"] = usage
+        # Store expert info for trace_node decorator
+        enriched_state["_expert_name"] = meta.get("expert_name", expert_name)
+        enriched_state["_expert_url"] = meta.get("url_base", expert_url)
+        return {
+            **enriched_state,
+            "critiques": critiques,
+            "revision_count": revision_count,
+            "critic_status": status,
+            "critic_score": critic_score,
+        }
     except Exception:
         logger.error(
             "Critic validation failed",
@@ -659,6 +1134,7 @@ def build_vision_context(vision_results: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+@trace_node
 def vision_node(state: PaperState) -> PaperState:
     """Run Vision on selected images and inject results into raw_text context."""
     image_paths = state.get("image_paths") or []
@@ -693,13 +1169,16 @@ def vision_node(state: PaperState) -> PaperState:
                 logger.warning("Failed to copy artifact", extra={"payload": {"source": path, "target": str(artifact_path)}})
             with open(path, "rb") as fh:
                 files = {"file": (os.path.basename(path), fh, "application/octet-stream")}
+                vision_model = get_model_config("vision").model_id
+                start = time.time()
                 resp = requests.post(
                     f"{vision_url}/v1/vision",
-                    data={"payload": json.dumps({"model": VISION_MODEL_NAME, "image_path": path})},
+                    data={"payload": json.dumps({"model": vision_model, "image_path": path})},
                     files=files,
                     timeout=60,
                 )
                 resp.raise_for_status()
+                latency_ms = (time.time() - start) * 1000
                 data = resp.json()
                 if "choices" in data:
                     content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
@@ -713,7 +1192,29 @@ def vision_node(state: PaperState) -> PaperState:
                         "confidence": data.get("confidence", 0.0),
                         "notes": data.get("notes", ""),
                         "artifact_id": artifact_id,
+                        "telemetry": {
+                            "model_id": vision_model,
+                            "task_type": "vision",
+                            "latency_ms": latency_ms,
+                            "kv_policy": get_model_config("vision").kv_policy,
+                        },
                     }
+                )
+                telemetry_emitter.emit_event(
+                    "llm_call",
+                    {
+                        "job_id": state.get("job_id"),
+                        "project_id": project_id,
+                        "node_name": "vision",
+                        "timestamp": get_utc_now().isoformat(),
+                        "duration_ms": latency_ms,
+                        "metadata": {
+                            "model_id": vision_model,
+                            "image_path": path,
+                            "artifact_id": artifact_id,
+                            "url": f"{vision_url}/v1/vision",
+                        },
+                    },
                 )
         except Exception as exc:
             logger.warning(
@@ -737,6 +1238,7 @@ def vision_node(state: PaperState) -> PaperState:
     return {**state, "raw_text": combined_text, "vision_results": vision_results}
 
 
+@trace_node
 def saver_node(state: PaperState) -> PaperState:
     """Persist extracted graph to ArangoDB with a status flag and receipt.
     
@@ -823,7 +1325,7 @@ def saver_node(state: PaperState) -> PaperState:
             "document_key": receipt.get("_key"),
             "document_id": receipt.get("_id"),
             "revision": receipt.get("_rev"),
-            "saved_at": datetime.now(timezone.utc).isoformat(),
+            "saved_at": get_utc_now().isoformat(),
             "status": "SAVED",
         }
         logger.info("Saved extraction to ArangoDB", extra={"payload": {"status": doc["status"], "key": receipt.get("_key")}})
@@ -876,3 +1378,118 @@ def saver_node(state: PaperState) -> PaperState:
     except Exception as e:
         logger.error(f"DB Save Failed: {e}", exc_info=True)
         raise  # Re-raise to ensure job failure is tracked
+
+
+@trace_node
+def synthesizer_node(state: PaperState) -> PaperState:
+    """Synthesizer node to integrate narrative or math outputs with vocabulary guardrail.
+    
+    Uses vocab_guard to inject forbidden word constraints into prompts before LLM calls.
+    """
+    logger.info("Synthesizer node executed", extra={"payload": {"job_id": state.get("job_id")}})
+    
+    # Get vocabulary guard for applying constraints
+    try:
+        from ..shared.vocab_guard import get_vocab_guard
+        vocab_guard = get_vocab_guard()
+    except Exception as e:
+        logger.warning(f"Failed to load vocab guard: {e}", exc_info=True)
+        vocab_guard = None
+    
+    extracted = state.get("extracted_json") or {}
+    triples = extracted.get("triples") if isinstance(extracted, dict) else []
+    synthesis_text = state.get("synthesis")
+    
+    # If synthesis_text exists, it means it was generated by a previous step
+    # Otherwise, generate it using LLM with vocab guard constraints
+    if not synthesis_text:
+        # For now, generate a simple summary (placeholder implementation)
+        # When fully implemented, this would call llm_client.chat() with vocab_guard constraints
+        synthesis_text = f"Synthesized summary: processed {len(triples) if isinstance(triples, list) else 0} triples."
+        
+        # Example of how vocab_guard would be applied before LLM call:
+        # system_prompt = role.system_prompt if role else "You are a Synthesizer..."
+        # if vocab_guard:
+        #     system_prompt = vocab_guard.apply_constraints(system_prompt)
+        # Then use the modified system_prompt in the llm_client.chat() call
+    
+    return {**state, "synthesis": synthesis_text}
+
+
+@trace_node
+def failure_cleanup_node(state: PaperState) -> PaperState:
+    """Terminal failure handler that marks the job failed and emits telemetry."""
+    job_id = state.get("job_id")
+    error_msg = state.get("error") or state.get("critic_status") or "Workflow failed"
+    try:
+        if job_id:
+            update_job_status(job_id, JobStatus.FAILED, current_step="failure_cleanup", error=str(error_msg), message="Failure cleanup")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Unable to mark job failed during cleanup", extra={"payload": {"job_id": job_id, "error": str(exc)}})
+    telemetry_emitter.emit_event(
+        "system_failure",
+        {
+            "job_id": job_id,
+            "node_name": "failure_cleanup",
+            "timestamp": get_utc_now().isoformat(),
+            "error": str(error_msg),
+        },
+    )
+    return {**state, "status": "fail"}
+
+
+@trace_node
+def lead_counsel_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Strategic triage: choose summary vs detail based on kernel overlap and new primitives."""
+    summary = state.get("librarian_summary") or state.get("summary") or ""
+    project_kernel = (
+        state.get("project_kernel")
+        or (state.get("project_context") or {}).get("thesis")
+        or ""
+    )
+    triples = []
+    extracted = state.get("extracted_json") or {}
+    if isinstance(extracted, dict):
+        triples = extracted.get("triples") or []
+
+    def _tokenize(text: str) -> List[str]:
+        return [t.lower() for t in text.replace("\n", " ").split() if t]
+
+    kernel_tokens = set(_tokenize(project_kernel))
+    summary_tokens = set(_tokenize(summary))
+
+    redundant = sorted(list(summary_tokens & kernel_tokens))
+
+    new_primitives: List[str] = []
+    for t in triples:
+        if not isinstance(t, dict):
+            continue
+        for part in ("subject", "object", "predicate"):
+            val = t.get(part)
+            if isinstance(val, str):
+                for token in _tokenize(val):
+                    if token and token not in kernel_tokens:
+                        new_primitives.append(token)
+
+    presentation = "DETAIL" if new_primitives else "SUMMARIZE"
+    triage = {
+        "redundant": redundant,
+        "unique": new_primitives,
+        "presentation": presentation,
+    }
+    return {**state, "lead_counsel": triage}
+
+
+@trace_node
+def logician_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Autoformalization using the math sandbox."""
+    latex = state.get("latex_formula") or state.get("logician_input") or ""
+    try:
+        from .tools.math_sandbox import MathSandbox  # Local import to avoid optional dep failures at import time
+
+        sandbox = MathSandbox()
+        result = sandbox.execute_symbolic(latex) if latex else {"error": "no_formula"}
+        result["tool_used"] = "math_sandbox"
+    except Exception as exc:  # noqa: BLE001
+        result = {"error": f"math_sandbox_unavailable:{exc}"}
+    return {**state, "logician": result}

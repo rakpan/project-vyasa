@@ -5,11 +5,12 @@
  * Dense, functional engineering tool design.
  */
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Plus, Calendar, FileText } from "lucide-react"
+import { Plus, Calendar, FileText, Play } from "lucide-react"
 import { useProjectStore } from "@/state/useProjectStore"
 import { Button } from "@/components/ui/button"
+import { toast } from "@/hooks/use-toast"
 import {
   Table,
   TableBody,
@@ -32,11 +33,21 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { ProjectCreate } from "@/types/project"
 
+interface ProjectJob {
+  job_id: string
+  status: string
+  pdf_path?: string
+  pdf_url?: string
+  pdfUrl?: string
+}
+
 export default function ProjectsPage() {
   const router = useRouter()
   const { projects, isLoading, error, fetchProjects, createProject } = useProjectStore()
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [projectJobs, setProjectJobs] = useState<Record<string, ProjectJob | null>>({})
+  const [loadingJobs, setLoadingJobs] = useState(false)
   const [formData, setFormData] = useState<ProjectCreate>({
     title: "",
     thesis: "",
@@ -51,6 +62,127 @@ export default function ProjectsPage() {
   useEffect(() => {
     fetchProjects()
   }, [fetchProjects])
+
+  // Request sequence number for stale response protection
+  const fetchSequenceRef = useRef(0)
+  // AbortController for cancelling in-flight requests
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  // Fetch latest job for each project
+  useEffect(() => {
+    if (projects.length === 0) return
+
+    // Cancel any in-flight requests
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+
+    // Create new AbortController for this batch
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+
+    // Increment sequence number for stale response protection
+    const currentSequence = ++fetchSequenceRef.current
+
+    setLoadingJobs(true)
+    const fetchJobs = async () => {
+      const jobsMap: Record<string, ProjectJob | null> = {}
+
+      try {
+        await Promise.all(
+          projects.map(async (project) => {
+            // Skip if request was aborted
+            if (abortController.signal.aborted) return
+
+            try {
+              // Prefer latest_job metadata if provided in project payload
+              const latestFromProject = (project as any).latest_job as ProjectJob | undefined
+              if (latestFromProject) {
+                // Only update if this is still the current fetch sequence
+                if (currentSequence === fetchSequenceRef.current) {
+                  jobsMap[project.id] = latestFromProject
+                }
+                return
+              }
+
+              const response = await fetch(
+                `/api/proxy/orchestrator/api/projects/${project.id}/jobs?limit=1`,
+                { signal: abortController.signal }
+              )
+
+              // Skip if request was aborted or sequence changed
+              if (abortController.signal.aborted || currentSequence !== fetchSequenceRef.current) {
+                return
+              }
+
+              if (response.ok) {
+                const data = await response.json()
+
+                // Check again after JSON parse (in case sequence changed during parse)
+                if (abortController.signal.aborted || currentSequence !== fetchSequenceRef.current) {
+                  return
+                }
+
+                jobsMap[project.id] = data.jobs && data.jobs.length > 0 ? data.jobs[0] : null
+              } else {
+                jobsMap[project.id] = null
+              }
+            } catch (err) {
+              // Ignore AbortError (expected when cancelling)
+              if (err instanceof Error && err.name === "AbortError") {
+                return
+              }
+
+              // Only log and set null if this is still the current sequence
+              if (currentSequence === fetchSequenceRef.current) {
+                console.error(`Failed to fetch jobs for project ${project.id}:`, err)
+                jobsMap[project.id] = null
+              }
+            }
+          })
+        )
+
+        // Only update state if this is still the current fetch sequence (prevents stale response overwrite)
+        if (currentSequence === fetchSequenceRef.current && !abortController.signal.aborted) {
+          setProjectJobs(jobsMap)
+          setLoadingJobs(false)
+        }
+      } catch (err) {
+        // Ignore AbortError (expected when cancelling)
+        if (err instanceof Error && err.name === "AbortError") {
+          return
+        }
+
+        // Only update loading state if this is still the current sequence
+        if (currentSequence === fetchSequenceRef.current) {
+          setLoadingJobs(false)
+        }
+      }
+    }
+
+    fetchJobs()
+
+    // Cleanup: abort in-flight requests on unmount or when projects change
+    return () => {
+      abortController.abort()
+    }
+  }, [projects])
+
+  const handleResumeWorkbench = (e: React.MouseEvent, projectId: string, job: ProjectJob) => {
+    e.stopPropagation() // Prevent row click
+    const pdfUrlRaw = job.pdf_url || job.pdfUrl || job.pdf_path
+    const pdfUrl = pdfUrlRaw 
+      ? `/api/proxy/orchestrator/files/${encodeURIComponent(pdfUrlRaw)}`
+      : ""
+    const params = new URLSearchParams({
+      jobId: job.job_id,
+      projectId: projectId,
+    })
+    if (pdfUrl) {
+      params.set("pdfUrl", pdfUrl)
+    }
+    router.push(`/research-workbench?${params.toString()}`)
+  }
 
   const handleCreateProject = async () => {
     if (!formData.title.trim() || !formData.thesis.trim()) {
@@ -97,7 +229,12 @@ export default function ProjectsPage() {
       // Navigate to workbench
       router.push(`/projects/${newProject.id}`)
     } catch (error) {
-      console.error("Failed to create project:", error)
+      const errorMessage = error instanceof Error ? error.message : "Failed to create project"
+      toast({
+        title: "Project creation failed",
+        description: errorMessage,
+        variant: "destructive",
+      })
     } finally {
       setIsSubmitting(false)
     }
@@ -261,31 +398,51 @@ export default function ProjectsPage() {
                   <TableHead>Title</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Files</TableHead>
+                  <TableHead className="w-[140px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {projects.map((project) => (
-                  <TableRow
-                    key={project.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => router.push(`/projects/${project.id}`)}
-                  >
-                    <TableCell className="font-medium">{project.title}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Calendar className="h-4 w-4" />
-                        {formatDate(project.created_at)}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <FileText className="h-4 w-4" />
-                        {/* TODO: Fetch and display actual file count from project.seed_files */}
-                        {0}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {projects.map((project) => {
+                  const latestJob = projectJobs[project.id]
+                  return (
+                    <TableRow
+                      key={project.id}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => router.push(`/projects/${project.id}`)}
+                    >
+                      <TableCell className="font-medium">{project.title}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Calendar className="h-4 w-4" />
+                          {formatDate(project.created_at)}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <FileText className="h-4 w-4" />
+                          {project.seed_files?.length || 0}
+                        </div>
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {loadingJobs ? (
+                          <span className="text-xs text-muted-foreground">Loading...</span>
+                        ) : latestJob ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => handleResumeWorkbench(e, project.id, latestJob)}
+                            className="h-7 text-xs"
+                          >
+                            <Play className="h-3 w-3 mr-1" />
+                            Resume
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">No jobs</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           )}
@@ -294,4 +451,3 @@ export default function ProjectsPage() {
     </div>
   )
 }
-

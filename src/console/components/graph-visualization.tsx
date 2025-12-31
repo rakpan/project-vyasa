@@ -237,10 +237,10 @@ export function GraphVisualization({
               <div className="text-red-500 p-6 bg-black/90 rounded-lg max-w-md text-center">
                 <p className="font-bold mb-3">Error loading 3D visualization</p>
                 <p className="text-sm mb-4">{error}</p>
-                <p className="text-xs mb-4 text-gray-400">Your browser may not support WebGL or 3D rendering.</p>
+                <p className="text-xs mb-4 text-muted-foreground">Your browser may not support WebGL or 3D rendering.</p>
                 <button
                   onClick={switchTo2D}
-                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded"
+                  className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-white text-sm rounded"
                 >
                   Switch to 2D View
                 </button>

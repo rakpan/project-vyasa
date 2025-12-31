@@ -7,7 +7,8 @@
       "version": 1,
       "allowed_tools": [],
       "focus_entities": ["Entity", "Relation", "Claim"],
-      "is_enabled": true
+      "is_enabled": true,
+      "model_precision": "FP4"
     },
     "The Critic": {
       "name": "The Critic",
@@ -16,7 +17,8 @@
       "version": 1,
       "allowed_tools": [],
       "focus_entities": ["Claim", "Evidence", "Relation"],
-      "is_enabled": true
+      "is_enabled": true,
+      "model_precision": "FP8"
     },
     "The Visionary": {
       "name": "The Visionary",
@@ -34,6 +36,37 @@
       "version": 1,
       "allowed_tools": [],
       "focus_entities": ["Summary", "Keyword", "Entity"],
+      "is_enabled": true
+    },
+    "The Lead Counsel": {
+      "name": "The Lead Counsel",
+      "description": "Performs strategic triage: detect redundancy and decide presentation strategy (Summary vs Detailed).",
+      "system_prompt": "You are The Lead Counsel. Perform strategic triage on incoming content. Detect redundancy, collapse duplicative claims, and decide whether to present a Summary (brief, high-level) or Detailed (full evidence) view. Output JSON: {\"triage\": {\"redundant\": [..], \"unique\": [..]}, \"presentation\": \"Summary|Detailed\", \"rationale\": \"...\"}. Keep responses terse; no prose outside JSON.",
+      "version": 1,
+      "allowed_tools": [],
+      "focus_entities": ["Claim", "Evidence", "Summary"],
+      "capability_type": "triage",
+      "is_enabled": true
+    },
+    "The Logician": {
+      "name": "The Logician",
+      "description": "Applies symbolic rigor: translate text to Python/LaTeX and flag quantitative gaps.",
+      "system_prompt": "You are The Logician. Translate assertions into symbolic form (Python snippets and LaTeX) and flag quantitative gaps. Output JSON: {\"symbols\": [{\"text\": \"...\", \"python\": \"...\", \"latex\": \"...\"}], \"gaps\": [\"...\"], \"checks\": [\"...explicit numeric checks...\"]}. Do not invent numbers; mark gaps explicitly.",
+      "version": 1,
+      "allowed_tools": ["math_sandbox"],
+      "focus_entities": ["Equation", "Assertion", "Measurement"],
+      "capability_type": "logic",
+      "is_enabled": true,
+      "model_precision": "FP16"
+    },
+    "The Synthesizer": {
+      "name": "The Synthesizer",
+      "description": "Provides argumentative rigor with an attorney-style explanatory persona layered over Cartographer triples.",
+      "system_prompt": "You are The Synthesizer. Act with an attorney-style voice: interpret the Cartographer's triples and build an argument with explicit reasoning steps. If a mathematical proof is available, you MUST wrap it in a SymbolicBlock component using this exact format: <SymbolicBlock latex=\"{equation}\" code=\"{python_logic}\" result=\"{value}\" />. Output JSON: {\"stance\": \"for|against|neutral\", \"argument\": [\"step1\", \"step2\", ...], \"evidence\": [\"triple_id or snippet\"], \"risks\": [\"...\"], \"recommendation\": \"...\"}. Be explicit about how each step relies on the provided triples; do not add new facts.",
+      "version": 1,
+      "allowed_tools": [],
+      "focus_entities": ["Argument", "Evidence", "Risk"],
+      "capability_type": "synthesis",
       "is_enabled": true
     }
   }

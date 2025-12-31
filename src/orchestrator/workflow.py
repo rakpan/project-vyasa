@@ -5,12 +5,23 @@ Agentic workflow wiring for Project Vyasa using LangGraph.
 from langgraph.graph import StateGraph, END
 
 from .state import PaperState
-from .nodes import cartographer_node, critic_node, saver_node, vision_node
+from .nodes import (
+    cartographer_node,
+    critic_node,
+    saver_node,
+    synthesizer_node,
+    failure_cleanup_node,
+    vision_node,
+    lead_counsel_node,
+    logician_node,
+)
 from .normalize import normalize_extracted_json
 
 
 def _critic_router(state: PaperState) -> str:
     """Route based on critic status and revision budget."""
+    if state.get("force_failure_cleanup"):
+        return "manual"
     status = (state.get("critic_status") or "fail").lower()
     revisions = state.get("revision_count", 0)
     if status == "pass":
@@ -21,27 +32,57 @@ def _critic_router(state: PaperState) -> str:
 
 
 def build_workflow():
-    """Compile the Cartographer -> Critic loop with saver terminal."""
+    """Compile the Cartographer -> Critic loop with optional counsel/logician path."""
     graph = StateGraph(PaperState)
 
     graph.add_node("vision", vision_node)
     graph.add_node("cartographer", cartographer_node)
+    graph.add_node("lead_counsel", lead_counsel_node)
+    graph.add_node("logician", logician_node)
     graph.add_node("critic", critic_node)
+    graph.add_node("synthesizer", synthesizer_node)
     graph.add_node("saver", saver_node)
+    graph.add_node("failure_cleanup", failure_cleanup_node)
 
     graph.set_entry_point("vision")
     graph.add_edge("vision", "cartographer")
-    graph.add_edge("cartographer", "critic")
+    graph.add_conditional_edges(
+        "cartographer",
+        lambda state: "failure_cleanup" if state.get("force_failure_cleanup") else ("lead_counsel" if (state.get("extracted_json") or {}).get("triples") else "critic"),
+        {
+            "lead_counsel": "lead_counsel",
+            "critic": "critic",
+            "failure_cleanup": "failure_cleanup",
+        },
+    )
+    graph.add_conditional_edges(
+        "lead_counsel",
+        lambda state: "logician" if (state.get("lead_counsel") or {}).get("presentation") == "DETAIL" else "critic",
+        {
+            "logician": "logician",
+            "critic": "critic",
+        },
+    )
+    graph.add_edge("logician", "critic")
     graph.add_conditional_edges(
         "critic",
         _critic_router,
         {
-            "pass": "saver",
+            "pass": "synthesizer",
             "retry": "cartographer",
-            "manual": "saver",
+            "manual": "failure_cleanup",
+        },
+    )
+    graph.add_conditional_edges(
+        "synthesizer",
+        lambda state: "failure_cleanup" if state.get("force_failure_cleanup") else "saver",
+        {
+            "saver": "saver",
+            "failure_cleanup": "failure_cleanup",
         },
     )
     graph.add_edge("saver", END)
+    graph.add_edge("failure_cleanup", END)
 
     compiled = graph.compile()
 

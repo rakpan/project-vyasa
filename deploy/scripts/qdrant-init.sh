@@ -19,6 +19,9 @@
 # Script to initialize Qdrant collections for Project Vyasa
 # Target container: vyasa-qdrant (port 6333)
 # Collections: entity-embeddings, document-embeddings
+#
+# Purpose: Ensures vector indexing is ready for the Knowledge Kernel.
+# These collections store embeddings for semantic search over entities and documents.
 
 echo "Initializing Qdrant collections for Project Vyasa..."
 

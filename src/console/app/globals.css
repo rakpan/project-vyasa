@@ -141,9 +141,16 @@ body {
 
     --radius: 0.75rem;
 
+    /* Brand Colors */
+    --brand-nvidia: 81 100% 36%;
     --nvidia-green: 81 100% 36%;
     --nvidia-green-dark: 81 100% 30%;
     --nvidia-green-light: 81 100% 42%;
+
+    /* Integrity Colors */
+    --integrity-silver: 0 0% 75%;
+    --integrity-gold: 45 100% 51%;
+    --integrity-platinum: 60 15% 91%;
   }
 
   .light {
@@ -178,9 +185,26 @@ body {
 
     --radius: 0.75rem;
 
+    /* Brand Colors */
+    --brand-nvidia: 81 100% 36%;
     --nvidia-green: 81 100% 36%;
     --nvidia-green-dark: 81 100% 30%;
     --nvidia-green-light: 81 100% 42%;
+
+    /* Integrity Colors */
+    --integrity-silver: 0 0% 65%;
+    --integrity-gold: 45 100% 48%;
+    --integrity-platinum: 60 15% 85%;
+  }
+
+  .dark {
+    /* Brand Colors */
+    --brand-nvidia: 81 100% 36%;
+
+    /* Integrity Colors */
+    --integrity-silver: 0 0% 75%;
+    --integrity-gold: 45 100% 51%;
+    --integrity-platinum: 60 15% 91%;
   }
 }
 
@@ -279,10 +303,10 @@ body {
 
 @keyframes glow {
   from {
-    box-shadow: 0 0 5px rgba(118, 185, 0, 0.2), 0 0 10px rgba(118, 185, 0, 0.1);
+    box-shadow: 0 0 5px hsl(var(--brand-nvidia) / 0.2), 0 0 10px hsl(var(--brand-nvidia) / 0.1);
   }
   to {
-    box-shadow: 0 0 10px rgba(118, 185, 0, 0.3), 0 0 20px rgba(118, 185, 0, 0.2);
+    box-shadow: 0 0 10px hsl(var(--brand-nvidia) / 0.3), 0 0 20px hsl(var(--brand-nvidia) / 0.2);
   }
 }
 

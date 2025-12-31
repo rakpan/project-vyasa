@@ -444,6 +444,24 @@ Provide structured feedback with:
                 version=1,
                 allowed_tools=["validate", "analyze"],
                 focus_entities=["Vulnerability", "Mechanism", "Constraint", "Outcome"]
+            ),
+            "The Logician": RoleProfile(
+                name="The Logician",
+                description="Applies symbolic rigor: translate text to Python/LaTeX and flag quantitative gaps.",
+                system_prompt="""You are The Logician. Translate assertions into symbolic form (Python snippets and LaTeX) and flag quantitative gaps.
+
+Output JSON:
+{
+  "symbols": [{"text": "...", "python": "...", "latex": "..."}],
+  "gaps": ["..."],
+  "checks": ["...explicit numeric checks..."]
+}
+
+Do not invent numbers; mark gaps explicitly.""",
+                capability_type="logic",
+                version=1,
+                allowed_tools=["math_sandbox"],
+                focus_entities=["Equation", "Assertion", "Measurement"]
             )
         }
         

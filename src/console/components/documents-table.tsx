@@ -117,7 +117,7 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
       case "Error":
         return <AlertCircle className="h-3.5 w-3.5 text-destructive mr-2" />
       default:
-        return <span className="h-1.5 w-1.5 rounded-full bg-gray-400 mr-2"></span>
+        return <span className="h-1.5 w-1.5 rounded-full bg-muted mr-2"></span>
     }
   }
 

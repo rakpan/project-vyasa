@@ -6,13 +6,13 @@ polling APIs to survive longer-running workflows.
 """
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from arango import ArangoClient
 
 from ..shared.config import MEMORY_URL, ARANGODB_DB, ARANGODB_USER, ARANGODB_PASSWORD
 from ..shared.logger import get_logger
+from ..shared.utils import get_utc_now
 from .state import JobStatus
 
 logger = get_logger("orchestrator", __name__)
@@ -34,10 +34,17 @@ def _ensure_collection(db):
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return get_utc_now().isoformat()
 
 
-def create_job_record(initial_state: Dict[str, Any], idempotency_key: Optional[str] = None) -> str:
+def create_job_record(
+    initial_state: Dict[str, Any],
+    idempotency_key: Optional[str] = None,
+    parent_job_id: Optional[str] = None,
+    job_version: int = 1,
+    reprocess_reason: Optional[str] = None,
+    applied_reference_ids: Optional[list] = None,
+) -> str:
     job_id = str(uuid.uuid4())
     record = {
         "_key": job_id,
@@ -51,6 +58,10 @@ def create_job_record(initial_state: Dict[str, Any], idempotency_key: Optional[s
         "initial_state": initial_state,
         "result": None,
         "idempotency_key": idempotency_key,
+        "parent_job_id": parent_job_id,
+        "job_version": job_version,
+        "reprocess_reason": reprocess_reason,
+        "applied_reference_ids": applied_reference_ids or [],
     }
     try:
         db = _get_db()
@@ -107,3 +118,60 @@ def set_job_result_record(job_id: str, result: Dict[str, Any]) -> None:
         "message": "Completed",
     }
     update_job_record(job_id, patch)
+
+
+def list_jobs_by_project(project_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """List jobs for a project, ordered by created_at descending (most recent first).
+    
+    Args:
+        project_id: Project ID to filter by
+        limit: Maximum number of jobs to return (default 10)
+    
+    Returns:
+        List of job records with job_id, status, created_at, and initial_state.project_id
+    """
+    jobs = []
+    try:
+        db = _get_db()
+        _ensure_collection(db)
+        
+        # Query jobs where initial_state.project_id matches
+        query = f"""
+        FOR j IN {JOBS_COLLECTION}
+        FILTER j.initial_state.project_id == @project_id
+        SORT j.created_at DESC
+        LIMIT @limit
+        RETURN {{
+            job_id: j.job_id,
+            status: j.status,
+            created_at: j.created_at,
+            updated_at: j.updated_at,
+            progress: j.progress,
+            pdf_path: j.initial_state.pdf_path,
+            parent_job_id: j.parent_job_id,
+            job_version: j.job_version
+        }}
+        """
+        cursor = db.aql.execute(query, bind_vars={"project_id": project_id, "limit": limit})
+        jobs = list(cursor)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Job list query failed, falling back to memory", extra={"payload": {"error": str(exc)}})
+        # Fallback to memory store (filter by initial_state.project_id)
+        for job_id, record in _mem_store.items():
+            initial_state = record.get("initial_state") or {}
+            if initial_state.get("project_id") == project_id:
+                jobs.append({
+                    "job_id": record.get("job_id") or job_id,
+                    "status": record.get("status"),
+                    "created_at": record.get("created_at"),
+                    "updated_at": record.get("updated_at"),
+                    "progress": record.get("progress"),
+                    "pdf_path": initial_state.get("pdf_path"),
+                    "parent_job_id": record.get("parent_job_id"),
+                    "job_version": record.get("job_version", 1),
+                })
+        # Sort by created_at descending
+        jobs.sort(key=lambda j: j.get("created_at") or "", reverse=True)
+        jobs = jobs[:limit]
+    
+    return jobs

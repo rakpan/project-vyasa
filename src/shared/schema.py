@@ -7,6 +7,7 @@ All entities and relations are type-safe and validated.
 
 from enum import Enum
 from typing import Optional, List, Literal, Dict, Any
+from datetime import datetime
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 import re
 
@@ -386,6 +387,8 @@ class RoleProfile(BaseModel):
     name: str = Field(..., description="Role name (e.g., 'The Cartographer', 'The Librarian')")
     description: str = Field(..., description="Human-readable description of the role's purpose")
     system_prompt: str = Field(..., description="The actual instruction block/prompt for this role")
+    capability_type: Optional[str] = Field(None, description="Routing hint (e.g., extraction, logic, synthesis)")
+    model_precision: Optional[str] = Field(None, description="Preferred model precision (e.g., FP8, FP4)")
     version: int = Field(default=1, description="Version number for role evolution")
     allowed_tools: List[str] = Field(default_factory=list, description="List of tool names this role can use")
     focus_entities: List[str] = Field(default_factory=list, description="Entity types this role focuses on")
@@ -427,3 +430,91 @@ class RoleProfile(BaseModel):
         # Slug: replace spaces with underscores, remove unsafe chars, lowercase
         slug = re.sub(r'[^a-zA-Z0-9_-]', '', self.name.lower().replace(' ', '_'))
         return f"{slug}_v{self.version}"
+
+
+# ============================================
+# Out-of-Band (OOB) Research Ingestion Schemas
+# ============================================
+
+class ExternalReference(BaseModel):
+    """External reference from out-of-band research sources (e.g., Perplexity, web scraping).
+    
+    This represents raw content that has been ingested but not yet processed into the
+    canonical knowledge graph. All OOB content must go through extraction and review
+    before promotion to canonical_knowledge.
+    """
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "reference_id": "ref-abc123",
+                "project_id": "proj-xyz789",
+                "content_raw": "SQL injection vulnerabilities allow attackers...",
+                "source_name": "Perplexity",
+                "source_url": "https://example.com/article",
+                "extracted_at": "2024-01-15T10:30:00Z",
+                "tags": ["OOB", "security"],
+                "status": "INGESTED"
+            }
+        }
+    )
+    
+    id: Optional[str] = Field(None, alias="_id", description="ArangoDB document ID")
+    key: Optional[str] = Field(None, alias="_key", description="ArangoDB document key")
+    
+    reference_id: str = Field(..., description="Unique identifier for this external reference")
+    project_id: str = Field(..., description="Project ID this reference belongs to")
+    content_raw: str = Field(..., description="Raw content text from the external source")
+    source_name: str = Field(..., description="Name of the source (e.g., 'Perplexity', 'Web Scrape', 'Manual Paste')")
+    source_url: Optional[str] = Field(None, description="URL of the source if available")
+    extracted_at: datetime = Field(..., description="Timestamp when this reference was extracted/ingested")
+    tags: List[str] = Field(default_factory=lambda: ["OOB"], description="Tags for categorization (default includes 'OOB')")
+    status: Literal["INGESTED", "EXTRACTING", "EXTRACTED", "NEEDS_REVIEW", "PROMOTED", "REJECTED"] = Field(
+        default="INGESTED",
+        description="Current status in the OOB ingestion pipeline"
+    )
+
+
+class CandidateFact(BaseModel):
+    """Candidate fact extracted from external references.
+    
+    These are facts that have been extracted from OOB sources but are NOT yet
+    part of the canonical knowledge graph. They require review and promotion
+    before being merged into canonical_knowledge.
+    """
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "fact_id": "fact-xyz789",
+                "reference_id": "ref-abc123",
+                "project_id": "proj-xyz789",
+                "subject": "SQL Injection",
+                "predicate": "ENABLES",
+                "object": "Database Compromise",
+                "confidence": 0.92,
+                "priority_boost": 1.0,
+                "source_type": "human_injected",
+                "promotion_state": "candidate",
+                "created_at": "2024-01-15T10:35:00Z"
+            }
+        }
+    )
+    
+    id: Optional[str] = Field(None, alias="_id", description="ArangoDB document ID")
+    key: Optional[str] = Field(None, alias="_key", description="ArangoDB document key")
+    
+    fact_id: str = Field(..., description="Unique identifier for this candidate fact")
+    reference_id: str = Field(..., description="External reference ID this fact was extracted from")
+    project_id: str = Field(..., description="Project ID this fact belongs to")
+    subject: str = Field(..., description="Subject entity of the fact (triple subject)")
+    predicate: str = Field(..., description="Predicate/relation type of the fact (triple predicate)")
+    object: str = Field(..., description="Object entity of the fact (triple object)")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score (0.0-1.0)")
+    priority_boost: float = Field(default=1.0, ge=0.0, description="Priority boost multiplier (default 1.0)")
+    source_type: Literal["human_injected"] = Field(..., description="Source type indicator")
+    promotion_state: Literal["candidate", "canonical"] = Field(
+        default="candidate",
+        description="Promotion state: 'candidate' (default) or 'canonical' (after promotion)"
+    )
+    created_at: datetime = Field(..., description="Timestamp when this candidate fact was created")

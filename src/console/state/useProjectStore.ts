@@ -13,6 +13,8 @@ import { ApiError } from '@/lib/api';
 interface ProjectState {
   // State
   activeProjectId: string | null;
+  activeJobId: string | null;
+  activePdfUrl: string | null;
   projects: ProjectSummary[];
   activeProject: ProjectConfig | null;
   isLoading: boolean;
@@ -21,6 +23,8 @@ interface ProjectState {
   // Actions
   fetchProjects: () => Promise<void>;
   setActiveProject: (id: string) => Promise<void>;
+  setActiveJobContext: (jobId: string, projectId: string, pdfUrl?: string | null) => void;
+  clearActiveJob: () => void;
   createProject: (payload: ProjectCreate) => Promise<ProjectConfig>;
   clearActiveProject: () => void;
   clearError: () => void;
@@ -31,6 +35,8 @@ export const useProjectStore = create<ProjectState>()(
     (set, get) => ({
       // Initial state
       activeProjectId: null,
+      activeJobId: null,
+      activePdfUrl: null,
       projects: [],
       activeProject: null,
       isLoading: false,
@@ -115,7 +121,25 @@ export const useProjectStore = create<ProjectState>()(
        * Clear the active project (does not clear projects list).
        */
       clearActiveProject: () => {
-        set({ activeProjectId: null, activeProject: null });
+        set({ activeProjectId: null, activeProject: null, activeJobId: null, activePdfUrl: null });
+      },
+
+      /**
+       * Set active job/workbench context.
+       */
+      setActiveJobContext: (jobId: string, projectId: string, pdfUrl?: string | null) => {
+        set({
+          activeJobId: jobId,
+          activeProjectId: projectId,
+          activePdfUrl: pdfUrl || null,
+        });
+      },
+
+      /**
+       * Clear active job context.
+       */
+      clearActiveJob: () => {
+        set({ activeJobId: null, activePdfUrl: null });
       },
 
       /**
@@ -130,6 +154,8 @@ export const useProjectStore = create<ProjectState>()(
       // Only persist activeProjectId (not full project data or list)
       partialize: (state) => ({
         activeProjectId: state.activeProjectId,
+        activeJobId: state.activeJobId,
+        activePdfUrl: state.activePdfUrl,
       }),
       // On rehydrate, fetch the active project if ID exists
       onRehydrateStorage: () => (state) => {
@@ -143,4 +169,3 @@ export const useProjectStore = create<ProjectState>()(
     }
   )
 );
-

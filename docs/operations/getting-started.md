@@ -1,0 +1,578 @@
+# Getting Started Guide
+
+This guide will help you set up and run Project Vyasa on your development machine or NVIDIA DGX system.
+
+## Prerequisites
+
+- **Docker** and **Docker Compose** installed
+- **NVIDIA GPU** with CUDA support (for Cortex, Drafter, and Embedder services)
+- **Git** for cloning the repository
+- **8GB+ RAM** recommended
+- **50GB+ disk space** for models and data
+- **Project Created via Console**: You must create a project before processing documents (Project-First workflow)
+
+## Step 1: Clone and Navigate
+
+```bash
+git clone <repository-url>
+cd project-vyasa
+```
+
+## Step 2: Preflight Check (Required)
+
+**Before starting services**, run the preflight check to validate your environment:
+
+```bash
+./scripts/preflight_check.sh
+```
+
+This validates:
+- ✅ NVIDIA GB10 superchip detection
+- ✅ Unified memory (120GB+ total, 24GB+ available headroom)
+- ✅ Knowledge Harvester dataset directory (`/raid/datasets/` writable)
+- ✅ Port availability (30000, 30001, 8529)
+- ✅ Expertise configuration (optional warning)
+
+**If any checks fail**: Resolve the issues before proceeding. The script will provide specific error messages and suggestions.
+
+**Expected output**:
+```
+==========================================
+Project Vyasa - Preflight Check
+DGX Spark (GB10) Validation
+==========================================
+
+Checking NVIDIA GB10 superchip detection... PASS
+  Detected: NVIDIA Grace Blackwell
+  GPU Count: 1
+
+Checking unified memory (minimum 120GB required)... PASS
+  Total Unified Memory: 128GB
+  Used Memory: 10GB
+  Available Memory: 118GB
+  ✓ 24GB headroom guarantee: PASS (118GB available)
+
+Checking Knowledge Harvester dataset directory... PASS
+  Dataset directory: /raid/datasets (writable)
+
+Checking port availability...
+  Port 30000 (Brain (Cortex))... AVAILABLE
+  Port 30001 (Worker (Cortex))... AVAILABLE
+  Port 8529 (Memory (ArangoDB))... AVAILABLE
+
+==========================================
+Preflight Check Summary
+==========================================
+  Passed:  5
+  Failed:  0
+  Warnings: 0
+
+✓ Launch Ready
+```
+
+## Step 3: Configure Environment
+
+Create your environment configuration file:
+
+```bash
+cd deploy
+cp .env.example .env
+```
+
+Edit `.env` with your configuration:
+
+**Required Settings**:
+- `ARANGO_ROOT_PASSWORD` - ArangoDB root password (set a strong password)
+- `QDRANT_API_KEY` - Qdrant API key (generate a random string)
+- `CONSOLE_PASSWORD` - Console login password
+- `NEXTAUTH_SECRET` - NextAuth secret (generate: `openssl rand -base64 32`)
+- `HF_TOKEN` - **HuggingFace Hub access token** (required for model downloads; get from https://huggingface.co/settings/tokens)
+
+**Model Configuration** (HuggingFace Hub):
+- Models are downloaded from **HuggingFace Hub** on first container start
+- **Required**: Set `HF_TOKEN` in your `.env` file (get your token from https://huggingface.co/settings/tokens)
+- Model paths use HuggingFace Hub format: `organization/model-name`
+
+**Model Paths** (adjust if using different models):
+- `BRAIN_MODEL_PATH` - HuggingFace path to Llama 3.3 70B model (default: `meta-llama/Llama-3.3-70B-Instruct`)
+- `WORKER_MODEL_PATH` - HuggingFace path to Worker model (default: `nvidia/Llama-3_3-Nemotron-Super-49B-v1_5`)
+- `VISION_MODEL_PATH` - HuggingFace path to Vision model (default: `Qwen/Qwen2-VL-72B-Instruct`)
+- `EMBEDDER_MODEL_NAME` - HuggingFace path to embedding model (default: `all-MiniLM-L6-v2`)
+
+**Note**: You can use local paths (e.g., `/path/to/model`) if you've pre-downloaded models, or HuggingFace Hub paths (e.g., `meta-llama/Llama-3.3-70B-Instruct`) to download automatically.
+
+**GPU Assignments**:
+- `BRAIN_GPU_IDS` - Comma-separated GPU IDs for Brain (e.g., `0,1`)
+- `WORKER_GPU_IDS` - GPU ID for Worker (e.g., `2`)
+- `VISION_GPU_IDS` - GPU IDs for Vision (e.g., `3,4`)
+
+**Important**: 
+- First-time startup will download models from HuggingFace Hub (this can take time depending on your connection):
+  - Brain: ~140GB
+  - Worker: ~98GB  
+  - Vision: ~144GB
+  - Embedder: ~90MB
+- If you change model paths, the models will be re-downloaded on first container start
+- Some models may require accepting terms on HuggingFace Hub (set `HF_TOKEN` for authenticated downloads)
+
+## Step 4: Start Services
+
+### Option A: Sequential Startup (Recommended for First-Time Setup)
+
+This ensures proper dependency ordering and health verification:
+
+```bash
+./scripts/init_vyasa.sh
+```
+
+**What this script does**:
+1. Sources `deploy/secrets.env` and `deploy/.env`
+2. Starts Graph (ArangoDB) and Vector (Qdrant) services
+3. Waits for services to become healthy
+4. Starts Cortex models (Brain/Worker/Vision)
+5. **Polls Worker model readiness** at `http://localhost:30001/v1/models`
+6. Starts Orchestrator (waits for Cortex models)
+7. Starts Console (waits for Orchestrator)
+8. Provides status summary with all service URLs
+
+**Expected output**:
+```
+==========================================
+Project Vyasa - System Bootstrapping
+DGX Spark (GB10) Startup Sequence
+==========================================
+
+Step 1: Loading secrets and environment variables...
+  ✓ Secrets loaded
+  ✓ Environment variables loaded
+
+Step 2: Starting Graph (ArangoDB) and Vector (Qdrant) services...
+  ✓ Graph and Vector services are healthy
+
+Step 3: Starting Cortex models (Brain/Worker/Vision)...
+  ✓ Cortex Worker model is ready
+
+Step 4: Starting Orchestrator (depends on Cortex models)...
+  ✓ Orchestrator is healthy
+
+Step 5: Starting Console (depends on Orchestrator)...
+  ✓ Console is ready
+
+==========================================
+Project Vyasa - Startup Complete
+==========================================
+
+Services Status:
+  Graph (ArangoDB):    http://localhost:8529
+  Vector (Qdrant):      http://localhost:6333
+  Brain (Cortex):       http://localhost:30000
+  Worker (Cortex):      http://localhost:30001
+  Vision (Cortex):      http://localhost:30002
+  Orchestrator:         http://localhost:8000
+  Console:              http://localhost:3000
+```
+
+### Option B: Quick Start (For Subsequent Runs)
+
+If services are already configured and you just need to restart:
+
+```bash
+cd deploy
+./start.sh
+```
+
+**What this script does**:
+- Starts all services via Docker Compose (parallel startup)
+- Waits for ArangoDB to become healthy
+- Seeds initial roles via orchestrator container
+- Polls orchestrator health endpoint
+- Prints "✅ System Online: http://localhost:3000" when ready
+
+**Note**: This is faster but doesn't verify Cortex model readiness. Use `init_vyasa.sh` if you encounter startup issues.
+
+### Understanding the Difference
+
+| Script | Use Case | Startup Method |
+|--------|----------|----------------|
+| `scripts/init_vyasa.sh` | **First-time setup**, troubleshooting, ensuring all dependencies are ready | Sequential (one service at a time with health checks) |
+| `deploy/start.sh` | **Subsequent runs**, quick restart | Parallel (all services at once) |
+
+**Recommendation**: Use `init_vyasa.sh` for first-time setup, then `deploy/start.sh` for daily use.
+
+**First Run**: The first time you start the services, Docker will:
+1. Pull required images (this may take several minutes)
+2. Download ML models from **HuggingFace Hub** on first use (requires `HF_TOKEN` in `.env`):
+   - **Brain**: `meta-llama/Llama-3.3-70B-Instruct` (~140GB) from HuggingFace Hub
+   - **Worker**: `nvidia/Llama-3_3-Nemotron-Super-49B-v1_5` (~98GB) from HuggingFace Hub
+   - **Vision**: `Qwen/Qwen2-VL-72B-Instruct` (~144GB) from HuggingFace Hub
+   - **Embedder**: `all-MiniLM-L6-v2` (~90MB) from HuggingFace Hub (via sentence-transformers)
+   - **Drafter**: Uses Ollama's model registry (different from HuggingFace)
+3. Initialize databases (ArangoDB and Qdrant)
+4. Seed initial roles (if running seed script)
+
+**Note**: Model downloads happen automatically when containers start if models aren't already cached. Downloads are managed by:
+- **SGLang** (Brain/Worker/Vision): Downloads via `HF_TOKEN` environment variable
+- **sentence-transformers** (Embedder): Downloads via HuggingFace Hub (uses `HF_TOKEN` if set)
+- **Ollama** (Drafter): Uses Ollama's own model registry (different mechanism)
+
+**Expected Output**: You should see all 9 services starting:
+- ✅ `cortex-brain` (Brain - SGLang, Port 30000)
+- ✅ `cortex-worker` (Worker - SGLang, Port 30001)
+- ✅ `cortex-vision` (Vision - SGLang, Port 30002)
+- ✅ `drafter` (Drafter - Ollama, Port 11434)
+- ✅ `memory` (Memory - ArangoDB, Port 8529)
+- ✅ `console` (Console - Next.js, Port 3000)
+- ✅ `embedder` (Embedder - Sentence Transformers, Port 80)
+- ✅ `vector` (Vector - Qdrant, Port 6333)
+- ✅ `orchestrator` (Orchestrator - Python, Port 8000)
+
+## Step 5: Verify Services
+
+Check that all containers are running:
+
+```bash
+cd deploy
+docker compose ps
+```
+
+All services should show `Up` status. Expected services:
+- ✅ `cortex-brain` (Brain - SGLang, Port 30000)
+- ✅ `cortex-worker` (Worker - SGLang, Port 30001)
+- ✅ `cortex-vision` (Vision - SGLang, Port 30002)
+- ✅ `vyasa-drafter` (Drafter - Ollama, Port 11434)
+- ✅ `vyasa-memory` (Memory - ArangoDB, Port 8529)
+- ✅ `vyasa-console` (Console - Next.js, Port 3000)
+- ✅ `vyasa-embedder` (Embedder - Sentence Transformers, Port 80)
+- ✅ `vyasa-qdrant` (Vector - Qdrant, Port 6333)
+- ✅ `vyasa-orchestrator` (Orchestrator - Python, Port 8000)
+
+If any service is failing, check logs:
+
+```bash
+cd deploy
+docker compose logs <service-name>
+# Example: docker compose logs cortex-worker
+```
+
+**Common issues**:
+- **Cortex services failing**: Check GPU availability (`nvidia-smi`) and GPU IDs in `.env`
+- **Orchestrator failing**: Check if ArangoDB is healthy (`docker compose logs vyasa-memory`)
+- **Console failing**: Check if Orchestrator is healthy (`curl http://localhost:8000/health`)
+
+## Step 6: Access the Console
+
+Open your browser and navigate to:
+
+**http://localhost:3000**
+
+You should see the Project Vyasa Console dashboard. Log in with your `CONSOLE_PASSWORD` (set in `.env`).
+
+## Step 7: Create a Project (Required)
+
+**Project Vyasa uses a Project-First workflow.** All document processing requires a project context.
+
+### 6.1 Navigate to Projects
+
+1. Click **"Projects"** in the navigation or go to `/projects`
+2. You should see the Projects home page with a table of existing projects (empty on first run)
+
+### 6.2 Create New Project
+
+1. Click **"New Project"** button
+2. Fill in the form:
+   - **Title** (required): e.g., "Security Analysis of Web Applications"
+   - **Thesis** (required): The core argument or hypothesis
+   - **Research Questions** (required): One question per line
+   - **Anti-Scope** (optional): Explicitly out-of-scope topics
+   - **Target Journal** (optional): e.g., "IEEE Security & Privacy"
+3. Click **"Create Project"**
+4. You will be redirected to the project workbench (`/projects/[id]`)
+
+**Success**: You now have a project with a unique `project_id`. This ID will be used for all document processing.
+
+## Step 8: Upload Seed Corpus
+
+### 7.1 Navigate to Project Workbench
+
+If you just created a project, you're already on the workbench. Otherwise, click on a project in the projects table.
+
+### 7.2 Upload Files
+
+1. In the **"Seed Corpus"** panel (left column), use the file uploader
+2. Drag and drop a PDF file, or click to browse
+3. Supported formats: `.pdf`, `.md`, `.txt`, `.json`
+4. The file will be uploaded to `/api/proxy/orchestrator/ingest/pdf` with `project_id` automatically included
+
+**Expected**: The file should appear in the "Files" list below the uploader.
+
+## Step 9: Process Documents
+
+### 8.1 Trigger Processing
+
+1. After uploading a file, the system will automatically process it (or you can trigger processing manually)
+2. The processing workflow will:
+   - Extract text from the PDF
+   - Inject project context (Thesis, RQs) into the extraction pipeline
+   - Send to Worker (Cartographer) for knowledge graph extraction
+   - Tag claims as HIGH/LOW priority based on Research Questions
+   - Validate with Critic node
+   - Filter by confidence with Vision node
+   - Store triples in ArangoDB (linked to `project_id`)
+
+**Expected**: You should see a progress indicator, then a success message.
+
+### 8.2 View Extraction Results
+
+1. Navigate to the **"Processing"** panel (center column)
+2. You should see extraction results and graph visualization
+3. Nodes and edges are project-scoped (only shows data for the current project)
+
+**Success**: If you see nodes and edges, the extraction pipeline is working! 🎉
+
+## Step 10: Test Search
+
+1. Use the search bar in the Console (if available)
+2. Enter a query related to your document (e.g., "security vulnerability")
+3. You should see relevant document chunks returned (project-scoped)
+
+**Success**: If search returns results, the vector search pipeline is working! 🎉
+
+## Stopping the System
+
+To gracefully shut down all services:
+
+```bash
+cd deploy
+./stop.sh
+```
+
+Or manually:
+
+```bash
+cd deploy
+docker compose down
+```
+
+To stop and remove volumes (⚠️ **deletes all data**):
+
+```bash
+cd deploy
+docker compose down -v
+```
+
+## Script Reference
+
+| Script | Location | Purpose | When to Use |
+|--------|----------|---------|-------------|
+| **Preflight Check** | `scripts/preflight_check.sh` | Validates hardware, memory, ports, dataset directory | **Before first startup** |
+| **Sequential Startup** | `scripts/init_vyasa.sh` | Orchestrates sequential service startup with health checks | **First-time setup**, troubleshooting |
+| **Quick Start** | `deploy/start.sh` | Fast startup for already-configured systems | **Subsequent runs**, daily use |
+| **Stop** | `deploy/stop.sh` | Gracefully shuts down all services | **Shutdown** |
+| **Operational CLI** | `scripts/vyasa-cli.sh` | Operational utilities (merge nodes, etc.) | **Operations** |
+| **Test Runner** | `scripts/run_tests.sh` | Run pytest test suite | **Development** |
+| **Mock LLM** | `scripts/run_mock_llm.sh` | Start mock LLM server for testing | **Testing without GPUs** |
+
+### Operational Commands
+
+**Merge graph nodes**:
+```bash
+./scripts/vyasa-cli.sh merge <job_id> <source_id> <target_id>
+```
+
+**Run tests**:
+```bash
+./scripts/run_tests.sh                    # Unit tests only
+./scripts/run_tests.sh --with-integration  # Unit + integration tests
+```
+
+**Start mock LLM for testing**:
+```bash
+./scripts/run_mock_llm.sh
+```
+
+## Troubleshooting
+
+### Services Won't Start
+
+**Check GPU availability:**
+```bash
+nvidia-smi
+```
+
+**Check Docker GPU runtime:**
+```bash
+docker run --rm --gpus all nvidia/cuda:11.0.3-base-ubuntu20.04 nvidia-smi
+```
+
+### Cortex Services Fail (Brain/Worker/Vision)
+
+**Check logs:**
+```bash
+docker-compose logs cortex-brain
+docker-compose logs cortex-worker
+docker-compose logs cortex-vision
+```
+
+**Common issues:**
+- **Model download failed**: 
+  - Check internet connection and disk space
+  - Verify `HF_TOKEN` is set in `.env` (required for HuggingFace Hub downloads)
+  - Some models may require accepting terms on HuggingFace Hub (visit model page and click "Agree")
+  - Check container logs: `docker compose logs cortex-brain` (look for HuggingFace download errors)
+- GPU not available: Verify `nvidia-smi` works and GPU IDs are correct in `.env`
+- Port conflict: Change `PORT_BRAIN`, `PORT_WORKER`, or `PORT_VISION` in `.env`
+- GPU reservation conflict: Ensure GPU IDs don't overlap between services
+
+### Console Shows Connection Errors
+
+**Verify service URLs:**
+- Check that `ORCHESTRATOR_URL`, `MEMORY_SERVICE_URL`, etc. are correct in `.env`
+- Ensure all services are running: `docker-compose ps`
+
+### Database Initialization Fails
+
+**Reset databases (⚠️ deletes all data):**
+```bash
+docker-compose down -v
+docker-compose up -d
+```
+
+### Document Upload Fails with "No active project selected"
+
+**Solution**: You must create a project first. Navigate to `/projects` and click "New Project".
+
+### Extraction Returns Empty Graph
+
+**Check**:
+- Project context is being injected (check logs for "Hydrated project context")
+- Research Questions are defined in the project
+- Document contains relevant content matching the Thesis/RQs
+
+## Next Steps
+
+Once the smoke test passes:
+
+1. **Read the Architecture Docs**: Understand how services interact
+   - [System Map](../architecture/system-map.md)
+   - [Agent Workflow](../architecture/agent-workflow.md)
+
+2. **Explore the Codebase**:
+   - `src/console/` - Next.js frontend
+   - `src/orchestrator/` - LangGraph workflows
+   - `src/ingestion/` - Knowledge extraction logic
+   - `src/project/` - Project Kernel (ProjectConfig, ProjectService)
+   - `src/shared/` - Shared schemas and config
+
+3. **Review Decisions**: Understand why we made certain choices
+   - [ADR 001: Local Vector DB](../decisions/001-local-vector-db.md)
+
+## Development Workflow
+
+### Making Changes
+
+1. **Frontend changes**: Edit files in `src/console/`
+   - Changes hot-reload in development mode
+   - Rebuild: `docker-compose build console`
+
+2. **Backend changes**: Edit files in `src/orchestrator/`, `src/ingestion/`
+   - Changes require container restart: `docker-compose restart orchestrator`
+
+3. **Configuration changes**: Edit `deploy/.env`
+   - Restart affected services: `docker-compose restart <service>`
+
+### Viewing Logs
+
+```bash
+# All services
+docker-compose logs -f
+
+# Specific service
+docker-compose logs -f cortex-brain
+
+# Last 100 lines
+docker-compose logs --tail=100 console
+```
+
+### Stopping Services
+
+```bash
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes (⚠️ deletes data)
+docker-compose down -v
+```
+
+## Service Health Checks
+
+### Manual Health Checks
+
+```bash
+# Brain
+curl http://localhost:30000/health
+
+# Worker
+curl http://localhost:30001/health
+
+# Vision
+curl http://localhost:30002/health
+
+# Orchestrator
+curl http://localhost:8000/health
+
+# Qdrant
+curl http://localhost:6333/health
+
+# ArangoDB
+curl http://localhost:8529/_api/version
+```
+
+### Console Health
+
+The Console UI includes a health status indicator. Check the settings panel for service connectivity.
+
+## Common Commands Reference
+
+```bash
+# Start services
+docker-compose up -d
+
+# Stop services
+docker-compose down
+
+# View logs
+docker-compose logs -f
+
+# Restart a service
+docker-compose restart cortex-brain
+
+# Rebuild a service
+docker-compose build console
+
+# Check service status
+docker-compose ps
+
+# Execute command in container
+docker-compose exec orchestrator bash
+```
+
+## Getting Help
+
+- **Documentation**: See [docs/README.md](../README.md) for full documentation index
+- **Architecture**: Review [System Map](../architecture/system-map.md) for data flows
+- **Issues**: Check service logs first: `docker-compose logs <service>`
+
+## Success Criteria
+
+You've successfully set up Project Vyasa when:
+
+✅ All 9 services are running (`docker-compose ps`)  
+✅ Console is accessible at http://localhost:3000  
+✅ You can create a project via the Console  
+✅ You can upload files to a project's seed corpus  
+✅ Document processing extracts knowledge graph (nodes and edges)  
+✅ Knowledge graph visualization shows project-scoped data  
+✅ Search functionality returns relevant results  
+✅ Async job system works (submit job, poll status)  
+
+Welcome to Project Vyasa! 🚀

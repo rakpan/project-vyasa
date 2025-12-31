@@ -50,6 +50,45 @@ QDRANT_URL: str = os.getenv("QDRANT_URL", VECTOR_URL)  # Alias
 # Embedder (Sentence Transformers) - Vectorizer
 EMBEDDER_URL: str = os.getenv("EMBEDDER_URL", "http://vyasa-embedder:80")
 SENTENCE_TRANSFORMER_URL: str = os.getenv("SENTENCE_TRANSFORMER_URL", EMBEDDER_URL)  # Alias
+# Embedding model path (HuggingFace Hub format)
+EMBEDDING_MODEL_PATH: str = os.getenv("EMBEDDING_MODEL_PATH", "BAAI/bge-large-en-v1.5")
+# Embedding dimension (BGE-Large = 1024)
+EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
+# HuggingFace Hub token for authenticated model downloads
+HF_TOKEN: Optional[str] = os.getenv("HF_TOKEN")
+
+# ============================================
+# Local Paths (DGX / RAID defaults)
+# ============================================
+RAID_BASE: str = os.getenv("RAID_BASE", "/raid/vyasa")
+MODEL_CACHE_DIR: str = os.getenv("MODEL_CACHE_DIR", os.path.join(RAID_BASE, "model_cache"))
+SCRATCH_DIR: str = os.getenv("SCRATCH_DIR", os.path.join(RAID_BASE, "scratch"))
+TELEMETRY_PATH: str = os.getenv("TELEMETRY_PATH", os.path.join(RAID_BASE, "telemetry", "events.jsonl"))
+HF_HOME_DIR: str = os.getenv("HF_HOME", os.path.join(RAID_BASE, "hf_cache"))
+
+# ============================================
+# Context / Concurrency Policies
+# ============================================
+CONTEXT_LIMITS = {
+    "WORKER": int(os.getenv("CONTEXT_LIMIT_WORKER", "16384")),
+    "BRAIN": int(os.getenv("CONTEXT_LIMIT_BRAIN", "32768")),
+    "LOGICIAN": int(os.getenv("CONTEXT_LIMIT_LOGICIAN", "64536")),  # Burst only
+}
+
+MAX_CONCURRENCY = {
+    "WORKER": int(os.getenv("MAX_CONCURRENCY_WORKER", "8")),
+    "BRAIN": int(os.getenv("MAX_CONCURRENCY_BRAIN", "2")),
+    "VISION": int(os.getenv("MAX_CONCURRENCY_VISION", "2")),
+}
+
+# ============================================
+# Timeout Matrix (seconds)
+# ============================================
+TIMEOUT_MATRIX = {
+    "SGLANG_CALL": int(os.getenv("TIMEOUT_SGLANG_CALL", "60")),
+    "ARANGO_QUERY": int(os.getenv("TIMEOUT_ARANGO_QUERY", "15")),
+    "OOB_SIDELOAD": int(os.getenv("TIMEOUT_OOB_SIDELOAD", "30")),
+}
 
 # ============================================
 # Database Configuration
@@ -66,6 +105,14 @@ MAX_KV_CACHE_GB: int = int(os.getenv("MAX_KV_CACHE_GB", "30"))
 # Optional per-service caps (can be tuned in deploy/.env)
 MAX_KV_CACHE_GB_BRAIN: int = int(os.getenv("MAX_KV_CACHE_GB_BRAIN", str(MAX_KV_CACHE_GB)))
 MAX_KV_CACHE_GB_WORKER: int = int(os.getenv("MAX_KV_CACHE_GB_WORKER", str(MAX_KV_CACHE_GB)))
+
+# ============================================
+# Out-of-Band (OOB) Research Ingestion
+# ============================================
+# Confidence threshold for automatic promotion of candidate facts to canonical knowledge
+OOB_PROMOTION_CONFIDENCE_THRESHOLD: float = float(os.getenv("OOB_PROMOTION_CONFIDENCE_THRESHOLD", "0.85"))
+# Require source_url for automatic promotion (prevents promotion of unverified sources)
+OOB_REQUIRE_SOURCE_URL_FOR_AUTO_PROMOTION: bool = os.getenv("OOB_REQUIRE_SOURCE_URL_FOR_AUTO_PROMOTION", "true").lower() in ("true", "1", "yes")
 
 # ============================================
 # Environment Variable Names (for reference)
@@ -121,3 +168,16 @@ def get_vector_url() -> str:
 def get_embedder_url() -> str:
     """Get Embedder service URL from environment or default."""
     return EMBEDDER_URL
+
+
+def get_embedding_device() -> str:
+    """Get the device to use for embedding models.
+    
+    Returns "cuda" if GPU is available, otherwise "cpu".
+    """
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        # torch not available, default to cpu
+        return "cpu"

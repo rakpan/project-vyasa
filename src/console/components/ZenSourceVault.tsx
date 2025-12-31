@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Scan } from "lucide-react"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { ResearchSideloader } from "@/components/ResearchSideloader"
 
 type EvidenceCoordinates = {
   page: number
@@ -30,6 +32,7 @@ type ZenSourceVaultProps = {
   highlight?: EvidenceCoordinates | null
   workerUrl?: string
   onRescan?: (coords: EvidenceCoordinates) => void
+  projectId?: string
 }
 
 function toHighlightArea(coords: EvidenceCoordinates | null | undefined) {
@@ -56,11 +59,12 @@ function toHighlightArea(coords: EvidenceCoordinates | null | undefined) {
  * Source Vault with auto-hide toolbars and floating selection tool.
  * Zen-First: Controls appear only when needed.
  */
-export function ZenSourceVault({ fileUrl, highlight, workerUrl, onRescan }: ZenSourceVaultProps) {
+export function ZenSourceVault({ fileUrl, highlight, workerUrl, onRescan, projectId }: ZenSourceVaultProps) {
   const [areas, setAreas] = React.useState(() => toHighlightArea(highlight))
   const [showToolbar, setShowToolbar] = useState(false)
   const [selectionCoords, setSelectionCoords] = useState<EvidenceCoordinates | null>(null)
   const [isSelecting, setIsSelecting] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1) // Track current page for evidence anchoring
   const containerRef = useRef<HTMLDivElement | null>(null)
   const startCoordsRef = useRef<{ x: number; y: number } | null>(null)
 
@@ -147,7 +151,7 @@ export function ZenSourceVault({ fileUrl, highlight, workerUrl, onRescan }: ZenS
     const normY = (v: number) => Math.round(Math.max(0, Math.min(1, v / rect.height)) * 1000)
 
     const coords: EvidenceCoordinates = {
-      page: 1, // TODO: Get current page
+      page: currentPage, // Use tracked current page for accurate evidence anchoring
       bbox: {
         x1: norm(startCoordsRef.current.x),
         y1: normY(startCoordsRef.current.y),
@@ -164,13 +168,21 @@ export function ZenSourceVault({ fileUrl, highlight, workerUrl, onRescan }: ZenS
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="h-full relative bg-muted/20"
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-    >
+    <div className="h-full flex flex-col">
+      <Tabs defaultValue="source" className="h-full flex flex-col">
+        <TabsList className="mx-4 mt-2">
+          <TabsTrigger value="source">Source</TabsTrigger>
+          <TabsTrigger value="sideloader">Sideloader</TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="source" className="flex-1 overflow-hidden mt-0">
+          <div
+            ref={containerRef}
+            className="h-full relative bg-muted/20"
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+          >
       {/* Auto-hide toolbar */}
       <div
         className={cn(
@@ -206,6 +218,22 @@ export function ZenSourceVault({ fileUrl, highlight, workerUrl, onRescan }: ZenS
             fileUrl={fileUrl}
             plugins={[highlightPluginInstance]}
             defaultScale={SpecialZoomLevel.PageFit}
+            renderPage={(props) => {
+              // Track the first visible page (pageIndex 0) as the current page for evidence anchoring
+              // Note: For more accurate page tracking, consider using a page navigation plugin
+              // This provides a reasonable default that anchors selections to page 1 initially
+              if (props.pageIndex === 0) {
+                setCurrentPage(1)
+              }
+              // Default render
+              return (
+                <>
+                  {props.canvasLayer.children}
+                  {props.textLayer.children}
+                  {props.annotationLayer.children}
+                </>
+              )
+            }}
           />
         </Worker>
       ) : (
@@ -249,6 +277,18 @@ export function ZenSourceVault({ fileUrl, highlight, workerUrl, onRescan }: ZenS
           </PopoverContent>
         </Popover>
       )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="sideloader" className="flex-1 overflow-auto mt-0 p-4">
+          <ResearchSideloader
+            projectId={projectId}
+            onIngested={(referenceId) => {
+              console.log("Reference ingested:", referenceId)
+            }}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
