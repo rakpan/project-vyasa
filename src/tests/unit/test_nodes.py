@@ -125,19 +125,12 @@ def test_critic_sets_pass_status(monkeypatch):
 
 def test_critic_increments_revision_on_fail(monkeypatch):
   """Failures must increment revision_count and carry critiques."""
-  def fake_post(url: str, json: Dict[str, Any] = None, timeout: int = 0):
+  def fake_post(url: str, json: Dict[str, Any], timeout: int = 0):
     # For the legacy path brain endpoint
     return make_chat_response({"status": "fail", "critiques": ["missing triple"]})
 
   monkeypatch.setattr(nodes.requests, "post", fake_post)
-  monkeypatch.setattr("src.orchestrator.nodes.get_brain_url", lambda: "http://fake-brain:1234")
-  # Mock role_registry.get_role to avoid DB dependency
-  mock_role = Mock()
-  mock_role.system_prompt = "You are a critic."
-  mock_role.allowed_tools = []
-  monkeypatch.setattr("src.orchestrator.nodes.role_registry.get_role", lambda name: mock_role)
-
-  state: PaperState = {"raw_text": "Test", "extracted_json": {"triples": []}, "revision_count": 1}
+  state: PaperState = {"raw_text": "Test", "extracted_json": {"triples": [{}]}, "revision_count": 1}
   result = critic_node(state)
 
   assert result["critic_status"] == "fail"

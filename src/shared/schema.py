@@ -209,6 +209,132 @@ class SourcePointer(BaseModel):
         return v
 
 
+# -----------------------------
+# Conflict reporting
+# -----------------------------
+
+
+class ConflictType(str, Enum):
+    STRUCTURAL_CONFLICT = "STRUCTURAL_CONFLICT"
+    INCOMPATIBLE_ASSUMPTIONS = "INCOMPATIBLE_ASSUMPTIONS"
+    UNSUPPORTED_CORE_CLAIM = "UNSUPPORTED_CORE_CLAIM"
+    EVIDENCE_BINDING_FAILURE = "EVIDENCE_BINDING_FAILURE"
+    ONTOLOGY_COLLISION = "ONTOLOGY_COLLISION"
+    NUMERICAL_INCONSISTENCY = "NUMERICAL_INCONSISTENCY"
+    SCOPE_MISMATCH = "SCOPE_MISMATCH"
+
+
+class ConflictSeverity(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    BLOCKER = "BLOCKER"
+
+
+class ConflictProducer(str, Enum):
+    CARTOGRAPHER = "CARTOGRAPHER"
+    LOGICIAN = "LOGICIAN"
+    CRITIC = "CRITIC"
+    SYNTHESIZER = "SYNTHESIZER"
+    LIBRARIAN = "LIBRARIAN"
+
+
+class ConflictSuggestedAction(str, Enum):
+    RETRY_EXTRACTION = "RETRY_EXTRACTION"
+    REQUEST_MORE_CONTEXT = "REQUEST_MORE_CONTEXT"
+    RUN_LOGICIAN = "RUN_LOGICIAN"
+    DOWNGRADE_TO_SUMMARY = "DOWNGRADE_TO_SUMMARY"
+    HUMAN_SIGNOFF_REQUIRED = "HUMAN_SIGNOFF_REQUIRED"
+    NEEDS_THESIS_PIVOT = "NEEDS_THESIS_PIVOT"
+    IGNORE_LOW_CONFIDENCE = "IGNORE_LOW_CONFIDENCE"
+
+
+class ConflictItem(BaseModel):
+    conflict_id: str
+    conflict_type: ConflictType
+    severity: ConflictSeverity
+    summary: str = Field(..., max_length=240)
+    details: str = Field(..., max_length=1200)
+    produced_by: ConflictProducer
+    contradicts: Optional[List[str]] = None
+    evidence_anchors: List[SourcePointer] = Field(default_factory=list)
+    assumptions: List[str] = Field(default_factory=list)
+    suggested_actions: List[ConflictSuggestedAction] = Field(default_factory=list)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+
+    @field_validator("summary")
+    @classmethod
+    def trim_summary(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("details")
+    @classmethod
+    def trim_details(cls, v: str) -> str:
+        return v.strip()
+
+
+class DeadlockType(str, Enum):
+    STRUCTURAL_CONFLICT = "STRUCTURAL_CONFLICT"
+    INCOMPATIBLE_ASSUMPTIONS = "INCOMPATIBLE_ASSUMPTIONS"
+    UNSUPPORTED_CORE_CLAIM = "UNSUPPORTED_CORE_CLAIM"
+    SCOPE_MISMATCH = "SCOPE_MISMATCH"
+
+
+class RecommendedNextStep(str, Enum):
+    CONTINUE = "CONTINUE"
+    REVISE_AND_RETRY = "REVISE_AND_RETRY"
+    PAUSE_FOR_HUMAN = "PAUSE_FOR_HUMAN"
+    TRIGGER_REFRAMING = "TRIGGER_REFRAMING"
+
+
+class ConflictReport(BaseModel):
+    report_id: str
+    project_id: str
+    job_id: str
+    doc_hash: str
+    revision_count: int
+    critic_status: Literal["pass", "fail"]
+    deadlock: bool
+    deadlock_type: Optional[DeadlockType] = None
+    conflict_items: List[ConflictItem]
+    conflict_hash: str
+    recommended_next_step: RecommendedNextStep
+    created_at: datetime
+
+
+# -----------------------------
+# Reframing proposal
+# -----------------------------
+
+
+class PivotType(str, Enum):
+    SCOPE = "SCOPE"
+    ASSUMPTION = "ASSUMPTION"
+    PROBLEM = "PROBLEM"
+
+
+class ReframingProposal(BaseModel):
+    proposal_id: str
+    project_id: str
+    job_id: str
+    doc_hash: str
+    conflict_hash: str
+    conflict_summary: str = Field(..., max_length=300)
+    pivot_type: PivotType
+    proposed_pivot: str
+    architectural_rationale: str
+    evidence_anchors: List[str] = Field(default_factory=list)
+    assumptions_changed: List[str] = Field(default_factory=list)
+    what_stays_true: List[str] = Field(default_factory=list)
+    requires_human_signoff: bool = True
+    created_at: datetime
+
+    @field_validator("architectural_rationale")
+    @classmethod
+    def limit_rationale(cls, v: str) -> str:
+        return " ".join(v.strip().split())[:400]
+
+
 class Claim(BaseModel):
     """Claim with evidence binding back to the source."""
     text: str

@@ -15,6 +15,7 @@ from collections import defaultdict
 import tempfile
 from flask import Flask, request, jsonify, Response, stream_with_context
 from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.utils import secure_filename
 from pydantic import ValidationError
 import requests
 from fastapi import FastAPI
@@ -34,12 +35,13 @@ from .job_manager import (
     acquire_job_slot,
     release_job_slot,
 )
-from .job_store import get_job_record
+from .job_store import get_job_record, store_reframing_proposal
 from .normalize import normalize_extracted_json
 from .observability import get_system_pulse
 from .export_service import write_exports, export_markdown, export_jsonld, export_bibtex
 from .api.observatory import router as observatory_router, metrics_service as observatory_metrics_service
 from .api.knowledge import knowledge_bp
+from .api.jobs import _get_job_version
 from .api.jobs import jobs_bp
 from ..shared.logger import get_logger
 from ..shared.config import (
@@ -89,6 +91,58 @@ _sse_lock = threading.Lock()
 api_app = FastAPI(title="Vyasa Orchestrator Gateway", version="1.0.0")
 api_app.include_router(observatory_router)
 api_app.mount("/", WSGIMiddleware(app))
+
+
+@app.route("/api/jobs/<job_id>/signoff", methods=["GET"])
+def get_job_signoff(job_id: str):
+    record = get_job_record(job_id) or {}
+    proposal_id = record.get("reframing_proposal_id")
+    proposal = None
+    try:
+        from arango import ArangoClient
+        db = ArangoClient(hosts=MEMORY_URL).db(ARANGODB_DB, username=ARANGODB_USER, password=ARANGODB_PASSWORD)
+        if proposal_id and db.has_collection("reframing_proposals"):
+            proposal = db.collection("reframing_proposals").get(proposal_id)
+    except Exception:
+        pass
+    return jsonify({"status": record.get("status"), "proposal": proposal}), 200
+
+
+@app.route("/api/jobs/<job_id>/signoff", methods=["POST"])
+def post_job_signoff(job_id: str):
+    data = request.json or {}
+    action = data.get("action")
+    proposal_id = data.get("proposal_id")
+    edited_pivot = data.get("edited_pivot")
+    if action not in ("accept", "reject"):
+        return jsonify({"error": "Invalid action"}), 400
+
+    record = get_job_record(job_id) or {}
+    initial_state = record.get("initial_state") or {}
+    parent_version = record.get("job_version", 1)
+
+    if action == "accept":
+        if edited_pivot:
+            initial_state = {**initial_state}
+            ctx = initial_state.get("project_context") or {}
+            ctx["thesis"] = edited_pivot
+            initial_state["project_context"] = ctx
+        new_job_id = create_job(
+            initial_state,
+            parent_job_id=job_id,
+            job_version=parent_version + 1,
+            reprocess_reason="reframe_accept",
+        )
+        telemetry_emitter.emit_event(
+            "reframe_accepted",
+            {"proposal_id": proposal_id, "new_job_id": new_job_id},
+        )
+        update_job_status(job_id, JobStatus.FINALIZED, message="Reframe accepted")
+        return jsonify({"new_job_id": new_job_id}), 200
+
+    telemetry_emitter.emit_event("reframe_rejected", {"proposal_id": proposal_id, "job_id": job_id})
+    update_job_status(job_id, JobStatus.FAILED, error="Reframe rejected", message="Reframe rejected")
+    return jsonify({"status": "rejected"}), 200
 
 
 def _extract_nodes_from_triples(triples: list) -> list:
@@ -246,7 +300,8 @@ def ingest_pdf():
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            pdf_path = Path(tmpdir) / uploaded.filename
+            safe_name = secure_filename(uploaded.filename)
+            pdf_path = Path(tmpdir) / safe_name
             uploaded.save(pdf_path)
 
             images_dir = Path(tmpdir) / "images"
@@ -267,7 +322,7 @@ def ingest_pdf():
             extra={"payload": {"filename": uploaded.filename}},
             exc_info=True,
         )
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route("/health", methods=["GET"])
@@ -436,7 +491,8 @@ def create_project():
         
     except ValueError as e:
         # Input validation errors (empty title, thesis, no RQs)
-        return jsonify({"error": str(e)}), 400
+        logger.warning(f"Invalid project payload: {e}")
+        return jsonify({"error": "Invalid project payload"}), 400
     except RuntimeError as e:
         # Database operation errors
         logger.error(f"Failed to create project: {e}", exc_info=True)
@@ -503,7 +559,7 @@ def list_project_jobs(project_id: str):
         return jsonify({"jobs": jobs}), 200
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Failed to list jobs for project {project_id}", exc_info=True)
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route("/api/projects/<project_id>", methods=["GET"])
@@ -530,7 +586,7 @@ def get_project(project_id: str):
         
     except ValueError as e:
         # Project not found
-        return jsonify({"error": str(e)}), 404
+        return jsonify({"error": "Project not found"}), 404
     except RuntimeError as e:
         logger.error(f"Failed to get project {project_id}: {e}", exc_info=True)
         return jsonify({"error": "Failed to get project"}), 503
@@ -605,6 +661,10 @@ def _run_workflow_async(job_id: str, initial_state: PaperState) -> None:
             # Emit reprocess completion telemetry if this is a reprocessed job
             _emit_reprocess_completion_telemetry(job_id, result)
             
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Workflow execution failed for job {job_id}", exc_info=True)
+            update_job_status(job_id, JobStatus.FAILED, error=str(exc), message="Failed")
+            raise
         finally:
             # Always release the slot
             release_job_slot()
@@ -800,7 +860,8 @@ def submit_workflow():
 
                     # Save to temp and extract text
                     tmpdir = tempfile.mkdtemp(prefix="vyasa_pdf_")
-                    pdf_path = str(Path(tmpdir) / uploaded.filename)
+                    safe_name = secure_filename(uploaded.filename)
+                    pdf_path = str(Path(tmpdir) / safe_name)
                     uploaded.save(pdf_path)
                     
                     try:
@@ -906,7 +967,7 @@ def submit_workflow():
         
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to submit workflow job", exc_info=True)
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route("/workflow/status/<job_id>", methods=["GET"])
@@ -1097,7 +1158,7 @@ def _run_exports_async(job_id: str, include_drafts: bool = False) -> None:
         update_job_status(job_id, JobStatus.FINALIZED, current_step="Finalize", progress=1.0)
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Export generation failed for job {job_id}: {exc}", exc_info=True)
-        update_job_status(job_id, JobStatus.FAILED, error=str(exc), message="Export failed")
+        update_job_status(job_id, JobStatus.FAILED, error="Export failed", message="Export failed")
 
 
 @app.route("/jobs/<job_id>/finalize", methods=["POST"])
@@ -1206,7 +1267,7 @@ def _run_harvesting_async(project_id: str, job_ids: List[str]) -> None:
         logger.error(f"Knowledge harvesting failed for project {project_id}: {exc}", exc_info=True)
         for jid in job_ids or []:
             try:
-                update_job_status(jid, JobStatus.FAILED, error=str(exc), message="Knowledge synthesis failed")
+                update_job_status(jid, JobStatus.FAILED, error="Knowledge synthesis failed", message="Knowledge synthesis failed")
             except Exception:
                 logger.warning(f"Unable to mark job {jid} failed after synthesis error")
 
@@ -1378,7 +1439,7 @@ def merge_extractions(job_id: str):
         
     except Exception as e:
         logger.error(f"Failed to merge extractions: {e}", exc_info=True)
-        return jsonify({"error": f"Merge failed: {str(e)}"}), 500
+        return jsonify({"error": "Merge failed"}), 500
 
 
 @app.route("/workflow/process", methods=["POST"])
@@ -1432,7 +1493,7 @@ def run_workflow():
         return jsonify({"job_id": job_id, "status": JobStatus.QUEUED.value}), 202
     except Exception as exc:  # noqa: BLE001
         logger.error("Workflow execution failed", exc_info=True)
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
 
 if __name__ == "__main__":

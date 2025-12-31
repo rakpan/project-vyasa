@@ -13,6 +13,7 @@ class JobStatus(str, Enum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
     FINALIZED = "FINALIZED"
+    NEEDS_SIGNOFF = "NEEDS_SIGNOFF"
     # Backward-compatible aliases
     PENDING = QUEUED
     PROCESSING = RUNNING

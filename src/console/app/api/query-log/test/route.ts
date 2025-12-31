@@ -22,6 +22,9 @@ import neo4jService from '@/lib/neo4j';
  * This is for debugging purposes only
  */
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ code: 'ROUTE_DISABLED_IN_PRODUCTION' }, { status: 403 });
+  }
   try {
     console.log('[Test] Creating test query log');
     

@@ -25,14 +25,12 @@ import {
   EyeOff,
   Search as SearchIcon,
   Cpu,
-  HardDrive,
   Server,
   RefreshCw,
   Check,
   X
 } from "lucide-react"
 import { GraphDBType } from "@/lib/graph-db-service"
-import { listFilesInS3 } from "@/utils/s3-storage"
 import { useToast } from "@/hooks/use-toast"
 
 import {
@@ -59,18 +57,10 @@ export function SettingsModal() {
   const { toast } = useToast()
   const [isOpen, setIsOpen] = useState(false)
   const [activeTab, setActiveTab] = useState("models")
-  const [dbUrl, setDbUrl] = useState("")
-  const [dbUsername, setDbUsername] = useState("")
-  const [dbPassword, setDbPassword] = useState("")
-  const [vectorDbHost, setVectorDbHost] = useState("")
-  const [vectorDbPort, setVectorDbPort] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   
   // Graph DB settings
-  const [graphDbType, setGraphDbType] = useState<GraphDBType>("arangodb")
-  const [neo4jUrl, setNeo4jUrl] = useState("")
-  const [neo4jUser, setNeo4jUser] = useState("")
-  const [neo4jPassword, setNeo4jPassword] = useState("")
+  const [graphDbType] = useState<GraphDBType>("arangodb")
   const [arangoUrl, setArangoUrl] = useState("http://localhost:8529")
   const [arangoDb, setArangoDb] = useState("project_vyasa")
   const [arangoUser, setArangoUser] = useState("")
@@ -81,16 +71,6 @@ export function SettingsModal() {
   const [qdrantApiKey, setQdrantApiKey] = useState("")
   const [qdrantEnvironment, setQdrantEnvironment] = useState("")
   const [qdrantIndex, setQdrantIndex] = useState("")
-  
-  // S3 Storage settings
-  const [s3Endpoint, setS3Endpoint] = useState("")
-  const [s3Bucket, setS3Bucket] = useState("")
-  const [s3AccessKey, setS3AccessKey] = useState("")
-  const [s3SecretKey, setS3SecretKey] = useState("")
-  const [isConnecting, setIsConnecting] = useState(false)
-  const [isS3Connected, setIsS3Connected] = useState(false)
-  const [s3FileCount, setS3FileCount] = useState(0)
-  const [s3Error, setS3Error] = useState<string | null>(null)
   
   // Embeddings model settings
   const [embeddingsProvider, setEmbeddingsProvider] = useState("local")
@@ -127,89 +107,41 @@ export function SettingsModal() {
     }
   }, [isOpen, activeTab])
   
-  // Load saved settings when modal opens
+  // Load settings from server/env when modal opens (no localStorage use)
   useEffect(() => {
-    if (isOpen) {
-      const storedDbUrl = localStorage.getItem("NEO4J_URL") || ""
-      const storedDbUsername = localStorage.getItem("NEO4J_USERNAME") || ""
-      const storedDbPassword = localStorage.getItem("NEO4J_PASSWORD") || ""
-      const storedVectorDbHost = localStorage.getItem("VECTOR_DB_HOST") || ""
-      const storedVectorDbPort = localStorage.getItem("VECTOR_DB_PORT") || ""
-      
-      setDbUrl(storedDbUrl)
-      setDbUsername(storedDbUsername)
-      setDbPassword(storedDbPassword)
-      setVectorDbHost(storedVectorDbHost)
-      setVectorDbPort(storedVectorDbPort)
-      
-      // Load embeddings settings
-      const storedEmbeddingsProvider = localStorage.getItem("embeddings_provider") || "local"
-      const storedNvidiaModel = localStorage.getItem("nvidia_embeddings_model") || "nvidia/llama-3.2-nv-embedqa-1b-v2"
-      setEmbeddingsProvider(storedEmbeddingsProvider)
-      setNvidiaEmbeddingsModel(storedNvidiaModel)
-      
-      // Load Ollama model configuration
-      const storedSelectedModels = localStorage.getItem("selected_ollama_models")
-      if (storedSelectedModels) {
-        try {
-          setSelectedOllamaModels(JSON.parse(storedSelectedModels))
-        } catch (e) {
-          console.error("Error parsing stored Ollama models:", e)
+    if (!isOpen) return
+    const hydrate = async () => {
+      try {
+        const resp = await fetch("/api/settings")
+        const data = await resp.json()
+        const settings = data.settings || {}
+        setEmbeddingsProvider(settings.embeddings_provider || process.env.NEXT_PUBLIC_EMBEDDINGS_PROVIDER || "local")
+        setNvidiaEmbeddingsModel(
+          settings.nvidia_embeddings_model || process.env.NEXT_PUBLIC_NVIDIA_EMBEDDINGS_MODEL || "nvidia/llama-3.2-nv-embedqa-1b-v2"
+        )
+        
+        if (Array.isArray(settings.selected_ollama_models)) {
+          setSelectedOllamaModels(settings.selected_ollama_models)
         }
+        
+        setArangoUrl(settings.arango_url || process.env.NEXT_PUBLIC_ARANGO_URL || "http://localhost:8529")
+        setArangoDb(settings.arango_db || process.env.NEXT_PUBLIC_ARANGO_DB || "project_vyasa")
+        setArangoUser(settings.arango_user || process.env.NEXT_PUBLIC_ARANGO_USER || "")
+        setArangoPassword("") // never expose secrets
+        
+        setQdrantApiKey("") // Qdrant does not require API key in local mode
+        setQdrantEnvironment(settings.qdrant_environment || "")
+        setQdrantIndex(settings.qdrant_collection || "")
+      } catch (err) {
+        console.error("Failed to load settings from server", err)
       }
-      
-      // Load S3 settings
-      const savedS3Endpoint = localStorage.getItem("S3_ENDPOINT") || ""
-      const savedS3Bucket = localStorage.getItem("S3_BUCKET") || ""
-      const savedS3AccessKey = localStorage.getItem("S3_ACCESS_KEY") || ""
-      const savedS3SecretKey = localStorage.getItem("S3_SECRET_KEY") || ""
-      const s3Connected = localStorage.getItem("S3_CONNECTED") === "true"
-      
-      setS3Endpoint(savedS3Endpoint)
-      setS3Bucket(savedS3Bucket)
-      setS3AccessKey(savedS3AccessKey)
-      setS3SecretKey(savedS3SecretKey)
-      setIsS3Connected(s3Connected)
     }
-    
-    // Load graph DB type
-    const storedGraphDbType = localStorage.getItem("graph_db_type") || "arangodb"
-    setGraphDbType(storedGraphDbType as GraphDBType)
-    
-    // Load Neo4j settings
-    setNeo4jUrl(localStorage.getItem("neo4j_url") || "")
-    setNeo4jUser(localStorage.getItem("neo4j_user") || "")
-    setNeo4jPassword(localStorage.getItem("neo4j_password") || "")
-    
-    // Load ArangoDB settings
-    setArangoUrl(localStorage.getItem("arango_url") || "http://localhost:8529")
-    setArangoDb(localStorage.getItem("arango_db") || "project_vyasa")
-    setArangoUser(localStorage.getItem("arango_user") || "")
-    setArangoPassword(localStorage.getItem("arango_password") || "")
-    
-    // Load Qdrant settings (backward compatibility with old localStorage keys)
-    setQdrantApiKey(localStorage.getItem("pinecone_api_key") || "")
-    setQdrantEnvironment(localStorage.getItem("pinecone_environment") || "")
-    setQdrantIndex(localStorage.getItem("pinecone_index") || "")
+    hydrate()
   }, [isOpen])
   
   // Save database settings
   const saveDbSettings = async (e: React.FormEvent) => {
     e.preventDefault()
-    
-    // Save graph DB type
-    localStorage.setItem("graph_db_type", graphDbType)
-    
-    // Save Neo4j settings
-    localStorage.setItem("neo4j_url", neo4jUrl)
-    localStorage.setItem("neo4j_user", neo4jUser)
-    localStorage.setItem("neo4j_password", neo4jPassword)
-    
-    // Save ArangoDB settings
-    localStorage.setItem("arango_url", arangoUrl)
-    localStorage.setItem("arango_db", arangoDb)
-    localStorage.setItem("arango_user", arangoUser)
-    localStorage.setItem("arango_password", arangoPassword)
     
     // Sync settings with server
     try {
@@ -221,9 +153,6 @@ export function SettingsModal() {
         body: JSON.stringify({
           settings: {
             graph_db_type: graphDbType,
-            neo4j_url: neo4jUrl,
-            neo4j_user: neo4jUser,
-            neo4j_password: neo4jPassword,
             arango_url: arangoUrl,
             arango_db: arangoDb,
             arango_user: arangoUser,
@@ -251,11 +180,6 @@ export function SettingsModal() {
   const saveVectorDbSettings = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    // Save Qdrant settings (using old localStorage keys for backward compatibility)
-    localStorage.setItem("pinecone_api_key", qdrantApiKey)
-    localStorage.setItem("pinecone_environment", qdrantEnvironment)
-    localStorage.setItem("pinecone_index", qdrantIndex)
-    
     // Sync settings with server
     try {
       await fetch('/api/settings', {
@@ -265,9 +189,9 @@ export function SettingsModal() {
         },
         body: JSON.stringify({
           settings: {
-            pinecone_api_key: qdrantApiKey,
-            pinecone_environment: qdrantEnvironment,
-            pinecone_index: qdrantIndex,
+            qdrant_api_key: qdrantApiKey,
+            qdrant_environment: qdrantEnvironment,
+            qdrant_collection: qdrantIndex,
           }
         }),
       });
@@ -284,68 +208,6 @@ export function SettingsModal() {
       title: "Success",
       description: "Vector database settings saved"
     })
-  }
-  
-  // Save S3 settings and check connection
-  const saveS3Settings = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
-    setIsConnecting(true)
-    setS3Error(null)
-    
-    try {
-      // Save S3 settings to localStorage
-      localStorage.setItem("S3_ENDPOINT", s3Endpoint)
-      localStorage.setItem("S3_BUCKET", s3Bucket)
-      localStorage.setItem("S3_ACCESS_KEY", s3AccessKey)
-      localStorage.setItem("S3_SECRET_KEY", s3SecretKey)
-
-      // Set these in window for runtime access
-      window.process = window.process || {}
-      window.process.env = window.process.env || {}
-      window.process.env.S3_ENDPOINT = s3Endpoint
-      window.process.env.S3_BUCKET = s3Bucket
-      window.process.env.S3_ACCESS_KEY = s3AccessKey
-      window.process.env.S3_SECRET_KEY = s3SecretKey
-      
-      // Try to list files to verify connection
-      const files = await listFilesInS3()
-      setS3FileCount(files.length)
-      setIsS3Connected(true)
-      
-      // Save connection status to localStorage
-      localStorage.setItem("S3_CONNECTED", "true")
-      
-      // Dispatch event to notify other components
-      window.dispatchEvent(new CustomEvent('s3ConnectionChanged', { 
-        detail: { isConnected: true } 
-      }))
-      
-      toast({
-        title: "Success",
-        description: `Connected to S3 bucket. Found ${files.length} files.`
-      })
-    } catch (error) {
-      console.error("Failed to connect to S3:", error)
-      setIsS3Connected(false)
-      
-      // Save connection status to localStorage
-      localStorage.setItem("S3_CONNECTED", "false")
-      
-      // Dispatch event to notify other components
-      window.dispatchEvent(new CustomEvent('s3ConnectionChanged', { 
-        detail: { isConnected: false } 
-      }))
-      
-      setS3Error(error instanceof Error ? error.message : "Could not connect to S3 storage")
-      toast({
-        variant: "destructive",
-        title: "S3 Connection Failed",
-        description: error instanceof Error ? error.message : "Unknown error"
-      })
-    } finally {
-      setIsConnecting(false)
-    }
   }
   
   // Fetch available Ollama models
@@ -493,12 +355,6 @@ export function SettingsModal() {
                     <span>Vector Database</span>
                   </div>
                 </SelectItem>
-                <SelectItem value="s3">
-                  <div className="flex items-center gap-3">
-                    <HardDrive className="h-4 w-4 text-nvidia-green" />
-                    <span>S3 Storage</span>
-                  </div>
-                </SelectItem>
                 <SelectItem value="embeddings">
                   <div className="flex items-center gap-3">
                     <Cpu className="h-4 w-4 text-nvidia-green" />
@@ -525,69 +381,15 @@ export function SettingsModal() {
                     Database Type
                   </label>
                   <select
-                    value={graphDbType}
-                    onChange={(e) => setGraphDbType(e.target.value as GraphDBType)}
-                    className="w-full bg-background border border-border/60 rounded-md p-2 text-sm text-foreground focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
+                    value="arangodb"
+                    disabled
+                    className="w-full bg-background border border-border/60 rounded-md p-2 text-sm text-foreground"
                   >
-                    <option value="neo4j">Neo4j</option>
                     <option value="arangodb">ArangoDB</option>
                   </select>
                 </div>
               
-                {graphDbType === "neo4j" && (
-                  <div className="bg-background/50 rounded-lg p-3 space-y-3">
-                    <h4 className="text-sm font-medium text-foreground mb-2">Neo4j Configuration</h4>
-                    <div className="grid grid-cols-1 gap-3">
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1 block">Connection URL</label>
-                        <input
-                          type="text"
-                          value={neo4jUrl}
-                          onChange={(e) => setNeo4jUrl(e.target.value)}
-                          placeholder="bolt://localhost:7687"
-                          className="w-full bg-background border border-border/60 rounded-md p-2 text-sm text-foreground focus:ring-1 focus:ring-primary/50 focus:border-primary transition-colors"
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs font-medium text-muted-foreground mb-1 block">Username</label>
-                          <input
-                            type="text"
-                            value={neo4jUser}
-                            onChange={(e) => setNeo4jUser(e.target.value)}
-                            placeholder="neo4j"
-                            className="w-full bg-background border border-border/60 rounded-md p-2 text-sm text-foreground focus:ring-1 focus:ring-primary/50 focus:border-primary transition-colors"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs font-medium text-muted-foreground mb-1 block">Password</label>
-                          <div className="relative">
-                            <input
-                              type={showPassword ? "text" : "password"}
-                              value={neo4jPassword}
-                              onChange={(e) => setNeo4jPassword(e.target.value)}
-                              placeholder="password"
-                              className="w-full bg-background border border-border/60 rounded-md p-2 pr-8 text-sm text-foreground focus:ring-1 focus:ring-primary/50 focus:border-primary transition-colors"
-                            />
-                            <button
-                              type="button"
-                              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                              onClick={() => setShowPassword(!showPassword)}
-                            >
-                              {showPassword ? (
-                                <EyeOff className="h-3 w-3" />
-                              ) : (
-                                <Eye className="h-3 w-3" />
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              
-                {graphDbType === "arangodb" && (
+                {true && (
                   <div className="bg-background/50 rounded-lg p-3 space-y-3">
                     <h4 className="text-sm font-medium text-foreground mb-2">ArangoDB Configuration</h4>
                     <div className="grid grid-cols-1 gap-3">
@@ -731,112 +533,6 @@ export function SettingsModal() {
                     <Save className="h-4 w-4" />
                     Save Settings
                   </button>
-                </div>
-              </form>
-            </div>
-          )}
-          
-          {activeTab === "s3" && (
-            <div className="bg-muted/30 border border-border/40 rounded-xl p-4">
-              <form onSubmit={saveS3Settings} className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-foreground flex items-center gap-2">
-                    <HardDrive className="h-4 w-4 text-nvidia-green" />
-                    S3 Storage Configuration
-                  </label>
-                </div>
-                
-                <div className="bg-background/50 rounded-lg p-3 space-y-3">
-                  <div className="grid grid-cols-1 gap-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1 block">Endpoint URL</label>
-                        <Input
-                          placeholder="http://localhost:9000"
-                          value={s3Endpoint}
-                          onChange={(e) => setS3Endpoint(e.target.value)}
-                          required
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1 block">Bucket Name</label>
-                        <Input
-                          placeholder="project-vyasa"
-                          value={s3Bucket}
-                          onChange={(e) => setS3Bucket(e.target.value)}
-                          required
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1 block">Access Key</label>
-                        <Input
-                          placeholder="Access Key ID"
-                          value={s3AccessKey}
-                          onChange={(e) => setS3AccessKey(e.target.value)}
-                          required
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1 block">Secret Key</label>
-                        <Input
-                          type="password"
-                          placeholder="Secret Access Key"
-                          value={s3SecretKey}
-                          onChange={(e) => setS3SecretKey(e.target.value)}
-                          required
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                {s3Error && (
-                  <div className="text-xs text-destructive bg-destructive/10 p-2 rounded-md border border-destructive/30">
-                    {s3Error}
-                  </div>
-                )}
-                
-                {isS3Connected && (
-                  <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800/50 rounded-lg p-3">
-                    <div className="flex items-center gap-2 text-green-800 dark:text-green-300 text-sm">
-                      <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
-                      <span className="font-medium">Connected</span>
-                      <span className="text-green-700 dark:text-green-400 ml-2">
-                        {s3FileCount} {s3FileCount === 1 ? 'file' : 'files'} in bucket
-                      </span>
-                    </div>
-                  </div>
-                )}
-                
-                <div className="flex justify-end pt-3 border-t border-border/30">
-                  <Button 
-                    type="submit" 
-                    disabled={isConnecting} 
-                    className="flex items-center gap-2 px-4 py-2 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground transition-colors text-sm font-medium shadow-sm"
-                  >
-                    {isConnecting ? (
-                      <>
-                        <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                        Connecting...
-                      </>
-                    ) : isS3Connected ? (
-                      <>
-                        <Save className="h-4 w-4" />
-                        Update Connection
-                      </>
-                    ) : (
-                      <>
-                        <HardDrive className="h-4 w-4" />
-                        Connect to S3
-                      </>
-                    )}
-                  </Button>
                 </div>
               </form>
             </div>

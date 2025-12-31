@@ -3,6 +3,7 @@
 import { useMemo, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
+import { StrategicInterventionPanel } from "@/components/StrategicInterventionPanel"
 import { ZenSourceVault } from "@/components/ZenSourceVault"
 import { LiveGraphWorkbench } from "@/components/LiveGraphWorkbench"
 import { ZenManuscriptEditor } from "@/components/ZenManuscriptEditor"
@@ -31,6 +32,7 @@ export default function ResearchWorkbenchPage() {
   const pdfUrl = useMemo(() => params.get("pdfUrl") || "", [params])
   const projectId = useMemo(() => params.get("projectId") || "", [params])
   const [guarded, setGuarded] = useState(false)
+  const [jobStatus, setJobStatus] = useState<string>("")
   const { focusMode, toggleFocusMode } = useResearchStore()
   const { activeProjectId, setActiveProject, setActiveJobContext } = useProjectStore()
 
@@ -100,7 +102,8 @@ export default function ResearchWorkbenchPage() {
           // Other errors - allow to proceed but log
           console.error("Failed to verify job:", response.status, response.statusText)
         }
-        
+        const data = await response.json()
+        setJobStatus((data?.status || data?.status_out || "").toUpperCase())
         // Job exists and is valid
         setGuarded(false)
       } catch (err) {
@@ -116,6 +119,8 @@ export default function ResearchWorkbenchPage() {
   if (guarded) {
     return null
   }
+
+  const needsSignoff = jobStatus === "NEEDS_SIGNOFF"
 
   return (
     <div className="h-full w-full flex flex-col bg-background">
@@ -186,6 +191,18 @@ export default function ResearchWorkbenchPage() {
             </>
           )}
         </PanelGroup>
+      )}
+      {needsSignoff && (
+        <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-start justify-end p-4">
+          <StrategicInterventionPanel jobId={jobId} projectId={projectId} />
+        </div>
+      )}
+      {needsSignoff && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
+          <div className="bg-destructive/10 text-destructive px-4 py-2 rounded border border-destructive/50 shadow">
+            Workflow paused: awaiting strategic intervention signoff.
+          </div>
+        </div>
       )}
     </div>
   )

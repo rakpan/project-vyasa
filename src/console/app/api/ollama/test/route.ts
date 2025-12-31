@@ -22,6 +22,9 @@ import { NextRequest, NextResponse } from 'next/server';
  */
 
 export async function GET(req: NextRequest) {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ code: 'ROUTE_DISABLED_IN_PRODUCTION' }, { status: 403 });
+  }
   try {
     const sampleText = `
     Apple Inc. is a multinational technology company headquartered in Cupertino, California. 

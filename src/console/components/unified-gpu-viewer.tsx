@@ -16,7 +16,7 @@
 //
 "use client"
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -25,6 +25,34 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Loader2, Zap, Activity, Cpu, Cloud, ExternalLink, Settings } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+
+const ALLOWED_EMBED_HOSTS = new Set(['localhost', '127.0.0.1', 'rpdgxspark'])
+
+const isAllowedHost = (hostname: string, currentHost: string) => {
+  const host = hostname.toLowerCase()
+  const current = currentHost.toLowerCase()
+  return (
+    host === current ||
+    ALLOWED_EMBED_HOSTS.has(host) ||
+    host === 'graphistry.com' ||
+    host.endsWith('.graphistry.com')
+  )
+}
+
+const sanitizeEmbedUrl = (raw?: string | null, currentHost?: string): string | null => {
+  if (!raw) return null
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+    const parsed = new URL(raw, base)
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null
+    const hostToCheck = currentHost || (typeof window !== 'undefined' ? window.location.hostname : '')
+    if (!isAllowedHost(parsed.hostname, hostToCheck)) return null
+    parsed.hash = '' // drop fragments
+    return parsed.toString()
+  } catch {
+    return null
+  }
+}
 
 interface GraphData {
   nodes: Array<{
@@ -99,6 +127,22 @@ export function UnifiedGPUViewer({ graphData, onError }: UnifiedGPUViewerProps) 
   
   const { toast } = useToast()
   const wsRef = useRef<WebSocket | null>(null)
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : ''
+  const safeEmbedUrl = useMemo(
+    () => sanitizeEmbedUrl(processedData?.embed_url, currentHost),
+    [processedData?.embed_url, currentHost]
+  )
+  const handleOpenEmbed = () => {
+    if (!safeEmbedUrl) {
+      toast({
+        variant: "destructive",
+        title: "Invalid embed URL",
+        description: "The visualization link was rejected for safety.",
+      })
+      return
+    }
+    window.open(safeEmbedUrl, '_blank', 'noopener,noreferrer')
+  }
 
   // Check service health and capabilities on mount
   useEffect(() => {
@@ -475,7 +519,7 @@ export function UnifiedGPUViewer({ graphData, onError }: UnifiedGPUViewerProps) 
             
             {/* Visualization */}
             <div className="w-full h-96 border rounded-lg overflow-hidden">
-              {processedData.embed_url ? (
+              {processedData.embed_url && safeEmbedUrl ? (
                 // PyGraphistry Cloud embed
                 <>
                   <div className="p-3 bg-blue-50 border-b flex items-center justify-between">
@@ -490,19 +534,23 @@ export function UnifiedGPUViewer({ graphData, onError }: UnifiedGPUViewerProps) 
                     <Button 
                       variant="outline" 
                       size="sm"
-                      onClick={() => window.open(processedData.embed_url, '_blank')}
+                      onClick={handleOpenEmbed}
                     >
                       <ExternalLink className="w-4 h-4 mr-1" />
                       Open
                     </Button>
                   </div>
                   <iframe
-                    src={processedData.embed_url}
+                    src={safeEmbedUrl}
                     className="w-full h-80"
                     title="PyGraphistry Visualization"
                     style={{ border: 'none' }}
                   />
                 </>
+              ) : processedData.embed_url && !safeEmbedUrl ? (
+                <div className="p-4 bg-amber-50 border-b text-amber-700 text-sm">
+                  Embed URL was rejected (host/protocol not allowed). Please verify configuration.
+                </div>
               ) : (
                 // Local processing result
                 <div className="p-4 bg-green-50 border-b">

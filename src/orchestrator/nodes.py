@@ -36,6 +36,19 @@ from .telemetry import TelemetryEmitter, trace_node
 from .config import ExpertType, NODE_EXPERT_MAP
 from .job_manager import update_job_status
 from arango import ArangoClient
+from .job_store import store_conflict_report
+from ..shared.conflict_utils import compute_conflict_hash
+from ..shared.schema import (
+    ConflictItem,
+    ConflictReport,
+    ConflictSeverity,
+    ConflictType,
+    ConflictProducer,
+    ConflictSuggestedAction,
+    RecommendedNextStep,
+    ReframingProposal,
+    PivotType,
+)
 import re
 
 
@@ -1068,13 +1081,34 @@ def critic_node(state: PaperState) -> PaperState:
         # Store expert info for trace_node decorator
         enriched_state["_expert_name"] = meta.get("expert_name", expert_name)
         enriched_state["_expert_url"] = meta.get("url_base", expert_url)
-        return {
+        base_state = {
             **enriched_state,
             "critiques": critiques,
             "revision_count": revision_count,
             "critic_status": status,
             "critic_score": critic_score,
         }
+        conflict_report = _build_conflict_report(base_state, conflict_flags, status, revision_count)
+        if conflict_report:
+            try:
+                store_conflict_report(conflict_report.model_dump())
+                telemetry_emitter.emit_event(
+                    "conflict_report_emitted",
+                    {
+                        "report_id": conflict_report.report_id,
+                        "job_id": conflict_report.job_id,
+                        "conflict_hash": conflict_report.conflict_hash,
+                        "deadlock": conflict_report.deadlock,
+                        "deadlock_type": conflict_report.deadlock_type.value if conflict_report.deadlock_type else None,
+                        "blocker_count": len([i for i in conflict_report.conflict_items if i.severity == ConflictSeverity.BLOCKER]),
+                        "recommended_next_step": conflict_report.recommended_next_step.value,
+                    },
+                )
+                base_state["conflict_report_id"] = conflict_report.report_id
+                base_state["conflict_report"] = conflict_report.model_dump()
+            except Exception:
+                logger.warning("Failed to persist conflict report", exc_info=True)
+        return base_state
     except Exception:
         logger.error(
             "Critic validation failed",
@@ -1493,3 +1527,149 @@ def logician_node(state: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         result = {"error": f"math_sandbox_unavailable:{exc}"}
     return {**state, "logician": result}
+
+
+def _stable_fact_id(triple: Dict[str, Any]) -> str:
+    """Generate a stable ID for a triple/fact using core fields."""
+    parts = [
+        str(triple.get("subject", "")).strip().lower(),
+        str(triple.get("predicate", "")).strip().lower(),
+        str(triple.get("object", "")).strip().lower(),
+        str(triple.get("doc_hash", "")).strip().lower(),
+        str(triple.get("source_pointer", {}).get("page", "")),
+    ]
+    return uuid.uuid5(uuid.NAMESPACE_URL, "|".join(parts)).hex
+
+
+def _build_conflict_report(
+    state: PaperState,
+    conflict_flags: List[str],
+    status: str,
+    revision_count: int,
+) -> Optional[ConflictReport]:
+    """Create a minimal ConflictReport from critic state."""
+    if status == "pass" and not conflict_flags:
+        return None
+
+    extracted = state.get("extracted_json") or {}
+    triples = extracted.get("triples") if isinstance(extracted, dict) else []
+    anchors = []
+    contradict_ids: List[str] = []
+    if isinstance(triples, list) and triples:
+        t0 = triples[0] if isinstance(triples[0], dict) else {}
+        pointer = t0.get("source_pointer") or {}
+        doc_hash = t0.get("doc_hash") or pointer.get("doc_hash") or state.get("doc_hash", "")
+        page = pointer.get("page") or 1
+        bbox = pointer.get("bbox") or [0, 0, 0, 0]
+        snippet = pointer.get("snippet") or t0.get("snippet") or state.get("raw_text", "")[:120]
+        anchors.append(
+            {
+                "doc_hash": doc_hash,
+                "page": page,
+                "bbox": bbox,
+                "snippet": snippet,
+            }
+        )
+        contradict_ids.append(_stable_fact_id(t0))
+
+    severity = ConflictSeverity.HIGH if conflict_flags else ConflictSeverity.MEDIUM
+    if conflict_flags and revision_count >= 2:
+        severity = ConflictSeverity.BLOCKER
+    suggested_actions = [ConflictSuggestedAction.RETRY_EXTRACTION]
+    if severity in (ConflictSeverity.HIGH, ConflictSeverity.BLOCKER):
+        suggested_actions.append(ConflictSuggestedAction.HUMAN_SIGNOFF_REQUIRED)
+
+    items = [
+        ConflictItem(
+            conflict_id=str(uuid.uuid4()),
+            conflict_type=ConflictType.STRUCTURAL_CONFLICT if conflict_flags else ConflictType.UNSUPPORTED_CORE_CLAIM,
+            severity=severity,
+            summary=(conflict_flags[0] if conflict_flags else "Critic failed validation")[:240],
+            details=("; ".join(conflict_flags) if conflict_flags else "Extraction failed quality gates")[:1200],
+            produced_by=ConflictProducer.CRITIC,
+            contradicts=contradict_ids or None,
+            evidence_anchors=anchors,
+            assumptions=[],
+            suggested_actions=suggested_actions,
+            confidence=0.55 if conflict_flags else 0.4,
+        )
+    ]
+
+    deadlock_type = None
+    next_step = RecommendedNextStep.REVISE_AND_RETRY
+    deadlock = False
+    if revision_count >= 2 and any(i.severity == ConflictSeverity.BLOCKER for i in items):
+        deadlock = True
+        deadlock_type = items[0].conflict_type
+        next_step = RecommendedNextStep.TRIGGER_REFRAMING
+
+    report = ConflictReport(
+        report_id=str(uuid.uuid4()),
+        project_id=state.get("project_id", ""),
+        job_id=state.get("job_id", ""),
+        doc_hash=state.get("doc_hash", anchors[0]["doc_hash"] if anchors else ""),
+        revision_count=revision_count,
+        critic_status=status,
+        deadlock=deadlock,
+        deadlock_type=deadlock_type,
+        conflict_items=items,
+        conflict_hash="",
+        recommended_next_step=next_step,
+        created_at=get_utc_now(),
+    )
+    report.conflict_hash = compute_conflict_hash(report)
+    return report
+
+
+def reframing_node(state: PaperState) -> PaperState:
+    """Generate a reframing proposal and pause workflow for human signoff."""
+    conflict = state.get("conflict_report") or {}
+    if not conflict:
+        return state
+    try:
+        conflict_report = ConflictReport(**conflict)
+    except Exception:
+        return state
+    # Trigger conditions
+    if not (
+        state.get("revision_count", 0) >= 2
+        and conflict_report.deadlock
+        and conflict_report.recommended_next_step
+        in {RecommendedNextStep.TRIGGER_REFRAMING, RecommendedNextStep.PAUSE_FOR_HUMAN}
+    ):
+        return state
+
+    # Minimal deterministic proposal (no LLM to keep tests offline)
+    blocker_ids = [i.conflict_id for i in conflict_report.conflict_items if i.severity == ConflictSeverity.BLOCKER]
+    anchors = blocker_ids or [i.conflict_id for i in conflict_report.conflict_items]
+    proposal = ReframingProposal(
+        proposal_id=str(uuid.uuid4()),
+        project_id=state.get("project_id", ""),
+        job_id=state.get("job_id", ""),
+        doc_hash=conflict_report.doc_hash,
+        conflict_hash=conflict_report.conflict_hash,
+        conflict_summary=conflict_report.conflict_items[0].summary if conflict_report.conflict_items else "deadlock",
+        pivot_type=PivotType.SCOPE,
+        proposed_pivot="Refine scope to reduce contradiction.",
+        architectural_rationale="Smallest pivot to resolve conflict while preserving thesis.",
+        evidence_anchors=anchors[:1],
+        assumptions_changed=["assumption_revised"],
+        what_stays_true=["prior evidence remains trusted"],
+        requires_human_signoff=True,
+        created_at=get_utc_now(),
+    )
+    proposal_id = store_reframing_proposal(proposal.model_dump())
+    telemetry_emitter.emit_event(
+        "reframe_proposed",
+        {
+            "proposal_id": proposal_id,
+            "conflict_hash": conflict_report.conflict_hash,
+            "pivot_type": proposal.pivot_type.value,
+        },
+    )
+    # Mark job as paused for signoff
+    try:
+        update_job_status(state.get("job_id"), JobStatus.NEEDS_SIGNOFF, current_step="reframing", message="Awaiting signoff")
+    except Exception:
+        pass
+    return {**state, "reframing_proposal_id": proposal_id, "needs_signoff": True}

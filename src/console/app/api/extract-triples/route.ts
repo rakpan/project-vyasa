@@ -18,6 +18,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processDocument, TextProcessor } from '@/lib/text-processor';
 import { llmService } from '@/lib/llm-service';
 
+// Trusted internal endpoints; never accept caller-provided URLs (SSRF mitigation)
+const ORCHESTRATOR_BASE_URL = process.env.ORCHESTRATOR_BASE_URL || 'http://localhost:12000';
+const SGLANG_BRAIN_BASE_URL = process.env.SGLANG_BRAIN_BASE_URL || 'http://localhost:30000';
+const SGLANG_WORKER_BASE_URL = process.env.SGLANG_WORKER_BASE_URL || 'http://localhost:30001';
+const SGLANG_VISION_BASE_URL = process.env.SGLANG_VISION_BASE_URL || 'http://localhost:30002';
+
+const providerBases: Record<string, string> = {
+  brain: SGLANG_BRAIN_BASE_URL,
+  worker: SGLANG_WORKER_BASE_URL,
+  vision: SGLANG_VISION_BASE_URL,
+  orchestrator: ORCHESTRATOR_BASE_URL,
+};
+
 // Configure route for dynamic operations and long-running requests
 export const dynamic = 'force-dynamic';
 export const maxDuration = 1800; // 30 minutes for large model processing
@@ -43,9 +56,7 @@ export async function POST(req: NextRequest) {
       graphTransformerPrompt,
       llmProvider,
       ollamaModel,
-      ollamaBaseUrl,
       vllmModel,
-      vllmBaseUrl,
       nvidiaModel
     } = body;
 
@@ -149,11 +160,12 @@ export async function POST(req: NextRequest) {
     // Configure TextProcessor for the specified LLM provider
     const processor = TextProcessor.getInstance();
     if (llmProvider && ['ollama', 'nvidia', 'vllm'].includes(llmProvider)) {
+      // SSRF mitigation: fetch targets are env-configured internal services only
       processor.setLLMProvider(llmProvider as 'ollama' | 'nvidia' | 'vllm', {
         ollamaModel: ollamaModel,
-        ollamaBaseUrl: ollamaBaseUrl,
+        ollamaBaseUrl: new URL("/", providerBases.worker).toString(),
         vllmModel: vllmModel,
-        vllmBaseUrl: vllmBaseUrl,
+        vllmBaseUrl: new URL("/", providerBases.worker).toString(),
         nvidiaModel: nvidiaModel
       });
     }
@@ -222,4 +234,3 @@ function parseTriplesFallback(text: string): Array<{subject: string, predicate: 
   
   return triples;
 }
-

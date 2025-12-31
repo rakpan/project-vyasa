@@ -4,7 +4,7 @@
 
 Project Vyasa is a local-first knowledge graph engine that transforms unstructured research documents into structured, verifiable artifacts. Built on NVIDIA DGX infrastructure, it leverages a Committee of Experts architecture to automate the classification and synthesis of complex research corpora.
 
-## Why "Vyasa"
+## The Name
 
 The project is named after the legendary sage Veda Vyasa, whose name literally means "Compiler" or "Arranger" in Sanskrit.
 

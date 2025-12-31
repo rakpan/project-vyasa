@@ -8,6 +8,7 @@ from .state import PaperState
 from .nodes import (
     cartographer_node,
     critic_node,
+    reframing_node,
     saver_node,
     synthesizer_node,
     failure_cleanup_node,
@@ -40,6 +41,7 @@ def build_workflow():
     graph.add_node("lead_counsel", lead_counsel_node)
     graph.add_node("logician", logician_node)
     graph.add_node("critic", critic_node)
+    graph.add_node("reframing", reframing_node)
     graph.add_node("synthesizer", synthesizer_node)
     graph.add_node("saver", saver_node)
     graph.add_node("failure_cleanup", failure_cleanup_node)
@@ -68,9 +70,18 @@ def build_workflow():
         "critic",
         _critic_router,
         {
+            "reframing": "reframing",
             "pass": "synthesizer",
             "retry": "cartographer",
             "manual": "failure_cleanup",
+        },
+    )
+    graph.add_conditional_edges(
+        "reframing",
+        lambda state: "failure_cleanup" if state.get("needs_signoff") else "saver",
+        {
+            "failure_cleanup": "failure_cleanup",
+            "saver": "saver",
         },
     )
     graph.add_conditional_edges(

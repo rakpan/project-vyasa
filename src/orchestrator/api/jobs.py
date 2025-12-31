@@ -203,7 +203,7 @@ def reprocess_job(job_id: str):
         
     except Exception as exc:
         logger.error(f"Reprocess failed for job {job_id}: {exc}", exc_info=True)
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": "Reprocess failed"}), 500
 
 
 def _calculate_triple_delta(triples1: List[Dict[str, Any]], triples2: List[Dict[str, Any]]) -> tuple[int, int, List[Dict], List[Dict]]:

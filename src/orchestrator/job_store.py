@@ -21,6 +21,8 @@ JOBS_COLLECTION = "jobs"
 
 # In-memory fallback (used if Arango is unavailable)
 _mem_store: Dict[str, Dict[str, Any]] = {}
+_conflict_store: Dict[str, Dict[str, Any]] = {}
+_reframe_store: Dict[str, Dict[str, Any]] = {}
 
 
 def _get_db():
@@ -31,6 +33,10 @@ def _get_db():
 def _ensure_collection(db):
     if not db.has_collection(JOBS_COLLECTION):
         db.create_collection(JOBS_COLLECTION)
+    if not db.has_collection("conflict_reports"):
+        db.create_collection("conflict_reports")
+    if not db.has_collection("reframing_proposals"):
+        db.create_collection("reframing_proposals")
 
 
 def _now_iso() -> str:
@@ -118,6 +124,45 @@ def set_job_result_record(job_id: str, result: Dict[str, Any]) -> None:
         "message": "Completed",
     }
     update_job_record(job_id, patch)
+
+
+def store_conflict_report(report: Dict[str, Any]) -> str:
+    """Persist a conflict report with in-memory fallback."""
+    report_id = report.get("report_id")
+    if not report_id:
+        report_id = str(uuid.uuid4())
+        report["report_id"] = report_id
+    try:
+        db = _get_db()
+        _ensure_collection(db)
+        coll = db.collection("conflict_reports")
+        coll.insert({**report, "_key": report_id})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Conflict store falling back to memory", extra={"payload": {"error": str(exc)}})
+        _conflict_store[report_id] = report
+    # Update job pointer if available
+    job_id = report.get("job_id")
+    if job_id:
+        update_job_record(job_id, {"conflict_report_id": report_id})
+    return report_id
+
+
+def store_reframing_proposal(proposal: Dict[str, Any]) -> str:
+    """Persist a reframing proposal with in-memory fallback."""
+    proposal_id = proposal.get("proposal_id") or str(uuid.uuid4())
+    proposal["proposal_id"] = proposal_id
+    try:
+        db = _get_db()
+        _ensure_collection(db)
+        coll = db.collection("reframing_proposals")
+        coll.insert({**proposal, "_key": proposal_id})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Reframing store falling back to memory", extra={"payload": {"error": str(exc)}})
+        _reframe_store[proposal_id] = proposal
+    job_id = proposal.get("job_id")
+    if job_id:
+        update_job_record(job_id, {"reframing_proposal_id": proposal_id, "status": JobStatus.NEEDS_SIGNOFF.value})
+    return proposal_id
 
 
 def list_jobs_by_project(project_id: str, limit: int = 10) -> List[Dict[str, Any]]:

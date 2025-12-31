@@ -6,11 +6,13 @@ and formulas as much as possible for downstream Cortex extraction.
 """
 
 import os
-from pathlib import Path
-from typing import Optional, Tuple, List
+import shutil
 import tempfile
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 import pymupdf4llm
+from werkzeug.utils import secure_filename
 
 from ..shared.logger import get_logger
 
@@ -30,13 +32,27 @@ def process_pdf(file_path: str, output_image_dir: Optional[str] = None) -> Tuple
     Returns:
         A tuple of (markdown_text, images_dir_path or None, image_paths).
     """
-    pdf_path = Path(file_path)
+    pdf_path = Path(file_path).expanduser().resolve()
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {file_path}")
+    if pdf_path.suffix.lower() != ".pdf":
+        raise ValueError("Only PDF files are supported")
+
+    # Copy into a controlled temp directory to avoid path traversal/SSRF concerns
+    safe_dir = Path(tempfile.mkdtemp(prefix="vyasa_pdf_safe_"))
+    safe_pdf_path = safe_dir / secure_filename(pdf_path.name)
+    shutil.copy2(pdf_path, safe_pdf_path)
+    pdf_path = safe_pdf_path
 
     images_dir: Optional[Path] = None
     if output_image_dir:
-        images_dir = Path(output_image_dir)
+        candidate = Path(output_image_dir).expanduser().resolve()
+        tmp_base = Path(tempfile.gettempdir()).resolve()
+        # Restrict image output to temp space to prevent writing to arbitrary paths
+        if candidate == tmp_base or tmp_base in candidate.parents:
+            images_dir = candidate
+        else:
+            images_dir = Path(tempfile.mkdtemp(prefix="vyasa_pdf_images_"))
     else:
         images_dir = Path(tempfile.mkdtemp(prefix="vyasa_pdf_images_"))
     images_dir.mkdir(parents=True, exist_ok=True)
