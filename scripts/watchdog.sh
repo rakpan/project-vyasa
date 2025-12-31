@@ -9,6 +9,8 @@ set -euo pipefail
 API_URL=${API_URL:-"http://localhost:8000/api/system/observatory"}
 COMPOSE_FILE=${COMPOSE_FILE:-"$(dirname "$(dirname "${BASH_SOURCE[0]}")")/deploy/docker-compose.yml"}
 TELEMETRY_FILE=${TELEMETRY_FILE:-"/raid/telemetry/events.jsonl"}
+. "$(dirname "$0")/lib/env.sh"
+load_env_defaults
 
 restart_logged=false
 

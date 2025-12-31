@@ -73,6 +73,11 @@ stateDiagram-v2
         Builds ArtifactManifest (blocks/tables/visuals/totals)
         Persists manifest to ArangoDB + /raid/artifacts (best-effort)
     end note
+
+## Observability & Evaluation
+- Telemetry JSONL remains the primary source of operational truth.
+- Optional Opik tracing emits advisory per-node spans (metadata only: model, tokens, duration, flags).
+- Opik is non-blocking and does not influence routing, acceptance, or job status.
 ```
 
 ## Workflow Nodes

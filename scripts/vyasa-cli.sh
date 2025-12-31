@@ -9,6 +9,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+. "$SCRIPT_DIR/lib/env.sh"
+load_env_defaults
 
 ORCHESTRATOR_URL="${ORCHESTRATOR_URL:-http://localhost:8000}"
 

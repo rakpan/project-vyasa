@@ -11,94 +11,155 @@
 
 forbidden_words:
   - word: "crisis"
-    alternative: "significant challenge" or "material condition"
+    alternative:
+      - "significant challenge"
+      - "material condition"
 
   - word: "problem"
-    alternative: "issue" or "constraint"
+    alternative:
+      - "issue"
+      - "constraint"
 
   - word: "ensure"
-    alternative: "support" or "provide"
+    alternative:
+      - "support"
+      - "provide"
 
   - word: "ensures"
-    alternative: "supports" or "provides"
+    alternative:
+      - "supports"
+      - "provides"
 
   - word: "ensuring"
-    alternative: "supporting" or "providing"
+    alternative:
+      - "supporting"
+      - "providing"
 
   - word: "assure"
-    alternative: "provide confidence" or "demonstrate"
+    alternative:
+      - "provide confidence"
+      - "demonstrate"
 
   - word: "assurance"
-    alternative: "evidence" or "validation"
+    alternative:
+      - "evidence"
+      - "validation"
 
   - word: "robust"
-    alternative: "well-defined" or "fault-tolerant"
+    alternative:
+      - "well-defined"
+      - "fault-tolerant"
 
   - word: "comprehensive"
-    alternative: "well-scoped" or "end-to-end"
+    alternative:
+      - "well-scoped"
+      - "end-to-end"
 
   - word: "critical"
-    alternative: "material" or "high-impact"
+    alternative:
+      - "material"
+      - "high-impact"
 
   - word: "crucial"
-    alternative: "important" or "necessary"
+    alternative:
+      - "important"
+      - "necessary"
 
   - word: "delve"
-    alternative: "examine" or "analyze"
+    alternative:
+      - "examine"
+      - "analyze"
 
   - word: "embark"
-    alternative: "initiate" or "begin"
+    alternative:
+      - "initiate"
+      - "begin"
 
   - word: "foster"
-    alternative: "enable" or "support"
+    alternative:
+      - "enable"
+      - "support"
 
   - word: "partner"
-    alternative: "work with" or "collaborate with"
+    alternative:
+      - "work with"
+      - "collaborate with"
 
   - word: "expert"
-    alternative: "specialized" or "experienced"
+    alternative:
+      - "specialized"
+      - "experienced"
 
   - word: "complex"
-    alternative: "multi-faceted" or "non-trivial"
+    alternative:
+      - "multi-faceted"
+      - "non-trivial"
 
   - word: "digital transformation"
-    alternative: "system modernization" or "platform evolution"
+    alternative:
+      - "system modernization"
+      - "platform evolution"
 
   - word: "giant"
-    alternative: "large-scale" or "established"
+    alternative:
+      - "large-scale"
+      - "established"
 
   - word: "stark"
-    alternative: "clear" or "pronounced"
+    alternative:
+      - "clear"
+      - "pronounced"
 
   - word: "best-in-class"
-    alternative: "industry-aligned" or "widely adopted"
+    alternative:
+      - "industry-aligned"
+      - "widely adopted"
 
   - word: "state-of-the-art"
-    alternative: "current-generation" or "modern"
+    alternative:
+      - "current-generation"
+      - "modern"
 
   - word: "cutting-edge"
-    alternative: "recent" or "emerging"
+    alternative:
+      - "recent"
+      - "emerging"
 
   - word: "game-changing"
-    alternative: "materially impactful"
+    alternative:
+      - "materially impactful"
 
   - word: "seamless"
-    alternative: "integrated" or "low-friction"
+    alternative:
+      - "integrated"
+      - "low-friction"
 
   - word: "holistic"
-    alternative: "cross-domain" or "end-to-end"
+    alternative:
+      - "cross-domain"
+      - "end-to-end"
 
   - word: "leverage"
-    alternative: "use" or "apply"
+    alternative:
+      - "use"
+      - "apply"
 
   - word: "journey"
-    alternative: "process" or "execution path"
+    alternative:
+      - "process"
+      - "execution path"
 
   - word: "visionary"
-    alternative: "forward-looking" or "proposed"
+    alternative:
+      - "forward-looking"
+      - "proposed"
 
   - word: "guarantee"
-    alternative: "target" or "objective"
+    alternative:
+      - "target"
+      - "objective"
 
   - word: "transformative"
-    alternative: "structural" or "meaningful"
+    alternative:
+      - "structural"
+      - "meaningful"

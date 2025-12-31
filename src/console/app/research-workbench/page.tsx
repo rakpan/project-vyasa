@@ -11,9 +11,12 @@ import { SparkPulseMini } from "@/components/SparkPulseMini"
 import { useResearchStore } from "@/state/useResearchStore"
 import { useProjectStore } from "@/state/useProjectStore"
 import { Button } from "@/components/ui/button"
-import { Maximize2, Minimize2 } from "lucide-react"
+import { Maximize2, Minimize2, AlertTriangle, ExternalLink } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "@/hooks/use-toast"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Badge } from "@/components/ui/badge"
 
 /**
  * Zen-First Research Cockpit
@@ -33,6 +36,7 @@ export default function ResearchWorkbenchPage() {
   const projectId = useMemo(() => params.get("projectId") || "", [params])
   const [guarded, setGuarded] = useState(false)
   const [jobStatus, setJobStatus] = useState<string>("")
+  const [diag, setDiag] = useState<any>(null)
   const { focusMode, toggleFocusMode } = useResearchStore()
   const { activeProjectId, setActiveProject, setActiveJobContext } = useProjectStore()
 
@@ -116,11 +120,55 @@ export default function ResearchWorkbenchPage() {
     verifyJob()
   }, [jobId, projectId, router])
 
+  // Fetch lightweight diagnostics (best effort)
+  useEffect(() => {
+    const fetchDiag = async () => {
+      if (!jobId) return
+      try {
+        const resp = await fetch(`/api/proxy/orchestrator/workflow/result/${jobId}`)
+        if (!resp.ok) return
+        const data = await resp.json()
+        const result = data?.result || {}
+        const manifest = result?.artifact_manifest || {}
+        const conflict = result?.conflict_report || {}
+        const counts = manifest?.totals || {}
+        const toneFlags =
+          Array.isArray(manifest?.blocks) && manifest.blocks.length
+            ? manifest.blocks.reduce((acc: number, b: any) => acc + (Array.isArray(b.tone_flags) ? b.tone_flags.length : 0), 0)
+            : 0
+        const precisionFlags =
+          Array.isArray(manifest?.tables) && manifest.tables.length
+            ? manifest.tables.reduce(
+                (acc: number, t: any) => acc + (Array.isArray(t.precision_flags) ? t.precision_flags.length : 0),
+                0
+              )
+            : 0
+        setDiag({
+          opik_trace_url: result?.opik_trace_url,
+          critic_status: result?.critic_status || result?.status,
+          deadlock: conflict?.deadlock,
+          conflict_summary: conflict?.conflict_items?.[0]?.summary,
+          unsupported_claims: result?.quality_metrics_after?.unsupported_count,
+          tone_flags: toneFlags,
+          precision_flags: precisionFlags,
+          counts,
+          critiques: result?.critiques,
+        })
+      } catch (e) {
+        // ignore
+      }
+    }
+    fetchDiag()
+  }, [jobId])
+
   if (guarded) {
     return null
   }
 
   const needsSignoff = jobStatus === "NEEDS_SIGNOFF"
+  const showDiagnostics =
+    jobStatus === "FAILED" || (diag?.critic_status || "").toLowerCase() === "fail" || diag?.deadlock === True || diag?.deadlock === true
+  const opikEnabled = Boolean(diag?.opik_trace_url)
 
   return (
     <div className="h-full w-full flex flex-col bg-background">
@@ -130,6 +178,32 @@ export default function ResearchWorkbenchPage() {
           <h1 className="text-lg font-semibold">Research Cockpit</h1>
         </div>
         <div className="flex items-center gap-3 opacity-40 group-hover:opacity-100 transition-opacity duration-200 ease-in-out">
+          {showDiagnostics && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (diag?.opik_trace_url) {
+                        window.open(diag.opik_trace_url, "_blank", "noopener,noreferrer")
+                      }
+                    }}
+                    disabled={!diag?.opik_trace_url}
+                    className="flex items-center gap-2"
+                  >
+                    <AlertTriangle className="h-4 w-4 text-amber-500" />
+                    <span className="text-xs">Reasoning Diagnostics</span>
+                    {diag?.opik_trace_url && <ExternalLink className="h-3 w-3" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {diag?.opik_trace_url ? "Open Opik trace in new tab" : "No detailed trace available"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <SparkPulseMini />
           <Button
             variant="ghost"
@@ -202,6 +276,54 @@ export default function ResearchWorkbenchPage() {
           <div className="bg-destructive/10 text-destructive px-4 py-2 rounded border border-destructive/50 shadow">
             Workflow paused: awaiting strategic intervention signoff.
           </div>
+        </div>
+      )}
+      {showDiagnostics && (
+        <div className="px-4 py-2 border-t border-border/30 bg-muted/10">
+          <Collapsible>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
+                <span className="text-sm font-semibold">Why this analysis failed</span>
+                {diag?.critic_status && (
+                  <Badge variant="outline" className="text-[10px]">
+                    {String(diag.critic_status).toUpperCase()}
+                  </Badge>
+                )}
+                {diag?.deadlock && (
+                  <Badge variant="destructive" className="text-[10px]">
+                    DEADLOCK
+                  </Badge>
+                )}
+              </div>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="text-xs">
+                  View details
+                </Button>
+              </CollapsibleTrigger>
+            </div>
+            <CollapsibleContent className="mt-2 space-y-2 text-sm text-muted-foreground">
+              {diag?.conflict_summary && <div>Conflict: {diag.conflict_summary}</div>}
+              {Array.isArray(diag?.critiques) && diag.critiques.length > 0 && (
+                <div>Critic: {diag.critiques[0]}</div>
+              )}
+              <div className="flex flex-wrap gap-4 text-xs">
+                <span>Unsupported claims: {diag?.unsupported_claims ?? "n/a"}</span>
+                <span>Tone flags: {diag?.tone_flags ?? 0}</span>
+                <span>Precision flags: {diag?.precision_flags ?? 0}</span>
+              </div>
+              {diag?.opik_trace_url && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="px-0 text-xs"
+                  onClick={() => window.open(diag.opik_trace_url, "_blank", "noopener,noreferrer")}
+                >
+                  View full reasoning trace → Opik
+                </Button>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
         </div>
       )}
     </div>

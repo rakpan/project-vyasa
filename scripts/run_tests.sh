@@ -16,6 +16,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+. "$SCRIPT_DIR/lib/env.sh"
+load_env_defaults
 
 cd "$PROJECT_ROOT"
 
@@ -61,4 +63,3 @@ echo ""
 
 # Run pytest using python3 -m pytest (automatically adds current directory to path)
 python3 -m pytest "${TEST_ARGS[@]}"
-

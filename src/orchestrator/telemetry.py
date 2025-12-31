@@ -19,6 +19,7 @@ from .state import PaperState
 from ..shared.logger import get_logger
 from ..shared.utils import get_utc_now
 from ..shared.config import TELEMETRY_PATH as TELEMETRY_PATH_ENV
+from ..shared import opik_client
 
 logger = get_logger("telemetry", __name__)
 
@@ -140,7 +141,8 @@ def trace_node(func: Callable) -> Callable:
                     "error": error,
                     "force_failure_cleanup": True,
                     "critic_status": "manual",
-                    "revision_count": max((state or {}).get("revision_count", 0), 3),
+                    # preserve existing revision_count; do not force increment
+                    "revision_count": (result or {}).get("revision_count") or (state or {}).get("revision_count", 0),
                 }
             return result
         except Exception as exc:
@@ -185,5 +187,41 @@ def trace_node(func: Callable) -> Callable:
                     "metadata": metadata,
                 },
             )
+
+            try:
+                opik_cfg = opik_client.get_opik_client()
+            except Exception:  # pragma: no cover - Opik must be non-blocking
+                logger.warning("Opik client unavailable; continuing without tracing", exc_info=True)
+                opik_cfg = None
+
+            if opik_cfg:
+                try:
+                    summary = {
+                        "revision_count": payload.get("revision_count"),
+                        "triples_count": len(payload.get("extracted_json", {}).get("triples", []))
+                        if isinstance(payload.get("extracted_json"), dict)
+                        else 0,
+                        "critiques_count": len(payload.get("critiques", []))
+                        if isinstance(payload.get("critiques"), list)
+                        else 0,
+                        "blocks_count": len(payload.get("manuscript_blocks", []))
+                        if isinstance(payload.get("manuscript_blocks"), list)
+                        else 0,
+                        "critic_status": payload.get("critic_status"),
+                        "deadlock": payload.get("deadlock"),
+                        "needs_signoff": payload.get("status") == "NEEDS_SIGNOFF",
+                    }
+                    opik_meta = {
+                        "project_id": payload.get("project_id"),
+                        "job_id": payload.get("job_id"),
+                        "node_name": node_name,
+                        "expert_type": payload.get("_expert_name"),
+                        "duration_ms": duration_ms,
+                        "success": error is None,
+                        "summary": summary,
+                    }
+                    opik_client.track_llm_call(opik_meta, lambda: None)
+                except Exception:  # pragma: no cover - opik is best-effort
+                    logger.debug("Opik span failed (ignored)", exc_info=True)
 
     return wrapper

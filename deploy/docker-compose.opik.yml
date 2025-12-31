@@ -1,0 +1,48 @@
+version: "3.9"
+
+services:
+  opik-postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: opik
+      POSTGRES_PASSWORD: opik
+      POSTGRES_DB: opik
+    volumes:
+      - /raid/vyasa/opik_data/postgres:/var/lib/postgresql/data
+    networks:
+      - vyasa-net
+    ports:
+      - "127.0.0.1:55432:5432"
+
+  opik-redis:
+    image: redis:7
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - /raid/vyasa/opik_data/redis:/data
+    networks:
+      - vyasa-net
+    ports:
+      - "127.0.0.1:56379:6379"
+
+  opik-api:
+    image: opik/opik:latest
+    restart: unless-stopped
+    depends_on:
+      - opik-postgres
+      - opik-redis
+    environment:
+      DATABASE_URL: postgres://opik:opik@opik-postgres:5432/opik
+      REDIS_URL: redis://opik-redis:6379/0
+      OPIK_SECRET_KEY: changeme-opik
+    volumes:
+      - /raid/vyasa/opik_data/opik:/var/lib/opik
+    networks:
+      - vyasa-net
+    ports:
+      - "127.0.0.1:56500:5000"
+
+networks:
+  vyasa-net:
+    external: true

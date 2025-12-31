@@ -39,8 +39,9 @@ def test_rewrite_called_only_on_hard_and_conservative(monkeypatch, tmp_path):
     monkeypatch.setattr(
         nodes_module, "scan_text", lambda text: [ToneFlag(word="revolutionary", severity="hard", locations=[0], suggestion=None)]
     )
-    synthesizer_node.__globals__["scan_text"] = nodes_module.scan_text
-    synthesizer_node.__globals__["load_rigor_policy_yaml"] = nodes_module.load_rigor_policy_yaml
+    base_fn = nodes_module.synthesizer_node.__wrapped__
+    base_fn.__globals__["scan_text"] = nodes_module.scan_text
+    base_fn.__globals__["load_rigor_policy_yaml"] = nodes_module.load_rigor_policy_yaml
 
     called = {"flag": False}
 
@@ -49,7 +50,7 @@ def test_rewrite_called_only_on_hard_and_conservative(monkeypatch, tmp_path):
         return text.replace("revolutionary", "balanced")
 
     monkeypatch.setattr(nodes_module, "rewrite_to_neutral", fake_rewrite)
-    synthesizer_node.__globals__["rewrite_to_neutral"] = nodes_module.rewrite_to_neutral
+    base_fn.__globals__["rewrite_to_neutral"] = nodes_module.rewrite_to_neutral
 
     state = {
         "synthesis": "A revolutionary result.",
@@ -77,8 +78,9 @@ def test_citations_preserved(tmp_path, monkeypatch):
             ToneFlag(word="unprecedented", severity="hard", locations=[30], suggestion=None),
         ],
     )
-    synthesizer_node.__globals__["scan_text"] = nodes_module.scan_text
-    synthesizer_node.__globals__["load_rigor_policy_yaml"] = nodes_module.load_rigor_policy_yaml
+    base_fn = nodes_module.synthesizer_node.__wrapped__
+    base_fn.__globals__["scan_text"] = nodes_module.scan_text
+    base_fn.__globals__["load_rigor_policy_yaml"] = nodes_module.load_rigor_policy_yaml
     monkeypatch.setattr(
         nodes_module,
         "rewrite_to_neutral",
@@ -86,7 +88,7 @@ def test_citations_preserved(tmp_path, monkeypatch):
             "Unprecedented", "Measured"
         ),
     )
-    synthesizer_node.__globals__["rewrite_to_neutral"] = nodes_module.rewrite_to_neutral
+    base_fn.__globals__["rewrite_to_neutral"] = nodes_module.rewrite_to_neutral
 
     text = "A revolutionary idea [Smith2020]. Unprecedented results [1][2]."
     state = {"synthesis": text, "rigor_level": "conservative"}

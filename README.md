@@ -116,6 +116,13 @@ cp .env.example .env
 - `BRAIN_MODEL_PATH`, `WORKER_MODEL_PATH`, `VISION_MODEL_PATH` - Model paths (HuggingFace Hub paths like `meta-llama/Llama-3.3-70B-Instruct` or local filesystem paths)
 - `BRAIN_GPU_IDS`, `WORKER_GPU_IDS`, `VISION_GPU_IDS` - GPU assignments
 
+**Optional (Opik observe-only tracing)**:
+- `OPIK_ENABLED` - set to `true` to enable Opik tracing (default `false`)
+- `OPIK_BASE_URL` - base URL of your Opik instance
+- `OPIK_API_KEY` - API key if required
+- `OPIK_PROJECT_NAME` - project tag for traces (default `vyasa`)
+- `OPIK_TIMEOUT_SECONDS` - timeout for Opik calls (default `2`)
+
 #### Step 3: Start the System
 
 **Option A: Sequential Startup (Recommended for first-time setup)**

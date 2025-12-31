@@ -42,7 +42,10 @@ export async function POST(req: NextRequest) {
       topK: topK || 5
     };
     
-    console.log(`Enhanced RAG query: "${query}" with params:`, params);
+    // Sanitize query for logging to prevent format string issues
+    // Limit length and escape special characters to prevent log injection
+    const sanitizedQuery = query.slice(0, 200).replace(/[`${}]/g, '');
+    console.log(`Enhanced RAG query: "${sanitizedQuery}" with params:`, params);
     console.log(`Query mode: ${queryMode}, useTraditional: ${useTraditional}`);
     
     // Determine search method - if traditional is specified, use that

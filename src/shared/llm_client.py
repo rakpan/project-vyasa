@@ -20,6 +20,7 @@ from .logger import get_logger
 from ..orchestrator.telemetry import extract_usage_from_response  # type: ignore
 from .utils import get_utc_now
 from .config import TIMEOUT_MATRIX
+from .opik_client import track_llm_call, compute_prompt_hash, get_opik_client
 
 logger = get_logger("llm_client", __name__)
 _telemetry_emitter = None
@@ -125,6 +126,7 @@ def call_model(
     timeout: int = 60,
     files: Optional[Dict[str, Any]] = None,
     headers: Optional[Dict[str, str]] = None,
+    opik_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Call an LLM model via HTTP POST request.
     
@@ -182,7 +184,7 @@ def call_model(
         response.raise_for_status()
         response_data = response.json()
         duration_ms = (datetime.now() - start).total_seconds() * 1000
-        
+
         # Append response to debug log
         _write_debug_log(url, request_data, response_data)
         emitter = _get_telemetry_emitter()
@@ -206,7 +208,19 @@ def call_model(
                 },
             )
 
-        return response_data
+        opik_meta = {
+            "project_id": payload.get("project_id"),
+            "job_id": payload.get("job_id"),
+            "node_name": payload.get("node") or payload.get("task") or "llm_client",
+            "expert_type": payload.get("expert_type"),
+            "model": payload.get("model"),
+            "duration_ms": duration_ms,
+            "prompt_hash": (opik_metadata or {}).get("prompt_hash"),
+            "tokens": extract_usage_from_response(response_data) or {},
+            "success": True,
+            "path": "call_model",
+        }
+        return track_llm_call(opik_meta, lambda: response_data)
         
     except requests.exceptions.RequestException as e:
         # Log error response if available
@@ -264,6 +278,7 @@ def chat(
     timeout: int = 60,
     max_retries: int = 1,
     allowed_tools: Optional[list] = None,
+    opik_annotation: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Standard chat interface with retry + fallback and telemetry.
@@ -279,6 +294,9 @@ def chat(
     if request_params:
         payload_base.update(request_params)
 
+    tool_signature = [{"name": t.get("function", {}).get("name")} for t in tools] if tools else []
+    prompt_hash = compute_prompt_hash(messages, tool_signature)
+
     attempts = [("primary", primary_url, model, expert_name)]
     if fallback_url:
         attempts.append(("fallback", fallback_url, fallback_model or model, fallback_expert_name))
@@ -289,12 +307,16 @@ def chat(
         for attempt in range(1, max_retries + 2):  # initial try + retries
             start = time.monotonic()
             try:
-                resp = requests.post(
-                    f"{url_base.rstrip('/')}/v1/chat/completions",
-                    json=payload_base if path == "primary" else {**payload_base, "model": model_id},
-                    timeout=TIMEOUT_MATRIX.get("SGLANG_CALL", timeout),
-                )
-                resp.raise_for_status()
+                def _do_request():
+                    resp_inner = requests.post(
+                        f"{url_base.rstrip('/')}/v1/chat/completions",
+                        json=payload_base if path == "primary" else {**payload_base, "model": model_id},
+                        timeout=TIMEOUT_MATRIX.get("SGLANG_CALL", timeout),
+                    )
+                    resp_inner.raise_for_status()
+                    return resp_inner
+
+                resp = _do_request()
                 data = resp.json()
                 duration_ms = (time.monotonic() - start) * 1000
                 usage = extract_usage_from_response(data) or {}
@@ -339,15 +361,31 @@ def chat(
                         },
                     )
 
-                return data, {
+                opik_meta = {
+                    "project_id": state.get("project_id") if isinstance(state, dict) else None,
+                    "job_id": state.get("job_id") if isinstance(state, dict) else None,
+                    "node_name": node_name,
+                    "expert_type": exp_name,
+                    "model": model_id,
                     "duration_ms": duration_ms,
-                    "usage": usage,
-                    "expert_name": exp_name,
-                    "model_id": model_id,
-                    "url_base": url_base.rstrip("/"),
+                    "prompt_hash": prompt_hash,
+                    "tokens": usage,
+                    "success": True,
                     "path": path,
-                    "attempt": attempt,
                 }
+                result_tuple = (
+                    data,
+                    {
+                        "duration_ms": duration_ms,
+                        "usage": usage,
+                        "expert_name": exp_name,
+                        "model_id": model_id,
+                        "url_base": url_base.rstrip("/"),
+                        "path": path,
+                        "attempt": attempt,
+                    },
+                )
+                return track_llm_call(opik_meta, lambda: result_tuple)
             except RequestsTimeout as exc:
                 duration_ms = (time.monotonic() - start) * 1000
                 if emitter:
@@ -374,6 +412,21 @@ def chat(
                     )
                 if attempt > max_retries:
                     last_error = exc
+                    # best-effort Opik failure trace
+                    opik_meta = {
+                        "project_id": state.get("project_id") if isinstance(state, dict) else None,
+                        "job_id": state.get("job_id") if isinstance(state, dict) else None,
+                        "node_name": node_name,
+                        "expert_type": exp_name,
+                        "model": model_id,
+                        "duration_ms": duration_ms,
+                        "prompt_hash": prompt_hash,
+                        "success": False,
+                        "error": "TIMEOUT_EXCEEDED",
+                        "path": path,
+                        "annotation": opik_annotation or {},
+                    }
+                    track_llm_call(opik_meta, lambda: None)
                     break
                 time.sleep(0.5)
                 continue
@@ -401,6 +454,20 @@ def chat(
                         },
                     )
                 if attempt > max_retries:
+                    opik_meta = {
+                        "project_id": state.get("project_id") if isinstance(state, dict) else None,
+                        "job_id": state.get("job_id") if isinstance(state, dict) else None,
+                        "node_name": node_name,
+                        "expert_type": exp_name,
+                        "model": model_id,
+                        "duration_ms": duration_ms,
+                        "prompt_hash": prompt_hash,
+                        "success": False,
+                        "error": str(exc),
+                        "path": path,
+                        "annotation": opik_annotation or {},
+                    }
+                    track_llm_call(opik_meta, lambda: None)
                     break  # move to fallback or raise
                 time.sleep(0.5)
 

@@ -26,6 +26,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEPLOY_DIR="$PROJECT_ROOT/deploy"
 ENV_EXAMPLE="$DEPLOY_DIR/.env.example"
 ENV_FILE="$DEPLOY_DIR/.env"
+. "$SCRIPT_DIR/lib/env.sh"
+load_env_defaults
 touch "$ENV_FILE"
 
 ensure_env_secret() {

@@ -19,7 +19,7 @@ from werkzeug.utils import secure_filename
 from pydantic import ValidationError
 import requests
 from fastapi import FastAPI
-from starlette.middleware.wsgi import WSGIMiddleware
+from a2wsgi import WSGIMiddleware
 
 from arango import ArangoClient
 
@@ -438,6 +438,7 @@ def get_research_metrics():
         return jsonify(metrics), 200
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Failed to compute research metrics: {exc}", exc_info=True)
+        # Don't expose exception details to client to prevent information disclosure
         return jsonify({"error": "Unable to compute research metrics"}), 500
 
 

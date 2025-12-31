@@ -14,6 +14,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SRC_DIR="$PROJECT_ROOT/src"
+. "$SCRIPT_DIR/lib/env.sh"
+load_env_defaults
 
 # Set PYTHONPATH to include src/
 export PYTHONPATH="$SRC_DIR:$PYTHONPATH"

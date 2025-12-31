@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, List
 import json
+import logging
 
 app = FastAPI(title="Mock LLM Server", version="1.0.0")
 
@@ -113,8 +114,11 @@ async def chat_completions(request: Request) -> JSONResponse:
             },
         })
     except Exception as e:
+        # Don't expose exception details to client to prevent information disclosure
+        # Log the error server-side for debugging
+        logging.error(f"Error in chat completions endpoint: {e}", exc_info=True)
         return JSONResponse(
-            {"error": str(e)},
+            {"error": "Internal server error"},
             status_code=500,
         )
 
@@ -170,8 +174,11 @@ async def vision(request: Request) -> JSONResponse:
             },
         })
     except Exception as e:
+        # Don't expose exception details to client to prevent information disclosure
+        # Log the error server-side for debugging
+        logging.error(f"Error in vision endpoint: {e}", exc_info=True)
         return JSONResponse(
-            {"error": str(e)},
+            {"error": "Internal server error"},
             status_code=500,
         )
 

@@ -16,7 +16,6 @@
 //
 import { AlertCircle, Upload, Database, Table } from "lucide-react"
 import { UploadDocuments } from "@/components/upload-documents"
-import { S3UploadContainer } from "@/components/s3-upload-container"
 import { DatabaseConnection } from "@/components/database-connection"
 import { DocumentsTable } from "@/components/documents-table"
 
@@ -36,8 +35,6 @@ export function UploadTab({ onTabChange }: UploadTabProps) {
             <h2 className="text-lg font-semibold text-foreground">Upload Documents</h2>
           </div>
           <UploadDocuments />
-          
-          <S3UploadContainer />
         </div>
         
         <div className="nvidia-build-card">

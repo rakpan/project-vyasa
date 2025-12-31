@@ -82,6 +82,15 @@ MAX_CONCURRENCY = {
 }
 
 # ============================================
+# Opik (Observe-only tracing)
+# ============================================
+OPIK_ENABLED: bool = os.getenv("OPIK_ENABLED", "false").lower() in ("true", "1", "yes")
+OPIK_BASE_URL: Optional[str] = os.getenv("OPIK_BASE_URL")
+OPIK_API_KEY: Optional[str] = os.getenv("OPIK_API_KEY")
+OPIK_PROJECT_NAME: str = os.getenv("OPIK_PROJECT_NAME", "vyasa")
+OPIK_TIMEOUT_SECONDS: int = int(os.getenv("OPIK_TIMEOUT_SECONDS", "2"))
+
+# ============================================
 # Timeout Matrix (seconds)
 # ============================================
 TIMEOUT_MATRIX = {

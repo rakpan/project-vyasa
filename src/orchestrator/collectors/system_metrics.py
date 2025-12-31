@@ -1,7 +1,7 @@
 """
 System metrics fallback for GPU/UMA telemetry.
 
-Uses pynvml when available; falls back to nvidia-smi subprocess.
+Uses nvidia-ml-py (nvidia_smi) when available; falls back to nvidia-smi subprocess.
 """
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ logger = logging.getLogger(__name__)
 GB10_TOTAL_VRAM_GB = 128.0
 
 try:
-    import pynvml  # type: ignore
+    import nvidia_smi  # type: ignore
 
-    _has_pynvml = True
-    pynvml.nvmlInit()
+    _has_nvidia_smi = True
+    nvidia_smi.nvmlInit()
 except Exception:  # pragma: no cover - optional dependency
-    _has_pynvml = False
+    _has_nvidia_smi = False
 
 try:
     import psutil  # type: ignore
@@ -36,11 +36,11 @@ class SystemMetricsCollector:
     def __init__(self, timeout: float = 2.0) -> None:
         self.timeout = timeout
 
-    def _collect_with_pynvml(self) -> Optional[Dict[str, float]]:
+    def _collect_with_nvml(self) -> Optional[Dict[str, float]]:
         try:
-            device = pynvml.nvmlDeviceGetHandleByIndex(0)
-            util = pynvml.nvmlDeviceGetUtilizationRates(device)
-            mem = pynvml.nvmlDeviceGetMemoryInfo(device)
+            device = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
+            util = nvidia_smi.nvmlDeviceGetUtilizationRates(device)
+            mem = nvidia_smi.nvmlDeviceGetMemoryInfo(device)
             gpu_util = float(util.gpu)
             used_gb = float(mem.used) / (1024 ** 3)
             total_gb = float(mem.total) / (1024 ** 3)
@@ -50,7 +50,7 @@ class SystemMetricsCollector:
                 "total_vram_gb": round(total_gb, 2),
             }
         except Exception as exc:  # pragma: no cover - best-effort
-            logger.warning("pynvml collection failed", extra={"payload": {"error": str(exc)}})
+            logger.warning("NVML collection failed", extra={"payload": {"error": str(exc)}})
             return None
 
     def _collect_with_nvidia_smi(self) -> Optional[Dict[str, float]]:
@@ -81,8 +81,8 @@ class SystemMetricsCollector:
     def collect(self) -> Dict[str, Any]:
         """Return normalized hardware panel fields."""
         snapshot: Optional[Dict[str, float]] = None
-        if _has_pynvml:
-            snapshot = self._collect_with_pynvml()
+        if _has_nvidia_smi:
+            snapshot = self._collect_with_nvml()
         if snapshot is None:
             snapshot = self._collect_with_nvidia_smi()
 

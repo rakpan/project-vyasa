@@ -22,6 +22,12 @@
   - When an active job exists, link directly to `/research-workbench?jobId=...&projectId=...&pdfUrl=...` (if available).  
 - Active project/job should be indicated (badge or highlight) in the sidebar.
 
+## Reasoning Diagnostics
+- Appears only when a job is FAILED, critic_status is fail, or a deadlock is detected.
+- Shows a brief failure summary (Critic message, conflict summary, key flag counts).
+- Includes a contextual “Reasoning Diagnostics”/Opik link when available; opens in a new tab.
+- Read-only; no navigation changes and hidden when Opik is disabled/unavailable.
+
 ## Workbench Layout Rules
 - With `pdfUrl`: render three panels with sizes summing to 100% (e.g., `[40, 30, 30]`).  
 - Without `pdfUrl`: render two panels `[50, 50]`.  

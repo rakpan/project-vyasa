@@ -67,9 +67,10 @@ class PaperState(BaseModel):
 
     @model_validator(mode="after")
     def validate_synthesizer_output(self) -> "PaperState":
-        if "synthesis" in self.model_dump(exclude_none=False):
-            if not self.synthesis or not str(self.synthesis).strip():
-                raise ValueError("Synthesizer validation failed: narrative prose is empty")
+        if self.synthesis is None:
+            return self
+        if not str(self.synthesis).strip():
+            raise ValueError("Synthesizer validation failed: narrative prose is empty")
         return self
 
 
