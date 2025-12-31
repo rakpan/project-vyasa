@@ -644,3 +644,79 @@ class CandidateFact(BaseModel):
         description="Promotion state: 'candidate' (default) or 'canonical' (after promotion)"
     )
     created_at: datetime = Field(..., description="Timestamp when this candidate fact was created")
+
+
+class ToneFlag(BaseModel):
+    """Flag for tone issues (e.g., hype words) with suggested mitigation."""
+    word: str
+    severity: Literal["hard", "soft"]
+    locations: List[int] = Field(default_factory=list, description="Character offsets or token indices")
+    suggestion: Optional[str] = None
+
+
+class PrecisionFlag(BaseModel):
+    """Flag for precision/format issues in tables."""
+    table_id: str
+    column: str
+    issue: Literal["INCONSISTENT_DECIMALS", "EXCESSIVE_PRECISION"]
+    details: str
+
+
+class TableArtifact(BaseModel):
+    """Tracked table artifact with precision and provenance metadata."""
+    table_id: str
+    title: Optional[str] = None
+    source_triples: List[str] = Field(default_factory=list, description="Triple IDs that fed this table")
+    unit_verification: Literal["unknown", "passed", "failed"] = "unknown"
+    precision_flags: List[PrecisionFlag] = Field(default_factory=list)
+
+
+class VisualArtifact(BaseModel):
+    """Tracked visual artifact (figure/diagram/chart) with optional source box."""
+    artifact_id: str
+    kind: Literal["figure", "diagram", "chart", "table_image"]
+    source_bbox: Optional[List[int]] = Field(
+        default=None,
+        description="[x0,y0,x1,y1] in 0..1000 space if bound to source evidence",
+    )
+    generation_seed: Optional[str] = None
+    caption: Optional[str] = None
+
+    @field_validator("source_bbox")
+    @classmethod
+    def validate_bbox(cls, v):
+        if v is None:
+            return v
+        if len(v) != 4:
+            raise ValueError("source_bbox must have 4 integers")
+        if any(not isinstance(x, (int, float)) for x in v):
+            raise ValueError("source_bbox values must be numeric")
+        if any(x < 0 or x > 1000 for x in v):
+            raise ValueError("source_bbox values must be between 0 and 1000")
+        return v
+
+
+class BlockStats(BaseModel):
+    """Per-block rigor statistics and tone flags."""
+    block_id: str
+    section: Optional[str] = None
+    word_count: int
+    citation_count: int
+    claims_density: Optional[float] = Field(
+        default=None, description="Claims per 100 words (optional)"
+    )
+    tone_flags: List[ToneFlag] = Field(default_factory=list)
+    supported_by: List[str] = Field(default_factory=list, description="Triple IDs supporting this block")
+
+
+class ArtifactManifest(BaseModel):
+    """Manifest capturing rigor and asset tracking for a job/document."""
+    project_id: str
+    job_id: str
+    doc_hash: str
+    created_at: datetime
+    rigor_level: Literal["conservative", "exploratory"] = "exploratory"
+    blocks: List[BlockStats] = Field(default_factory=list)
+    tables: List[TableArtifact] = Field(default_factory=list)
+    visuals: List[VisualArtifact] = Field(default_factory=list)
+    totals: Dict[str, int] = Field(default_factory=dict, description="Aggregate counts e.g., words/tables/figures/citations")

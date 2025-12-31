@@ -528,6 +528,38 @@ def list_projects():
         return jsonify({"error": "Internal server error"}), 500
 
 
+@app.route("/api/projects/<project_id>/rigor", methods=["GET", "PATCH"])
+def project_rigor(project_id: str):
+    """Get or update rigor_level for a project (minimal API)."""
+    project_service = get_project_service()
+    if project_service is None:
+        return jsonify({"error": "Database unavailable"}), 503
+    
+    try:
+        project = project_service.get_project(project_id)
+    except ValueError:
+        return jsonify({"error": "Project not found"}), 404
+    except Exception as exc:
+        logger.error(f"Failed to fetch project {project_id}: {exc}", exc_info=True)
+        return jsonify({"error": "Database unavailable"}), 503
+    
+    if request.method == "GET":
+        return jsonify({"project_id": project_id, "rigor_level": project.rigor_level}), 200
+    
+    payload = request.json or {}
+    new_level = (payload.get("rigor_level") or "").strip().lower()
+    if new_level not in ("conservative", "exploratory"):
+        return jsonify({"error": "rigor_level must be 'conservative' or 'exploratory'"}), 400
+    
+    try:
+        collection = project_service.db.collection(project_service.COLLECTION_NAME)
+        collection.update({"_key": project_id, "rigor_level": new_level})
+        return jsonify({"project_id": project_id, "rigor_level": new_level}), 200
+    except Exception as exc:
+        logger.error(f"Failed to update rigor_level for {project_id}: {exc}", exc_info=True)
+        return jsonify({"error": "Failed to update rigor_level"}), 500
+
+
 @app.route("/api/projects/<project_id>/jobs", methods=["GET"])
 def list_project_jobs(project_id: str):
     """List jobs for a project (most recent first).
@@ -939,6 +971,7 @@ def submit_workflow():
             "revision_count": DEFAULT_REVISION_COUNT,
             "image_paths": payload.get("image_paths") if not is_multipart else payload_images,
             "project_id": project_id,
+            "rigor_level": (project_context or {}).get("rigor_level") or "exploratory",
         }
         
         # Inject project context if available
@@ -1478,6 +1511,7 @@ def run_workflow():
         "revision_count": DEFAULT_REVISION_COUNT,
         "image_paths": payload.get("image_paths") or [],
         "project_id": project_id,
+        "rigor_level": (project_context or {}).get("rigor_level") or "exploratory",
     }
     if project_context:
         initial_state["project_context"] = project_context

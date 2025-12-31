@@ -66,6 +66,7 @@ class ProjectConfig(BaseModel):
     anti_scope: Optional[List[str]] = Field(None, description="Explicitly out-of-scope topics")
     target_journal: Optional[str] = Field(None, description="Target journal or venue for publication")
     seed_files: List[str] = Field(default_factory=list, description="List of seed document filenames")
+    rigor_level: str = Field(default="exploratory", description="Rigor level for tone/precision policies")
     created_at: str = Field(..., description="Project creation timestamp (ISO format)")
 
 

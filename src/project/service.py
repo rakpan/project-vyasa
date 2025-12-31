@@ -13,6 +13,7 @@ from arango.database import StandardDatabase
 from arango.exceptions import ArangoError
 
 from .types import ProjectConfig, ProjectCreate, ProjectSummary
+from ..shared.rigor_config import load_rigor_policy_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,9 @@ class ProjectService:
             created_at = datetime.now(timezone.utc).isoformat()
             seed_files = config.seed_files or []
             
+            policy = load_rigor_policy_yaml()
+            rigor_level = policy.get("rigor_level", "exploratory")
+
             # Prepare document for ArangoDB
             # Use _key = project_id (UUID)
             doc = {
@@ -97,6 +101,7 @@ class ProjectService:
                 "research_questions": config.research_questions,
                 "created_at": created_at,
                 "seed_files": seed_files,
+                "rigor_level": rigor_level,
             }
             
             # Add optional fields if present
@@ -120,6 +125,7 @@ class ProjectService:
                 anti_scope=config.anti_scope,
                 target_journal=config.target_journal,
                 seed_files=seed_files,
+                rigor_level=rigor_level,
                 created_at=created_at,  # Keep as ISO string
             )
             
@@ -156,6 +162,7 @@ class ProjectService:
             seed_files = doc.get("seed_files")
             if not isinstance(seed_files, list):
                 seed_files = []
+            rigor_level = doc.get("rigor_level", "exploratory")
             
             # Map _key → id, keep created_at as stored value (ISO string)
             return ProjectConfig(
@@ -166,6 +173,7 @@ class ProjectService:
                 anti_scope=doc.get("anti_scope"),
                 target_journal=doc.get("target_journal"),
                 seed_files=seed_files,
+                rigor_level=rigor_level,
                 created_at=doc["created_at"],  # Keep as ISO string
             )
             

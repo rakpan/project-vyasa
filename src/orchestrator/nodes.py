@@ -33,6 +33,10 @@ from ..shared.utils import get_utc_now
 from .state import PaperState, JobStatus
 from .normalize import normalize_extracted_json
 from .telemetry import TelemetryEmitter, trace_node
+from .artifacts.manifest_builder import build_manifest, persist_manifest
+from .guards.tone_guard import scan_text
+from .guards.tone_rewrite import rewrite_to_neutral
+from ..shared.rigor_config import load_rigor_policy_yaml
 from .config import ExpertType, NODE_EXPERT_MAP
 from .job_manager import update_job_status
 from arango import ArangoClient
@@ -1408,7 +1412,32 @@ def saver_node(state: PaperState) -> PaperState:
                     )
                     raise
 
-        return {**state, "save_receipt": save_receipt}
+        # Build and persist artifact manifest (best-effort; do not fail job on manifest issues)
+        try:
+            manifest = build_manifest(state, rigor_level=state.get("rigor_level"))
+            persist_manifest(manifest, db=db, telemetry_emitter=telemetry_emitter)
+            state_with_manifest = {**state, "artifact_manifest": manifest.model_dump(mode="json")}
+        except Exception as manifest_exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Artifact manifest persistence failed",
+                extra={"payload": {"error": str(manifest_exc), "job_id": state.get("job_id")}},
+                exc_info=True,
+            )
+            try:
+                telemetry_emitter.emit_event(
+                    "artifact_manifest_failed",
+                    {
+                        "job_id": state.get("job_id"),
+                        "project_id": project_id,
+                        "error_type": manifest_exc.__class__.__name__,
+                        "error_message": str(manifest_exc)[:200],
+                    },
+                )
+            except Exception:
+                logger.debug("Failed to emit artifact_manifest_failed telemetry", exc_info=True)
+            state_with_manifest = state
+
+        return {**state_with_manifest, "save_receipt": save_receipt}
     except Exception as e:
         logger.error(f"DB Save Failed: {e}", exc_info=True)
         raise  # Re-raise to ensure job failure is tracked
@@ -1447,6 +1476,19 @@ def synthesizer_node(state: PaperState) -> PaperState:
         #     system_prompt = vocab_guard.apply_constraints(system_prompt)
         # Then use the modified system_prompt in the llm_client.chat() call
     
+    # Optional tone rewrite based on rigor policy
+    try:
+        policy = load_rigor_policy_yaml()
+        tone_enforcement = policy.get("tone_enforcement", "flag_only")
+        rigor_level = state.get("rigor_level", "exploratory")
+        if rigor_level == "conservative" and tone_enforcement == "rewrite":
+            flags = scan_text(synthesis_text or "")
+            hard_flags = [f for f in flags if f.severity == "hard"]
+            if hard_flags:
+                synthesis_text = rewrite_to_neutral(synthesis_text, hard_flags, evidence_context=None)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Tone rewrite skipped due to error", extra={"payload": {"error": str(exc)}})
+
     return {**state, "synthesis": synthesis_text}
 
 

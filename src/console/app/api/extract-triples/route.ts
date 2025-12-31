@@ -135,8 +135,10 @@ export async function POST(req: NextRequest) {
     }
 
     // If vLLM is specified, use the vLLM API endpoint
+    // Use trusted base URL to avoid SSRF - use localhost or env variable instead of user-controlled origin
     if (llmProvider === 'vllm') {
-      const vllmResponse = await fetch(`${req.nextUrl.origin}/api/vllm`, {
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      const vllmResponse = await fetch(`${baseUrl}/api/vllm`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

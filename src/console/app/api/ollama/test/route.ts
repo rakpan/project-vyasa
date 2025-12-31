@@ -36,7 +36,9 @@ export async function GET(req: NextRequest) {
     console.log('Testing Ollama with sample text...');
 
     // Test connection first
-    const connectionResponse = await fetch(`${req.nextUrl.origin}/api/ollama?action=test-connection`);
+    // Use trusted base URL to avoid SSRF - use localhost or env variable instead of user-controlled origin
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const connectionResponse = await fetch(`${baseUrl}/api/ollama?action=test-connection`);
     const connectionResult = await connectionResponse.json();
 
     if (!connectionResult.connected) {
@@ -49,7 +51,8 @@ export async function GET(req: NextRequest) {
     }
 
     // Test triple extraction
-    const extractionResponse = await fetch(`${req.nextUrl.origin}/api/ollama`, {
+    // Use trusted base URL to avoid SSRF - use localhost or env variable instead of user-controlled origin
+    const extractionResponse = await fetch(`${baseUrl}/api/ollama`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

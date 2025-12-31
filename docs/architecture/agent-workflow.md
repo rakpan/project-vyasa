@@ -70,6 +70,8 @@ stateDiagram-v2
         Direct ArangoDB write
         Persists with project_id
         Saves claims with priority tags
+        Builds ArtifactManifest (blocks/tables/visuals/totals)
+        Persists manifest to ArangoDB + /raid/artifacts (best-effort)
     end note
 ```
 

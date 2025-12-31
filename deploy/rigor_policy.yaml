@@ -1,0 +1,3 @@
+rigor_level: exploratory
+max_decimals_default: 2
+tone_enforcement: flag_only
