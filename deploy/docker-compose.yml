@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   # SGLang - Brain (logic/routing)
   # MXFP4 quantization preserves reasoning logic while reducing memory footprint
@@ -166,7 +164,7 @@ services:
     ports:
       - "${PORT_CONSOLE}:${PORT_CONSOLE}"
     environment:
-      - NODE_ENV=${NODE_ENV}
+      - NODE_ENV=${NODE_ENV:-production}
       - NEXT_PUBLIC_API_URL=http://localhost:${PORT_BRAIN}/v1
       - CORTEX_SERVICE_URL=http://cortex-brain:30000
       - MEMORY_SERVICE_URL=http://memory:${PORT_MEMORY}
@@ -196,7 +194,7 @@ services:
     ports:
       - "${PORT_EMBEDDER}:80"
     environment:
-      - EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH}
+      - EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH:-}
       - HF_TOKEN=${HF_TOKEN}
       - CUDA_VISIBLE_DEVICES=1
       - HF_HOME=/raid/vyasa/hf_cache
