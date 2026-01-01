@@ -1,15 +1,15 @@
 # Scripts Overview (DGX / Local-First)
 
-## Quick Start
-- Start Vyasa (no Opik): `./scripts/run_stack.sh up --detach`
-- Start Vyasa + Opik: `./scripts/run_stack.sh up --opik --detach`
-- Stop stack: `./scripts/run_stack.sh down [--opik]`
-- Logs: `./scripts/run_stack.sh logs [--opik] [service]`
-- Run tests: `./scripts/run_tests.sh`
-- Generate Opik datasets: see `scripts/opik/README.md`
+## Quick Start (numbered)
+1. Preflight (env + hardware + secrets): `./scripts/preflight_check.sh`
+2. Start stack (detached): `./scripts/run_stack.sh start` or `./scripts/run_stack.sh start --opik`
+3. Tail logs (optional): `./scripts/run_stack.sh logs [--opik] [service]`
+4. Stop stack: `./scripts/run_stack.sh stop` (add `--opik` if you started with it)
+5. Run tests (optional): `./scripts/run_tests.sh`
+6. Opik datasets/evals (optional): see `scripts/opik/README.md`
 
 ## Scripts Inventory (selected)
-- `init_vyasa.sh` — sequential startup; sources deploy/.env; uses docker compose.
+- `run_stack.sh` — primary start/stop/logs wrapper (supports `--opik`).
 - `preflight_check.sh` — hardware/config checks; auto-gens secrets if missing.
 - `run_mock_llm.sh` — starts mock LLM server (no GPU).
 - `run_tests.sh` / `test_local.sh` — pytest runners.

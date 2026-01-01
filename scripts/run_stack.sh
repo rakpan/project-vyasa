@@ -15,10 +15,13 @@ OPIK_COMPOSE="$PROJECT_ROOT/deploy/docker-compose.opik.yml"
 
 usage() {
   cat <<EOF
-Usage: $0 <up|down|logs|status> [--opik] [--detach] [service]
+Usage: $0 <start|stop|up|down|logs|status> [--opik] [--detach] [service]
 Examples:
-  $0 up --detach           # start Vyasa only
-  $0 up --opik --detach    # start Vyasa + Opik
+  $0 start                 # start Vyasa in detached mode
+  $0 start --opik          # start Vyasa + Opik in detached mode
+  $0 up --detach           # start Vyasa (explicit up)
+  $0 up --opik --detach    # start Vyasa + Opik (explicit up)
+  $0 stop                  # stop all Vyasa services
   $0 down --opik           # stop all including Opik
   $0 logs --opik opik-api  # tail Opik API logs
 EOF
@@ -52,8 +55,15 @@ compose_cmd() {
 print_config_summary
 
 case "$COMMAND" in
+  start)
+    DETACH="-d"
+    $(compose_cmd) up $DETACH
+    ;;
   up)
     $(compose_cmd) up $DETACH
+    ;;
+  stop)
+    $(compose_cmd) down
     ;;
   down)
     $(compose_cmd) down

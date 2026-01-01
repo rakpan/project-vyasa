@@ -12,7 +12,7 @@
 cd deploy && cp .env.example .env && # edit .env
 
 # 3. Start system (first time)
-./scripts/init_vyasa.sh
+./scripts/run_stack.sh start  # add --opik to include Opik services
 
 # 4. Access console
 open http://localhost:3000
@@ -43,15 +43,9 @@ cp .env.example .env
 
 ### 3. Start System (10-30 minutes first time)
 
-**First time** (sequential startup with health checks):
+Use the unified stack runner (adds `--opik` to include Opik services):
 ```bash
-./scripts/init_vyasa.sh
-```
-
-**Subsequent runs** (quick start):
-```bash
-cd deploy
-./start.sh
+./scripts/run_stack.sh start
 ```
 
 ### 4. Access Console
@@ -77,9 +71,8 @@ Login with `CONSOLE_PASSWORD` from `.env`.
 | What | Command |
 |------|---------|
 | **Preflight check** | `./scripts/preflight_check.sh` |
-| **Start (first time)** | `./scripts/init_vyasa.sh` |
-| **Start (quick)** | `cd deploy && ./start.sh` |
-| **Stop** | `cd deploy && ./stop.sh` |
+| **Start** | `./scripts/run_stack.sh start [--opik]` |
+| **Stop** | `./scripts/run_stack.sh stop [--opik]` |
 | **Merge nodes** | `./scripts/vyasa-cli.sh merge <job_id> <source> <target>` |
 | **Run tests** | `./scripts/run_tests.sh` |
 
@@ -103,4 +96,3 @@ Login with `CONSOLE_PASSWORD` from `.env`.
 - Read [Getting Started Guide](docs/runbooks/getting-started.md) for detailed instructions
 - Review [System Architecture](docs/architecture/system-map.md) for understanding the system
 - Check [Development Guide](docs/guides/development.md) for contributing
-

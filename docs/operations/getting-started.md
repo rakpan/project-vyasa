@@ -117,87 +117,16 @@ Edit `.env` with your configuration:
 
 ## Step 4: Start Services
 
-### Option A: Sequential Startup (Recommended for First-Time Setup)
-
-This ensures proper dependency ordering and health verification:
+Use the unified stack runner (add `--opik` to include Opik services):
 
 ```bash
-./scripts/init_vyasa.sh
+./scripts/run_stack.sh start
+# or: ./scripts/run_stack.sh start --opik
 ```
 
-**What this script does**:
-1. Sources `deploy/secrets.env` and `deploy/.env`
-2. Starts Graph (ArangoDB) and Vector (Qdrant) services
-3. Waits for services to become healthy
-4. Starts Cortex models (Brain/Worker/Vision)
-5. **Polls Worker model readiness** at `http://localhost:30001/v1/models`
-6. Starts Orchestrator (waits for Cortex models)
-7. Starts Console (waits for Orchestrator)
-8. Provides status summary with all service URLs
-
-**Expected output**:
-```
-==========================================
-Project Vyasa - System Bootstrapping
-DGX Spark (GB10) Startup Sequence
-==========================================
-
-Step 1: Loading secrets and environment variables...
-  ✓ Secrets loaded
-  ✓ Environment variables loaded
-
-Step 2: Starting Graph (ArangoDB) and Vector (Qdrant) services...
-  ✓ Graph and Vector services are healthy
-
-Step 3: Starting Cortex models (Brain/Worker/Vision)...
-  ✓ Cortex Worker model is ready
-
-Step 4: Starting Orchestrator (depends on Cortex models)...
-  ✓ Orchestrator is healthy
-
-Step 5: Starting Console (depends on Orchestrator)...
-  ✓ Console is ready
-
-==========================================
-Project Vyasa - Startup Complete
-==========================================
-
-Services Status:
-  Graph (ArangoDB):    http://localhost:8529
-  Vector (Qdrant):      http://localhost:6333
-  Brain (Cortex):       http://localhost:30000
-  Worker (Cortex):      http://localhost:30001
-  Vision (Cortex):      http://localhost:30002
-  Orchestrator:         http://localhost:8000
-  Console:              http://localhost:3000
-```
-
-### Option B: Quick Start (For Subsequent Runs)
-
-If services are already configured and you just need to restart:
-
-```bash
-cd deploy
-./start.sh
-```
-
-**What this script does**:
-- Starts all services via Docker Compose (parallel startup)
-- Waits for ArangoDB to become healthy
-- Seeds initial roles via orchestrator container
-- Polls orchestrator health endpoint
-- Prints "✅ System Online: http://localhost:3000" when ready
-
-**Note**: This is faster but doesn't verify Cortex model readiness. Use `init_vyasa.sh` if you encounter startup issues.
-
-### Understanding the Difference
-
-| Script | Use Case | Startup Method |
-|--------|----------|----------------|
-| `scripts/init_vyasa.sh` | **First-time setup**, troubleshooting, ensuring all dependencies are ready | Sequential (one service at a time with health checks) |
-| `deploy/start.sh` | **Subsequent runs**, quick restart | Parallel (all services at once) |
-
-**Recommendation**: Use `init_vyasa.sh` for first-time setup, then `deploy/start.sh` for daily use.
+Helpful commands:
+- Stop services: `./scripts/run_stack.sh stop [--opik]`
+- Tail logs: `./scripts/run_stack.sh logs [--opik] [service]`
 
 **First Run**: The first time you start the services, Docker will:
 1. Pull required images (this may take several minutes)
@@ -342,15 +271,8 @@ If you just created a project, you're already on the workbench. Otherwise, click
 To gracefully shut down all services:
 
 ```bash
-cd deploy
-./stop.sh
-```
-
-Or manually:
-
-```bash
-cd deploy
-docker compose down
+./scripts/run_stack.sh stop
+# or: ./scripts/run_stack.sh stop --opik
 ```
 
 To stop and remove volumes (⚠️ **deletes all data**):
@@ -365,9 +287,7 @@ docker compose down -v
 | Script | Location | Purpose | When to Use |
 |--------|----------|---------|-------------|
 | **Preflight Check** | `scripts/preflight_check.sh` | Validates hardware, memory, ports, dataset directory | **Before first startup** |
-| **Sequential Startup** | `scripts/init_vyasa.sh` | Orchestrates sequential service startup with health checks | **First-time setup**, troubleshooting |
-| **Quick Start** | `deploy/start.sh` | Fast startup for already-configured systems | **Subsequent runs**, daily use |
-| **Stop** | `deploy/stop.sh` | Gracefully shuts down all services | **Shutdown** |
+| **Start/Stop/Logs** | `scripts/run_stack.sh` | Unified compose wrapper (add `--opik` for Opik services) | **Default start/stop** |
 | **Operational CLI** | `scripts/vyasa-cli.sh` | Operational utilities (merge nodes, etc.) | **Operations** |
 | **Test Runner** | `scripts/run_tests.sh` | Run pytest test suite | **Development** |
 | **Mock LLM** | `scripts/run_mock_llm.sh` | Start mock LLM server for testing | **Testing without GPUs** |

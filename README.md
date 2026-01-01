@@ -125,35 +125,16 @@ cp .env.example .env
 
 #### Step 3: Start the System
 
-**Option A: Sequential Startup (Recommended for first-time setup)**
-
-This ensures proper dependency ordering and health verification:
+Use the unified stack runner (add `--opik` to include Opik services):
 
 ```bash
-./scripts/init_vyasa.sh
+./scripts/run_stack.sh start
+# optional: ./scripts/run_stack.sh start --opik
 ```
 
-This script:
-1. Sources secrets and environment variables
-2. Starts Graph (ArangoDB) and Vector (Qdrant)
-3. Starts Cortex models (Brain/Worker/Vision) and waits for readiness
-4. Starts Orchestrator (waits for Cortex)
-5. Starts Console (waits for Orchestrator)
-
-**Option B: Quick Start (For subsequent runs)**
-
-If services are already configured:
-
-```bash
-cd deploy
-./start.sh
-```
-
-This script:
-- Starts all services via Docker Compose
-- Waits for ArangoDB health
-- Seeds initial roles
-- Polls orchestrator health
+Helpful commands:
+- Stop services: `./scripts/run_stack.sh stop [--opik]`
+- Tail logs: `./scripts/run_stack.sh logs [--opik] [service]`
 
 #### Step 4: Verify System Status
 
@@ -222,17 +203,15 @@ docker compose down
 | Script | Location | Purpose |
 |--------|----------|---------|
 | **Preflight Check** | `scripts/preflight_check.sh` | Validates hardware, memory, ports before startup |
-| **Sequential Startup** | `scripts/init_vyasa.sh` | Orchestrates sequential service startup with health checks |
-| **Quick Start** | `deploy/start.sh` | Fast startup for already-configured systems |
-| **Stop** | `deploy/stop.sh` | Gracefully shuts down all services |
+| **Start/Stop** | `scripts/run_stack.sh` | Unified start/stop/logs (add `--opik` to include Opik services) |
 | **Console Navigation** | `docs/runbooks/console-navigation.md` | Describes Projects → Job → Workbench flow, guards, and layout rules |
 | **Operational CLI** | `scripts/vyasa-cli.sh` | Operational utilities (merge nodes, etc.) |
 | **Test Runner** | `scripts/run_tests.sh` | Run pytest test suite |
 | **Mock LLM** | `scripts/run_mock_llm.sh` | Start mock LLM server for testing |
 
 **When to use which script**:
-- **First time setup**: `preflight_check.sh` → `init_vyasa.sh`
-- **Subsequent runs**: `deploy/start.sh`
+- **Start/Stop (default)**: `run_stack.sh start|stop [--opik]`
+- **Preflight**: `preflight_check.sh`
 - **Development/testing**: `scripts/run_tests.sh`, `scripts/run_mock_llm.sh`
 - **Operations**: `scripts/vyasa-cli.sh merge ...`
 
@@ -287,12 +266,12 @@ project-vyasa/
 ├── deploy/                  # Deployment configuration
 │   ├── docker-compose.yml   # Service definitions
 │   ├── .env.example         # Environment template
-│   ├── start.sh             # Quick start script
-│   ├── stop.sh              # Shutdown script
-│   └── scripts/             # Initialization scripts
+│   ├── start.sh             # Legacy quick start script
+│   ├── stop.sh              # Legacy shutdown script
+│   └── scripts/             # Initialization helpers
 ├── scripts/                 # Operational scripts
 │   ├── preflight_check.sh   # Pre-startup validation
-│   ├── init_vyasa.sh        # Sequential startup (first-time)
+│   ├── run_stack.sh         # Unified start/stop/logs (with optional Opik)
 │   ├── vyasa-cli.sh         # Operational CLI (merge, etc.)
 │   ├── run_tests.sh         # Test runner
 │   └── run_mock_llm.sh      # Mock LLM for testing
