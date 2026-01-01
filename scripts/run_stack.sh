@@ -7,8 +7,16 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 load_env_defaults
 require_cmd docker
-require_cmd docker-compose || true
-require_cmd docker compose || true
+
+# Detect compose (plugin or standalone)
+if command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE=(docker-compose)
+elif docker compose version >/dev/null 2>&1; then
+  COMPOSE=(docker compose)
+else
+  echo "Error: Docker Compose not found (install docker-compose or enable docker compose plugin)" >&2
+  exit 1
+fi
 
 BASE_COMPOSE="$PROJECT_ROOT/deploy/docker-compose.yml"
 OPIK_COMPOSE="$PROJECT_ROOT/deploy/docker-compose.opik.yml"
@@ -49,7 +57,7 @@ compose_cmd() {
   if $USE_OPIK; then
     files+=("-f" "$OPIK_COMPOSE")
   fi
-  echo docker compose "${files[@]}"
+  echo "${COMPOSE[@]}" "${files[@]}"
 }
 
 print_config_summary
