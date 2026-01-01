@@ -55,7 +55,7 @@ if [ -f "$ENV_EXAMPLE" ]; then
       else
         echo "$line" >> "$ENV_FILE"
         echo "  • Added default $key from example"
-      }
+      fi
     fi
   done < "$ENV_EXAMPLE"
 fi

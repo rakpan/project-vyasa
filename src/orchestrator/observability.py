@@ -19,22 +19,21 @@ from ..shared.logger import get_logger
 
 logger = get_logger("orchestrator", __name__)
 
-# NVML via nvidia-ml-py (preferred)
+# NVML via nvidia-ml-py (provides pynvml module)
 try:
-    import nvidia_smi  # type: ignore
+    import pynvml  # type: ignore
+    _nvml_available = True
 except Exception:  # pragma: no cover
-    nvidia_smi = None
+    pynvml = None
+    _nvml_available = False
+    logger.warning("nvidia-ml-py not available; GPU stats will be omitted")
 
-if nvidia_smi:
+if _nvml_available:
     try:
-        nvidia_smi.nvmlInit()
-        _nvml_available = True
+        pynvml.nvmlInit()
     except Exception:  # pragma: no cover
         _nvml_available = False
         logger.warning("NVML initialization failed; GPU stats will be omitted")
-else:  # pragma: no cover
-    _nvml_available = False
-    logger.warning("NVML not available; GPU stats will be omitted")
 
 
 PERFORMANCE_CORES = set(range(10, 20))  # X925
@@ -62,8 +61,8 @@ def _gpu_usage_gb() -> Optional[float]:
     if not _nvml_available:
         return None
     try:
-        handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
-        mem = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
         return mem.used / (1024 ** 3)
     except Exception:
         return None

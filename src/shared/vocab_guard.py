@@ -49,7 +49,12 @@ class VocabGuard:
                 for item in forbidden_list:
                     if isinstance(item, dict):
                         word = item.get("word", "").strip().lower()
-                        alternative = item.get("alternative", "").strip()
+                        alt_val = item.get("alternative", "")
+                        # Handle both string and list formats
+                        if isinstance(alt_val, list):
+                            alternative = " or ".join(str(a).strip() for a in alt_val if a)
+                        else:
+                            alternative = str(alt_val).strip()
                         if word:
                             self._forbidden_words[word] = alternative
                     elif isinstance(item, str):
