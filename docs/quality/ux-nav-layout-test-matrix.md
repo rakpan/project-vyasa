@@ -12,7 +12,7 @@
 | WB-021 | Workbench handles missing pdfUrl (conditional rendering) | src/console/app/research-workbench/page.tsx | MISSING | MISSING | Two-panel layout [50/50] when pdfUrl absent |
 | WB-022 | Panel sizing totals 100% (e.g., 40/30/30 with pdfUrl) | src/console/app/research-workbench/page.tsx | MISSING | MISSING | Verify default sizes and responsive breakpoints |
 | NAV-030 | Resume flow sets Workbench link parameters correctly | src/console/state/useProjectStore.ts, src/console/components/JobStatusCard.tsx | MISSING | MISSING | jobId/projectId/pdfUrl propagated |
-| DOC-040 | Docs describe canonical entry and Projects→Job→Workbench flow | docs/runbooks/console-navigation.md | NEW (this doc) | N/A | Update when behavior changes |
+| DOC-040 | Docs describe canonical entry and Projects→Job→Workbench flow | docs/operations/03-ui-ux-standards.md | NEW (this doc) | N/A | Update when behavior changes |
 | THEME-050 | globals.css is single source; no duplicate theme tokens | src/console/app/globals.css (and imports) | MISSING | Optional lint/test MISSING | Add lint/grep guard if theme touched |
 
 ## Coverage Summary

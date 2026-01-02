@@ -22,18 +22,17 @@ import { useTheme } from "./theme-provider"
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme()
 
+  // Force light theme (as per design system)
+  const isLight = true
+
   return (
     <button
-      className="btn-icon relative"
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-      aria-label="Toggle theme"
+      className="h-8 w-8 rounded-md flex items-center justify-center text-[#111827] hover:bg-slate-100 transition-colors"
+      onClick={() => setTheme("light")}
+      aria-label="Theme (light mode only)"
+      disabled
     >
-      <Sun
-        className={`h-5 w-5 transition-all ${theme === "dark" ? "opacity-0 scale-0 rotate-90 absolute" : "opacity-100 scale-100 rotate-0 relative"}`}
-      />
-      <Moon
-        className={`h-5 w-5 transition-all ${theme === "light" ? "opacity-0 scale-0 -rotate-90 absolute" : "opacity-100 scale-100 rotate-0 relative"}`}
-      />
+      <Sun className="h-3.5 w-3.5" />
     </button>
   )
 }

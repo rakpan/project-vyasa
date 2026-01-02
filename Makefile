@@ -24,7 +24,7 @@ test: test-unit
 # Run unit tests only
 test-unit:
 	@echo "Running unit tests..."
-	python -m pytest src/tests/unit src/orchestrator/tests -v
+	python -m pytest src/tests/unit -v
 
 # Run integration tests only
 test-integration:
@@ -34,7 +34,7 @@ test-integration:
 # Run all tests (unit + integration)
 test-all:
 	@echo "Running all tests..."
-	python -m pytest src/tests src/orchestrator/tests -v
+	python -m pytest src/tests -v
 
 # Lint (placeholder - add your linter commands here)
 lint:

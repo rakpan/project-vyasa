@@ -29,8 +29,8 @@ export function UploadTab({ onTabChange }: UploadTabProps) {
       <div className="w-full lg:w-1/3 space-y-8">
         <div className="nvidia-build-card">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-8 h-8 rounded-lg bg-nvidia-green/15 flex items-center justify-center">
-              <Upload className="h-4 w-4 text-nvidia-green" />
+            <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
+              <Upload className="h-4 w-4 text-primary" />
             </div>
             <h2 className="text-lg font-semibold text-foreground">Upload Documents</h2>
           </div>
@@ -39,8 +39,8 @@ export function UploadTab({ onTabChange }: UploadTabProps) {
         
         <div className="nvidia-build-card">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-8 h-8 rounded-lg bg-nvidia-green/15 flex items-center justify-center">
-              <Database className="h-4 w-4 text-nvidia-green" />
+            <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
+              <Database className="h-4 w-4 text-primary" />
             </div>
             <h2 className="text-lg font-semibold text-foreground">Storage Connections</h2>
           </div>
@@ -54,8 +54,8 @@ export function UploadTab({ onTabChange }: UploadTabProps) {
         <div className="nvidia-build-card p-0 overflow-hidden">
           <div className="p-6 border-b border-border/10">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-8 h-8 rounded-lg bg-nvidia-green/15 flex items-center justify-center">
-                <Table className="h-4 w-4 text-nvidia-green" />
+              <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
+                <Table className="h-4 w-4 text-primary" />
               </div>
               <h2 className="text-lg font-semibold text-foreground">Documents Overview</h2>
             </div>

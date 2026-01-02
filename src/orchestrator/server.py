@@ -6,6 +6,7 @@ shared logger, enabling the Console to send raw PDFs without losing structure.
 """
 
 import threading
+import asyncio
 import os
 import json as json_lib
 import time
@@ -19,7 +20,7 @@ from werkzeug.utils import secure_filename
 from pydantic import ValidationError
 import requests
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 try:
     # [Integration Guard] WSGIMiddleware Bridge
@@ -38,7 +39,7 @@ from arango import ArangoClient
 
 from .pdf_processor import process_pdf
 from .workflow import build_workflow
-from .state import PaperState, JobStatus, DEFAULT_REVISION_COUNT
+from .state import ResearchState, JobStatus, DEFAULT_REVISION_COUNT
 from .telemetry import TelemetryEmitter
 from .job_manager import (
     create_job,
@@ -99,6 +100,8 @@ _project_service: Optional[ProjectService] = None
 # SSE event streams: job_id -> set of active connections
 _sse_connections: Dict[str, Set[threading.Event]] = defaultdict(set)
 _sse_lock = threading.Lock()
+_event_queues: Dict[str, "asyncio.Queue"] = {}
+_event_queues_lock = threading.Lock()
 
 # ASGI gateway (FastAPI) with observatory router; mounts Flask app for legacy routes.
 # The bridge keeps a unified surface for both FastAPI (observability) and Flask (ingestion).
@@ -113,6 +116,32 @@ if WSGIMiddleware is None:
         return JSONResponse(status_code=503, content={"error": msg})
 else:
     api_app.mount("/", WSGIMiddleware(app))
+
+
+@api_app.get("/events/{job_id}")
+async def stream_job_events(job_id: str):
+    """Stream LangGraph events (v2) for heartbeat/status."""
+    with _event_queues_lock:
+        queue = _event_queues.get(job_id)
+        if queue is None:
+            queue = asyncio.Queue(maxsize=100)
+            _event_queues[job_id] = queue
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json_lib.dumps(payload)}\n\n"
+                except asyncio.TimeoutError:
+                    yield f"data: {json_lib.dumps({'type': 'heartbeat'})}\n\n"
+        except asyncio.CancelledError:
+            return
+        finally:
+            with _event_queues_lock:
+                _event_queues.pop(job_id, None)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.route("/api/jobs/<job_id>/signoff", methods=["GET"])
@@ -148,23 +177,27 @@ def post_job_signoff(job_id: str):
     parent_version = record.get("job_version", 1)
 
     if action == "accept":
+        # Hydrate thread_id for resume
+        thread_id = initial_state.get("threadId") or initial_state.get("thread_id") or job_id
         if edited_pivot:
             initial_state = {**initial_state}
             ctx = initial_state.get("project_context") or {}
             ctx["thesis"] = edited_pivot
             initial_state["project_context"] = ctx
-        new_job_id = create_job(
-            initial_state,
-            parent_job_id=job_id,
-            job_version=parent_version + 1,
-            reprocess_reason="reframe_accept",
-        )
-        telemetry_emitter.emit_event(
-            "reframe_accepted",
-            {"proposal_id": proposal_id, "new_job_id": new_job_id},
-        )
-        update_job_status(job_id, JobStatus.FINALIZED, message="Reframe accepted")
-        return jsonify({"new_job_id": new_job_id}), 200
+        try:
+            update_job_status(job_id, JobStatus.RUNNING, message="Resuming after reframing")
+            config = {"configurable": {"thread_id": thread_id}}
+            resumed = workflow_app.invoke(None, config=config)
+            update_job_status(job_id, JobStatus.SUCCEEDED, message="Reframe accepted")
+            telemetry_emitter.emit_event(
+                "reframe_accepted",
+                {"proposal_id": proposal_id, "job_id": job_id, "thread_id": thread_id},
+            )
+            return jsonify({"status": "resumed", "job_id": job_id, "result": resumed}), 200
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to resume after reframing signoff", exc_info=True)
+            update_job_status(job_id, JobStatus.FAILED, error=str(exc), message="Reframe resume failed")
+            return jsonify({"error": "Failed to resume workflow"}), 500
 
     telemetry_emitter.emit_event("reframe_rejected", {"proposal_id": proposal_id, "job_id": job_id})
     update_job_status(job_id, JobStatus.FAILED, error="Reframe rejected", message="Reframe rejected")
@@ -243,6 +276,19 @@ def _notify_sse_clients(job_id: str, data: Dict[str, Any]) -> None:
     # Set event to notify waiting SSE streams
     for event in events:
         event.set()
+
+
+def _publish_event(job_id: str, payload: Dict[str, Any]) -> None:
+    """Publish an event to async subscribers (event stream) without blocking."""
+    with _event_queues_lock:
+        queue = _event_queues.get(job_id)
+    if queue:
+        try:
+            queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            logger.debug(f"Event queue full for {job_id}, dropping event")
+        except Exception:
+            logger.debug("Unexpected error publishing event", exc_info=True)
 
 # Progress mapping for researcher-facing job status
 STEP_PROGRESS = {
@@ -395,8 +441,12 @@ def health():
     
     # Check ArangoDB connectivity (do not create DBs here)
     try:
-        client = ArangoClient(hosts=get_memory_url())
-        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
+        try:
+            client = ArangoClient(hosts=get_memory_url())
+            db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
+        except Exception as exc:
+            logger.error(f"ArangoDB connection failed for synthesis: {exc}")
+            return
         db.version()  # lightweight ping
         dependencies["arango"] = "ok"
     except Exception as e:
@@ -654,34 +704,48 @@ def get_project(project_id: str):
         return jsonify({"error": "Internal server error"}), 500
 
 
-def _run_workflow_async(job_id: str, initial_state: PaperState) -> None:
-    """Run workflow in background thread.
-    
-    Args:
-        job_id: Job identifier.
-        initial_state: Initial workflow state.
-    """
+def _run_workflow_async(job_id: str, initial_state: ResearchState) -> None:
+    """Run workflow in background thread using LangGraph event stream."""
+    asyncio.run(_run_workflow_coroutine(job_id, initial_state))
+
+
+async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> None:
     try:
-        # Acquire job slot (concurrency control)
         if not acquire_job_slot():
             update_job_status(job_id, JobStatus.FAILED, error="Job queue full (max 2 concurrent jobs)")
             return
+
         # Attach job_id to workflow state for telemetry/provenance
-        initial_state = {**initial_state, "job_id": job_id}
+        state = {**initial_state, "job_id": job_id, "jobId": job_id, "threadId": job_id}
+        config = {"configurable": {"thread_id": job_id}}
+        final_state: Dict[str, Any] = {}
 
         try:
             update_job_status(job_id, JobStatus.RUNNING, current_step="Cartographer", progress=0.1, message="Starting Cartographer")
 
-            # Run the full workflow graph (handles retry logic internally).
-            # The workflow will execute: cartographer -> critic -> (retry if needed) -> saver
-            result = workflow_app.invoke(initial_state)
+            async for event in workflow_app.astream_events(state, config=config, version="v2"):
+                ev_type = event.get("event")
+                node_name = event.get("name") or event.get("node")
+                if ev_type == "on_node_start" and node_name in {"vision", "logician", "brain", "cortex-brain"}:
+                    _publish_event(job_id, {"type": "node_start", "node": node_name, "timestamp": get_utc_now().isoformat()})
+                # Capture latest state if present
+                if "state" in event and isinstance(event["state"], dict):
+                    final_state = event["state"]
+                # Best-effort telemetry via Opik (non-blocking)
+                try:
+                    payload = {"type": "event", "event": ev_type, "node": node_name, "timestamp": get_utc_now().isoformat()}
+                    if "value" in event:
+                        payload["value"] = event.get("value")
+                    _publish_event(job_id, payload)
+                except Exception:
+                    pass
 
-            # Emit graph update after cartographer completes (if triples exist)
+            result = final_state or {}
+
             extracted_json = result.get("extracted_json", {})
             if isinstance(extracted_json, dict):
                 triples = extracted_json.get("triples", [])
                 if triples:
-                    # Notify SSE clients about new graph data
                     _notify_sse_clients(job_id, {
                         "type": "graph_update",
                         "timestamp": get_utc_now().isoformat(),
@@ -692,17 +756,13 @@ def _run_workflow_async(job_id: str, initial_state: PaperState) -> None:
 
             update_job_status(job_id, JobStatus.RUNNING, current_step="Saver", progress=0.9, message="Persisting results")
 
-            # Ensure extracted_json has triples (normalize if needed)
             if not isinstance(extracted_json, dict) or "triples" not in extracted_json:
                 result["extracted_json"] = normalize_extracted_json(extracted_json)
-            
-            # Include context metadata and conflict flags in result (preserve if present)
             if "context_sources" not in result:
                 result["context_sources"] = {}
             if "selected_reference_ids" not in result:
                 result["selected_reference_ids"] = []
-            
-            # Handle conflict flags
+
             conflict_flags = result.get("conflict_flags", [])
             if conflict_flags:
                 result["conflict_flags"] = conflict_flags
@@ -710,24 +770,18 @@ def _run_workflow_async(job_id: str, initial_state: PaperState) -> None:
                     f"Job {job_id} completed with {len(conflict_flags)} conflict flags",
                     extra={"payload": {"conflicts": conflict_flags}}
                 )
-            
-            # Calculate and store quality metrics (especially for reprocessed jobs)
+
             _store_quality_metrics(job_id, result)
-            
-            # Set result
             set_job_result(job_id, result)
-            
-            # Emit reprocess completion telemetry if this is a reprocessed job
             _emit_reprocess_completion_telemetry(job_id, result)
-            
+
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Workflow execution failed for job {job_id}", exc_info=True)
             update_job_status(job_id, JobStatus.FAILED, error=str(exc), message="Failed")
             raise
         finally:
-            # Always release the slot
             release_job_slot()
-            
+
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Workflow execution failed for job {job_id}", exc_info=True)
         update_job_status(job_id, JobStatus.FAILED, error=str(exc), message="Failed")
@@ -990,7 +1044,7 @@ def submit_workflow():
                 return jsonify({"error": "Failed to record seed file"}), 503
 
         # Prepare initial state
-        initial_state: PaperState = {
+        initial_state: ResearchState = {
             "raw_text": raw_text,
             "pdf_path": pdf_path or payload.get("pdf_path", ""),
             "extracted_json": payload.get("extracted_json") or {},
@@ -1008,6 +1062,10 @@ def submit_workflow():
         # Create job
         idempotency_key = request.form.get("idempotency_key") if is_multipart else payload.get("idempotency_key")
         job_id = create_job(initial_state, idempotency_key=idempotency_key)
+        # Normalize identifiers for reducer/validation compatibility
+        initial_state["job_id"] = job_id
+        initial_state["jobId"] = job_id
+        initial_state["threadId"] = job_id
         
         import unittest.mock as um
         thread = threading.Thread(
@@ -1286,8 +1344,12 @@ def _run_synthesis_async(project_id: str, job_ids: List[str]) -> None:
         from .synthesis_service import SynthesisService
         from arango import ArangoClient
         
-        client = ArangoClient(hosts=get_memory_url())
-        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
+        try:
+            client = ArangoClient(hosts=get_memory_url())
+            db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
+        except Exception as exc:
+            logger.error(f"ArangoDB connection failed for harvesting: {exc}")
+            return
         
         service = SynthesisService(db)
         result = service.finalize_project(project_id, job_ids)
@@ -1530,7 +1592,7 @@ def run_workflow():
         logger.error(f"Failed to fetch project {project_id}: {e}", exc_info=True)
         return jsonify({"error": "Database unavailable"}), 503
 
-    initial_state: PaperState = {
+    initial_state: ResearchState = {
         "raw_text": raw_text,
         "pdf_path": payload.get("pdf_path", ""),
         "extracted_json": payload.get("extracted_json") or {},
@@ -1545,6 +1607,9 @@ def run_workflow():
 
     try:
         job_id = create_job(initial_state, idempotency_key=payload.get("idempotency_key"))
+        initial_state["job_id"] = job_id
+        initial_state["jobId"] = job_id
+        initial_state["threadId"] = job_id
         thread = threading.Thread(
             target=_run_workflow_async,
             args=(job_id, initial_state),

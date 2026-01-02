@@ -238,7 +238,7 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
         vx: 0,
         vy: 0,
         radius: Math.max(5, Math.min(12, 5 + connectionCount * 0.5)),
-        color: isHighlighted ? "#FF9900" : "#76B900",
+        color: isHighlighted ? "rgb(var(--foreground))" : "rgb(var(--primary))",
         connections: connectionCount,
       }
     })
@@ -547,7 +547,7 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
         ctx.beginPath()
         ctx.arc(x, y, radius, 0, Math.PI * 2)
         ctx.fillStyle = isHighlighted 
-          ? "#FF9900" 
+          ? "rgb(var(--foreground))" 
           : (isSelected ? "#0088FF" : (isHovered ? "#7CD22D" : node.color))
         ctx.fill()
         
@@ -777,7 +777,7 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
               selectedNode === sourceNode.id ||
               selectedNode === targetNode.id
             ) {
-              ctx.strokeStyle = "rgba(118, 185, 0, 0.6)"
+              ctx.strokeStyle = "rgba(var(--primary), 0.6)"
               ctx.lineWidth = 2
             } else {
               ctx.strokeStyle = "rgba(255, 255, 255, 0.2)"
@@ -804,7 +804,7 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
               ty - arrowLength * Math.sin(angle + Math.PI / 6),
             )
             ctx.closePath()
-            ctx.fillStyle = "rgba(118, 185, 0, 0.6)"
+            ctx.fillStyle = "rgba(var(--primary), 0.6)"
             ctx.fill()
 
             // Draw link label for selected connections
@@ -846,9 +846,9 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
           // Highlight hovered or selected node
           if (node.id === hoveredNode || node.id === selectedNode) {
             // Glow effect
-            ctx.fillStyle = "#76B900"
+            ctx.fillStyle = "rgb(var(--primary))"
           } else {
-            ctx.fillStyle = "rgba(118, 185, 0, 0.8)"
+            ctx.fillStyle = "rgba(var(--primary), 0.8)"
           }
 
           ctx.fill()
@@ -954,7 +954,7 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
                 selectedNode === sourceNode.id ||
                 selectedNode === targetNode.id
               ) {
-                ctx.strokeStyle = "rgba(118, 185, 0, 0.7)";
+                ctx.strokeStyle = "rgba(var(--primary), 0.7)";
                 ctx.lineWidth = 2.5;
               } else {
                 ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
@@ -981,7 +981,7 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
                 ty - arrowLength * Math.sin(angle + Math.PI / 6)
               );
               ctx.closePath();
-              ctx.fillStyle = "rgba(118, 185, 0, 0.7)";
+              ctx.fillStyle = "rgba(var(--primary), 0.7)";
               ctx.fill();
             }
           }
@@ -1006,13 +1006,13 @@ export function FallbackGraph({ triples, fullscreen = false, highlightedNodes }:
               );
             
             if (isSelected) {
-              ctx.fillStyle = "#76B900"; // Bright green for selected
+              ctx.fillStyle = "rgb(var(--primary))"; // Bright green for selected
             } else if (isConnectedToSelected) {
               ctx.fillStyle = "#50a0ff"; // Blue for connected nodes
             } else if (node.id === hoveredNode) {
               ctx.fillStyle = "#d0ff50"; // Yellow-green for hovered
             } else {
-              ctx.fillStyle = "rgba(118, 185, 0, 0.8)"; // Default
+              ctx.fillStyle = "rgba(var(--primary), 0.8)"; // Default
             }
             
             ctx.fill();

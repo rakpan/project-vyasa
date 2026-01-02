@@ -9,7 +9,7 @@ This inventory lists every model reference found in the repository as of this sc
 | Brain | meta-llama/Llama-3.3-70B-Instruct | SGLang (30000) | Complex reasoning & routing |
 | Worker | meta-llama/Llama-3.1-8B-Instruct | SGLang (30001) | Fast JSON extraction |
 | Embedder | BAAI/bge-large-en-v1.5 | Transformers (80) | High-recall semantic search |
-| Drafter | mistral-nemo | Ollama (11434) | Research prose & synthesis |
+| Drafter | mistral-nemo | Ollama (11435) | Research prose & synthesis |
 
 | model_id | purpose | provider/runtime | quantization / KV policy | context (default / max) | where configured | where used |
 | --- | --- | --- | --- | --- | --- | --- |

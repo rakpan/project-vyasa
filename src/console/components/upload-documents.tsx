@@ -85,8 +85,8 @@ export function UploadDocuments() {
       )}
 
       <div
-        className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-200 hover:border-nvidia-green/50 hover:bg-nvidia-green/5
-                   ${isDragging ? "border-nvidia-green bg-nvidia-green/10 scale-[1.02]" : "border-border/40 hover:border-nvidia-green/40"}`}
+        className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-200 hover:border-primary/50 hover:bg-primary/5
+                   ${isDragging ? "border-primary bg-primary/10 scale-[1.02]" : "border-border/40 hover:border-primary/40"}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -94,12 +94,12 @@ export function UploadDocuments() {
       >
         <input id="file-upload" type="file" multiple className="hidden" accept=".md,.csv,.txt,.json,.pdf,application/pdf" onChange={handleFileSelect} />
         <div className="flex flex-col items-center">
-          <div className="w-16 h-16 rounded-2xl bg-nvidia-green/10 flex items-center justify-center mb-4 border border-nvidia-green/20">
-            <Upload className="h-8 w-8 text-nvidia-green" />
+          <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 border border-primary/20">
+            <Upload className="h-8 w-8 text-primary" />
           </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">Drag & Drop Files</h3>
           <p className="text-sm text-muted-foreground mb-4">
-            or <button className="font-medium text-nvidia-green hover:text-nvidia-green/80 underline underline-offset-2">browse files</button>
+            or <button className="font-medium text-primary hover:text-primary/80 underline underline-offset-2">browse files</button>
           </p>
           <div className="inline-flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 px-3 py-1.5 rounded-full border border-border/30">
             <FileText className="h-3 w-3" />

@@ -31,9 +31,9 @@ C4Container
     Rel(orchestrator, brain, "HTTP", "Port 30000\nRouting decisions")
     Rel(orchestrator, worker, "HTTP", "Port 30001\nExtraction & validation")
     Rel(orchestrator, vision, "HTTP", "Port 30002\nConfidence filtering")
-    Rel(orchestrator, drafter, "HTTP", "Port 11434\n/api/generate")
+    Rel(orchestrator, drafter, "HTTP", "Port 11435\n/api/generate")
     Rel(orchestrator, graph, "AQL", "Port 8529\nKnowledge graph queries")
-    Rel(console, embedder, "HTTP", "Port 8000\n/embed")
+    Rel(console, embedder, "HTTP", "Port 30010\n/embed")
     Rel(embedder, vector, "HTTP", "Port 6333\nVector storage")
     Rel(console, graph, "HTTP", "Port 8529\nDirect graph queries")
     Rel(console, vector, "HTTP", "Port 6333\nSemantic search")
@@ -143,7 +143,7 @@ C4Container
 
 ### Drafter (Ollama)
 
-**Port**: 11434  
+**Port**: 11435  
 **Technology**: Ollama, Local LLM
 
 **Responsibilities**:
@@ -272,8 +272,8 @@ All services run in a single Docker network (`${NETWORK_NAME}`, default: `vyasa-
 - `orchestrator` → `cortex-brain` (Port 30000)
 - `orchestrator` → `cortex-worker` (Port 30001)
 - `orchestrator` → `cortex-vision` (Port 30002)
-- `orchestrator` → `drafter` (Port 11434)
-- `console` → `embedder` (Port 80)
+- `orchestrator` → `drafter` (Port 11435)
+- `console` → `embedder` (Port 30010)
 - `embedder` → `vector` (Port 6333)
 - All services → `graph` (ArangoDB, Port 8529)
 - All services → `vector` (Qdrant, Port 6333)

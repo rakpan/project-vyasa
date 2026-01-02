@@ -99,7 +99,7 @@ export function GraphToolbar({
                   size="sm" 
                   variant={use3D ? "default" : "outline"}
                   onClick={onToggle3D}
-                  className={`${use3D ? 'bg-nvidia-green hover:bg-nvidia-green/90 text-white border-nvidia-green' : 'border-border hover:bg-muted/50 text-foreground'} px-3 py-2 gap-2`}
+                  className={`${use3D ? 'bg-primary hover:bg-primary/90 text-white border-primary' : 'border-border hover:bg-muted/50 text-foreground'} px-3 py-2 gap-2`}
                 >
                   <CuboidIcon className="h-4 w-4" />
                   <span className="hidden sm:inline">{use3D ? '2D' : '3D'}</span>
@@ -146,7 +146,7 @@ export function GraphToolbar({
                       variant={layoutType === layout.key ? "default" : "ghost"}
                       className={`h-8 px-2 text-xs ${
                         layoutType === layout.key 
-                          ? "bg-nvidia-green hover:bg-nvidia-green/90 text-white" 
+                          ? "bg-primary hover:bg-primary/90 text-white" 
                           : "hover:bg-muted"
                       }`}
                       onClick={() => onLayoutChange(layout.key as "force" | "hierarchical" | "radial")}
@@ -179,9 +179,9 @@ export function GraphToolbar({
                     htmlFor="stored-triples" 
                     className="text-xs font-medium cursor-pointer flex items-center gap-1"
                   >
-                    <Database className="h-3 w-3 text-nvidia-green" />
+                    <Database className="h-3 w-3 text-primary" />
                     <span className="hidden sm:inline">DB ({storedTriplesCount})</span>
-                    {loadingStoredTriples && <span className="animate-spin text-nvidia-green">⟳</span>}
+                    {loadingStoredTriples && <span className="animate-spin text-primary">⟳</span>}
                   </Label>
                 </div>
               </TooltipTrigger>

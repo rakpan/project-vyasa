@@ -2,18 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Import NVIDIA Build typography patterns with Inter font */
-@import url('../styles/nvidia-build-typography.css');
+/* Import Inter font from Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 :root {
-  --foreground-rgb: 255, 255, 255;
-  --background-rgb: 0, 0, 0;
+  --background: #FFFFFF;
+  --foreground: #0F172A;
+  --muted: #F8FAFC;
+  --primary: #111827;
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: rgb(var(--background-rgb));
+  color: var(--foreground);
+  background: var(--background);
   scroll-behavior: smooth;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+}
+
+/* Blueprint aesthetic - subtle dotted grid background */
+.blueprint-grid {
+  background-image: 
+    radial-gradient(circle, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 0 0;
+}
+
+/* Selection color - subtle navy */
+::selection {
+  background-color: rgb(226, 232, 240); /* slate-200 */
+  color: rgb(15, 23, 42); /* slate-900 */
+}
+
+::-moz-selection {
+  background-color: rgb(226, 232, 240);
+  color: rgb(15, 23, 42);
 }
 
 /* Base page container styles */
@@ -40,15 +62,7 @@ body {
     animation: fadeIn 0.3s ease-in-out;
   }
 
-  /* NVIDIA green utility text color */
-  .text-nvidia-green {
-    color: hsl(var(--nvidia-green));
-  }
-
-  /* Accent color for native form controls (checkbox/radio) */
-  .selection-accent {
-    accent-color: hsl(var(--nvidia-green));
-  }
+  /* Removed NVIDIA green utilities - using clean slate palette */
 
   @keyframes fadeIn {
     from {
@@ -61,15 +75,15 @@ body {
     }
   }
   
-  /* Venture-backed startup modern tab styles */
+  /* Clean slate tab styles */
   .startup-tabs {
-    @apply relative max-w-4xl mx-auto p-1.5 bg-black/5 dark:bg-white/5 
-           backdrop-blur-lg border border-white/10 dark:border-white/5 
-           rounded-full shadow-xl overflow-hidden;
+    @apply relative max-w-4xl mx-auto p-1.5 bg-slate-50 
+           border border-slate-200 
+           rounded-lg shadow-sm overflow-hidden;
   }
   
   .startup-tab-indicator {
-    @apply absolute h-full bg-primary/5 dark:bg-primary/10 rounded-full 
+    @apply absolute h-full bg-slate-200 rounded-lg 
            transition-all duration-300 ease-out;
     margin: 4px;
     height: calc(100% - 8px);
@@ -77,12 +91,12 @@ body {
   
   .startup-tab {
     @apply flex-1 flex items-center justify-center gap-3 py-3 font-medium 
-           z-10 text-sm transition-all duration-200 hover:text-primary/90;
+           z-10 text-sm transition-all duration-200 hover:text-slate-900;
     letter-spacing: 0.01em;
   }
   
   .startup-tab-active {
-    @apply text-primary font-semibold;
+    @apply text-slate-900 font-semibold;
     position: relative;
   }
   
@@ -93,118 +107,53 @@ body {
     left: 25%;
     width: 50%;
     height: 2px;
-    @apply bg-primary rounded-full;
+    @apply bg-slate-600 rounded-full;
   }
   
   .startup-tab-icon {
-    @apply flex items-center justify-center w-8 h-8 rounded-full 
-           bg-gradient-to-br from-primary/20 to-primary/5 text-primary;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+    @apply flex items-center justify-center w-8 h-8 rounded-lg 
+           bg-slate-100 text-slate-700;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   }
   
   .startup-tab-active .startup-tab-icon {
-    @apply from-primary/30 to-primary/15;
+    @apply bg-slate-200 text-slate-900;
     transform: scale(1.05);
   }
 }
 
 @layer base {
   :root {
-    --background: 0 0% 7%;
-    --foreground: 0 0% 98%;
+    /* High-density Light Palette */
+    --background: 255 255 255;
+    --foreground: 15 23 42;
 
-    --card: 0 0% 9%;
-    --card-foreground: 0 0% 98%;
+    --card: 255 255 255;
+    --card-foreground: 15 23 42;
 
-    --popover: 0 0% 7%;
-    --popover-foreground: 0 0% 98%;
+    --popover: 255 255 255;
+    --popover-foreground: 15 23 42;
 
-    /* Use NVIDIA green as the brand primary in dark mode */
-    --primary: 81 100% 36%;
-    --primary-foreground: 0 0% 98%;
+    --primary: 17 24 39; /* #111827 */
+    --primary-foreground: 255 255 255;
 
-    --secondary: 0 0% 12%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: 248 250 252;
+    --secondary-foreground: 15 23 42;
 
-    --muted: 0 0% 12%;
-    --muted-foreground: 0 0% 65%;
+    --muted: 248 250 252;
+    --muted-foreground: 100 116 139;
 
-    --accent: 0 0% 12%;
-    --accent-foreground: 0 0% 98%;
+    --accent: 248 250 252;
+    --accent-foreground: 15 23 42;
 
-    --destructive: 0 62% 30%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: 239 68 68;
+    --destructive-foreground: 255 255 255;
 
-    --border: 0 0% 18%;
-    --input: 0 0% 18%;
-    --ring: 81 100% 36%;
+    --border: 226 232 240;
+    --input: 226 232 240;
+    --ring: 148 163 184;
 
-    --radius: 0.75rem;
-
-    /* Brand Colors */
-    --brand-nvidia: 81 100% 36%;
-    --nvidia-green: 81 100% 36%;
-    --nvidia-green-dark: 81 100% 30%;
-    --nvidia-green-light: 81 100% 42%;
-
-    /* Integrity Colors */
-    --integrity-silver: 0 0% 75%;
-    --integrity-gold: 45 100% 51%;
-    --integrity-platinum: 60 15% 91%;
-  }
-
-  .light {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 9%;
-
-    --card: 0 0% 98%;
-    --card-foreground: 0 0% 9%;
-
-    --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 9%;
-
-    /* Use a more subtle primary in light mode */
-    --primary: 81 60% 45%;
-    --primary-foreground: 0 0% 98%;
-
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 0 0% 9%;
-
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-
-    --accent: 210 40% 96%;
-    --accent-foreground: 0 0% 9%;
-
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 214 32% 80%;
-
-    --radius: 0.75rem;
-
-    /* Brand Colors */
-    --brand-nvidia: 81 100% 36%;
-    --nvidia-green: 81 100% 36%;
-    --nvidia-green-dark: 81 100% 30%;
-    --nvidia-green-light: 81 100% 42%;
-
-    /* Integrity Colors */
-    --integrity-silver: 0 0% 65%;
-    --integrity-gold: 45 100% 48%;
-    --integrity-platinum: 60 15% 85%;
-  }
-
-  .dark {
-    /* Brand Colors */
-    --brand-nvidia: 81 100% 36%;
-
-    /* Integrity Colors */
-    --integrity-silver: 0 0% 75%;
-    --integrity-gold: 45 100% 51%;
-    --integrity-platinum: 60 15% 91%;
+    --radius: 0.5rem;
   }
 }
 
@@ -225,18 +174,14 @@ body {
   transition: all 0.3s ease;
 }
 
-.light .glass-card {
+.glass-card {
   border-color: rgba(0, 0, 0, 0.1);
   box-shadow: 0 6px 14px -6px rgba(0, 0, 0, 0.10);
 }
 
 .glass-card:hover {
-  border-color: rgba(255, 255, 255, 0.15);
-  box-shadow: 0 16px 20px -6px rgba(0, 0, 0, 0.10), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
-}
-
-.light .glass-card:hover {
   border-color: rgba(0, 0, 0, 0.15);
+  box-shadow: 0 10px 18px -8px rgba(0, 0, 0, 0.12);
 }
 
 .glass-card h2 {
@@ -247,46 +192,7 @@ body {
   line-height: 1.6;
 }
 
-.gradient-border {
-  position: relative;
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.gradient-border::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: var(--radius);
-  padding: 1px;
-  background: linear-gradient(
-    to right,
-    hsl(var(--nvidia-green)),
-    hsl(var(--nvidia-green-light)),
-    hsl(var(--nvidia-green-dark))
-  );
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
-.gradient-text {
-  background: linear-gradient(to right, hsl(var(--nvidia-green)), hsl(var(--nvidia-green-light)));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  color: transparent;
-}
-
-.gradient-bg {
-  background: linear-gradient(
-    135deg,
-    hsl(var(--nvidia-green-dark)) 0%,
-    hsl(var(--nvidia-green)) 50%,
-    hsl(var(--nvidia-green-light)) 100%
-  );
-}
+/* Removed NVIDIA green gradient utilities - using clean slate palette */
 
 .hover-lift {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -297,18 +203,7 @@ body {
   box-shadow: 0 8px 18px -6px rgba(0, 0, 0, 0.10), 0 6px 8px -6px rgba(0, 0, 0, 0.08);
 }
 
-.animate-glow {
-  animation: glow 2s ease-in-out infinite alternate;
-}
-
-@keyframes glow {
-  from {
-    box-shadow: 0 0 5px hsl(var(--brand-nvidia) / 0.2), 0 0 10px hsl(var(--brand-nvidia) / 0.1);
-  }
-  to {
-    box-shadow: 0 0 10px hsl(var(--brand-nvidia) / 0.3), 0 0 20px hsl(var(--brand-nvidia) / 0.2);
-  }
-}
+/* Removed NVIDIA green glow animation - using clean slate palette */
 
 /* Modern Table Styles */
 .modern-table {
@@ -331,23 +226,23 @@ body {
   @apply bg-muted/30;
 }
 
-/* Light mode row selection highlight using NVIDIA green */
-.light .row-selected {
-  background-color: hsl(var(--nvidia-green) / 0.08);
+/* Row selection highlight using subtle slate */
+.row-selected {
+  background-color: rgb(241, 245, 249); /* slate-100 */
 }
 
-.light .row-selected:hover {
-  background-color: hsl(var(--nvidia-green) / 0.12);
+.row-selected:hover {
+  background-color: rgb(226, 232, 240); /* slate-200 */
 }
 
-/* Slider Styles */
+/* Slider Styles - Clean Slate */
 .slider-thumb::-webkit-slider-thumb {
   appearance: none;
   height: 18px;
   width: 18px;
   border-radius: 50%;
-  background: hsl(var(--nvidia-green));
-  border: 2px solid hsl(var(--background));
+  background: rgb(15, 23, 42); /* slate-900 */
+  border: 2px solid rgb(255, 255, 255);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -362,8 +257,8 @@ body {
   height: 18px;
   width: 18px;
   border-radius: 50%;
-  background: hsl(var(--nvidia-green));
-  border: 2px solid hsl(var(--background));
+  background: rgb(15, 23, 42); /* slate-900 */
+  border: 2px solid rgb(255, 255, 255);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -410,14 +305,10 @@ body {
   position: relative;
 }
 
-/* Light mode: soften elevation globally to reduce heavy shadows */
-.light .shadow-sm { box-shadow: 0 1px 2px rgba(0,0,0,0.06) !important; }
-.light .shadow, 
-.light .shadow-md { box-shadow: 0 2px 6px rgba(0,0,0,0.08) !important; }
-.light .shadow-lg { box-shadow: 0 6px 14px -6px rgba(0,0,0,0.10) !important; }
-.light .shadow-xl { box-shadow: 0 10px 18px -8px rgba(0,0,0,0.12) !important; }
-.light .shadow-2xl { box-shadow: 0 12px 22px -10px rgba(0,0,0,0.14) !important; }
-
-/* Light mode: tune specific custom elements */
-.light .glass-card:hover { box-shadow: 0 10px 18px -8px rgba(0,0,0,0.12) !important; }
-.light .startup-tab-icon { box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important; }
+/* Clean slate shadows - subtle and professional */
+.shadow-sm { box-shadow: 0 1px 2px rgba(0,0,0,0.06) !important; }
+.shadow, 
+.shadow-md { box-shadow: 0 2px 6px rgba(0,0,0,0.08) !important; }
+.shadow-lg { box-shadow: 0 6px 14px -6px rgba(0,0,0,0.10) !important; }
+.shadow-xl { box-shadow: 0 10px 18px -8px rgba(0,0,0,0.12) !important; }
+.shadow-2xl { box-shadow: 0 12px 22px -10px rgba(0,0,0,0.14) !important; }

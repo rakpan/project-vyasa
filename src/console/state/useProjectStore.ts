@@ -15,6 +15,7 @@ interface ProjectState {
   activeProjectId: string | null;
   activeJobId: string | null;
   activePdfUrl: string | null;
+  activeThreadId: string | null;
   projects: ProjectSummary[];
   activeProject: ProjectConfig | null;
   isLoading: boolean;
@@ -23,9 +24,10 @@ interface ProjectState {
   // Actions
   fetchProjects: () => Promise<void>;
   setActiveProject: (id: string) => Promise<void>;
-  setActiveJobContext: (jobId: string, projectId: string, pdfUrl?: string | null) => void;
+  setActiveJobContext: (jobId: string, projectId: string, pdfUrl?: string | null, threadId?: string | null) => void;
   clearActiveJob: () => void;
   createProject: (payload: ProjectCreate) => Promise<ProjectConfig>;
+  updateRigor: (rigor: "exploratory" | "conservative") => Promise<void>;
   clearActiveProject: () => void;
   clearError: () => void;
 }
@@ -37,6 +39,7 @@ export const useProjectStore = create<ProjectState>()(
       activeProjectId: null,
       activeJobId: null,
       activePdfUrl: null,
+      activeThreadId: null,
       projects: [],
       activeProject: null,
       isLoading: false,
@@ -73,6 +76,19 @@ export const useProjectStore = create<ProjectState>()(
         try {
           const project = await projectService.getProject(id);
           set({ activeProject: project, isLoading: false });
+          // Persist URL with current job/pdf context for deep-link resilience
+          if (typeof window !== "undefined") {
+            const { activeJobId, activePdfUrl, activeThreadId } = get();
+            const params = new URLSearchParams();
+            params.set("projectId", id);
+            if (activeJobId) params.set("jobId", activeJobId);
+            if (activePdfUrl) params.set("pdfUrl", activePdfUrl);
+            if (activeThreadId) params.set("threadId", activeThreadId);
+            const url = `/research-workbench?${params.toString()}`;
+            if (window.location.pathname === "/research-workbench") {
+              window.history.replaceState(null, "", url);
+            }
+          }
         } catch (error) {
           const message = projectService.safeParseError(error);
           set({ 
@@ -118,20 +134,38 @@ export const useProjectStore = create<ProjectState>()(
       },
 
       /**
+       * Update rigor level on the active project and refresh local state.
+       */
+      updateRigor: async (rigor: "exploratory" | "conservative") => {
+        const { activeProjectId } = get();
+        if (!activeProjectId) return;
+        try {
+          const updated = await projectService.updateRigor(activeProjectId, rigor);
+          set({ activeProject: updated });
+        } catch (error) {
+          const message = projectService.safeParseError(error);
+          set({ error: message });
+          console.error('Failed to update rigor level:', error);
+          throw error;
+        }
+      },
+
+      /**
        * Clear the active project (does not clear projects list).
        */
       clearActiveProject: () => {
-        set({ activeProjectId: null, activeProject: null, activeJobId: null, activePdfUrl: null });
+        set({ activeProjectId: null, activeProject: null, activeJobId: null, activePdfUrl: null, activeThreadId: null });
       },
 
       /**
        * Set active job/workbench context.
        */
-      setActiveJobContext: (jobId: string, projectId: string, pdfUrl?: string | null) => {
+      setActiveJobContext: (jobId: string, projectId: string, pdfUrl?: string | null, threadId?: string | null) => {
         set({
           activeJobId: jobId,
           activeProjectId: projectId,
           activePdfUrl: pdfUrl || null,
+          activeThreadId: threadId || jobId,
         });
       },
 
@@ -156,6 +190,7 @@ export const useProjectStore = create<ProjectState>()(
         activeProjectId: state.activeProjectId,
         activeJobId: state.activeJobId,
         activePdfUrl: state.activePdfUrl,
+        activeThreadId: state.activeThreadId,
       }),
       // On rehydrate, fetch the active project if ID exists
       onRehydrateStorage: () => (state) => {

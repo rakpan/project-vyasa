@@ -12,6 +12,9 @@ You are an expert AI Research Engineer building "Project Vyasa," a high-performa
 Use strictly functional names in code and APIs (project, claim, block, patch, guard). Avoid metaphor names for core components.
 
 - **Orchestrator** (`orchestrator` @ :8000): Python + LangGraph. Owns state machines, workflow loops, retries, and tool calls.
+- **The Scout** (`firecrawl` @ :3002): 
+  - **Function:** Retrieval Sidecar (Firecrawl).
+  - **Invariant:** Must be accessed via HTTP only (no SDK imports) to preserve AGPL boundaries. Dumb retrieval only; no reasoning.
 - **Cortex** (`cortex-*` @ :30000+):
   - **The Cartographer** (Worker): High-recall triple/entity extraction.
   - **The Librarian** (Librarian): Chunking and semantic summary generation.
@@ -34,6 +37,8 @@ Organize code into these four domains (folders/modules/services). Do not blur re
 ### B. Knowledge Kernel (Evidence)
 - **Responsibility:** Ingestion & alignment.
 - **Key Object:** `Claim` (claim_text, confidence, evidence_spans, source pointers).
+- **Sources:** - **PDF:** Local upload -> Layout Extraction.
+  - **Web:** Google Discovery -> Firecrawl Scrape (Markdown).
 - **Logic:**
   - Extract broadly (high recall).
   - **Tag** priority (`HIGH`/`LOW`) based on Project RQs.
@@ -74,6 +79,58 @@ Organize code into these four domains (folders/modules/services). Do not blur re
 - **Unified LLM Gateway**: NO direct `requests.post` to SGLang. All inference MUST pass through `llm_client.chat()` to ensure uniform telemetry (duration_ms, tokens, expert_metadata).
 - **Role-Driven Prompts**: System prompts are NOT hardcoded strings. They must be loaded dynamically from the `RoleRegistry` (ArangoDB/defaults.json) at runtime.
 - **Precision Management**: Expert precision is role-specific (e.g., Worker=INT4, Brain=FP8, Logician=FP16) to optimize DGX Spark VRAM.
+
+### Testing Strategy (The "Two Lanes")
+- **Unit Tests (`src/tests/unit`):** - **Rule:** ZERO IO allowed. No DB, no Network, no File System.
+  - **Mechanism:** Must use `mock_*_firewall` fixtures (autouse) from `conftest.py`.
+  - **Patches:** Patch libraries at the **Source** (e.g., `arango.ArangoClient`), never the consumer.
+- **Integration Tests (`src/tests/integration`):**
+  - **Rule:** Real Docker connections allowed.
+  - **Mechanism:** Use `real_stack` fixture. Skips if Docker is down.
+- **Execution:** - Default: `./scripts/run_tests.sh` (Unit only).
+  - CI/Gate: `./scripts/run_tests.sh --integration` (Full stack).
+
+### Test Mocking Protocol (The "Golden Rule")
+
+**The Golden Rule:** Never mock a project file. Always mock the library.
+
+- ❌ **BAD (Brittle):** `@patch('src.orchestrator.nodes.ArangoClient')`
+  - Fails if `nodes.py` changes from `from arango import ArangoClient` to `import arango`
+- ✅ **GOOD (Robust):** `@patch('arango.ArangoClient')`
+  - Works regardless of how the code imports it
+
+**Protocol for Fixing Tests (Analyze First, Act Second):**
+
+1. **Scan Imports:** Before patching, check how the module under test imports the dependency.
+   - Use `grep` or `codebase_search` to find the import statement
+   - Identify the source library (e.g., `arango`, `requests`, `pathlib`)
+
+2. **Check Fixtures:** Do not manually `@patch` a dependency if a global `mock_*_firewall` fixture already exists.
+   - Check `src/tests/unit/conftest.py` for autouse fixtures
+   - Use the fixture instead of manual patches
+
+3. **Verify Scope:** Ensure autouse fixtures are actually active in the test's directory scope.
+   - Unit tests in `src/tests/unit/` automatically inherit firewall fixtures
+   - Integration tests in `src/tests/integration/` use real connections
+
+4. **Use State Fixtures:** Never handwrite state dictionaries.
+   - Always use `base_node_state` fixture from `src/tests/conftest.py`
+   - Extend it with test-specific fields: `state = {**base_node_state, "custom_field": value}`
+
+**When Internal Function Patches Are Acceptable:**
+
+It's acceptable to patch internal functions (`src.orchestrator.*`) if:
+1. They are pure business logic (not I/O wrappers)
+2. The test is specifically testing that function's behavior
+3. There's no library equivalent to patch
+
+**Examples of Acceptable Internal Patches:**
+- `@patch("src.orchestrator.nodes.route_to_expert")` - Business logic function
+- `@patch("src.orchestrator.normalize.normalize_extracted_json")` - Internal transformation
+
+**Examples of Unacceptable Internal Patches:**
+- `@patch("src.orchestrator.server.get_job_record")` - Should use `arango.ArangoClient` mock via firewall
+- `@patch("src.orchestrator.api.knowledge._get_db")` - Should use `arango.ArangoClient` mock via firewall
 
 ### TypeScript (Frontend)
 - **Workbench UX:** Prioritize density and data visibility over marketing gloss.

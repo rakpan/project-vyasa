@@ -55,10 +55,16 @@ def test_saver_failure_propagates_to_job_status(mock_project_service):
         "project_id": "550e8400-e29b-41d4-a716-446655440000",
     }
     
-    # Mock workflow to raise exception (simulating saver failure)
+    # Mock workflow to raise exception during astream_events (simulating saver failure)
     mock_workflow = Mock()
     db_error = Exception("ArangoDB connection failed: Connection refused")
-    mock_workflow.invoke.side_effect = db_error
+    
+    # Create async iterator that raises exception
+    async def failing_astream_events(*args, **kwargs):
+        yield {"event": "on_chain_start", "name": "vision"}  # First event
+        raise db_error  # Raise exception during iteration
+    
+    mock_workflow.astream_events = failing_astream_events
     
     with patch('src.orchestrator.server.get_project_service', return_value=mock_project_service):
         with patch('src.orchestrator.server.workflow_app', mock_workflow):
@@ -92,9 +98,14 @@ def test_saver_failure_includes_error_message(mock_project_service):
     
     error_msg = "ArangoDB write failed: Collection 'claims' not found"
     
-    # Mock workflow to raise exception
+    # Mock workflow to raise exception during astream_events
     mock_workflow = Mock()
-    mock_workflow.invoke.side_effect = Exception(error_msg)
+    
+    async def failing_astream_events(*args, **kwargs):
+        yield {"event": "on_chain_start", "name": "cartographer"}
+        raise Exception(error_msg)
+    
+    mock_workflow.astream_events = failing_astream_events
     
     # Mock job registry to track status updates
     from src.orchestrator.job_manager import _job_registry, _registry_lock
@@ -134,9 +145,14 @@ def test_saver_failure_does_not_silently_succeed(mock_project_service):
         "project_id": "550e8400-e29b-41d4-a716-446655440000",
     }
     
-    # Mock workflow to raise exception
+    # Mock workflow to raise exception during astream_events
     mock_workflow = Mock()
-    mock_workflow.invoke.side_effect = Exception("DB write failed")
+    
+    async def failing_astream_events(*args, **kwargs):
+        yield {"event": "on_node_start", "name": "saver"}
+        raise Exception("DB write failed")
+    
+    mock_workflow.astream_events = failing_astream_events
     
     with patch('src.orchestrator.server.get_project_service', return_value=mock_project_service):
         with patch('src.orchestrator.server.workflow_app', mock_workflow):
@@ -167,8 +183,26 @@ def test_saver_success_sets_result(mock_project_service):
         "critiques": [],
     }
     
+    # Mock workflow to yield events that include final state
     mock_workflow = Mock()
-    mock_workflow.invoke.return_value = workflow_result
+    
+    async def successful_astream_events(*args, **kwargs):
+        # Yield events that simulate workflow execution
+        yield {"event": "on_chain_start", "name": "vision"}
+        yield {"event": "on_node_start", "name": "cartographer"}
+        yield {"event": "on_node_end", "name": "cartographer"}
+        yield {"event": "on_node_start", "name": "critic"}
+        yield {"event": "on_node_end", "name": "critic"}
+        yield {"event": "on_node_start", "name": "saver"}
+        yield {"event": "on_node_end", "name": "saver"}
+        # Final event with state (this is what gets captured as final_state)
+        yield {
+            "event": "on_chain_end",
+            "name": "workflow",
+            "state": workflow_result,
+        }
+    
+    mock_workflow.astream_events = successful_astream_events
     
     with patch('src.orchestrator.server.get_project_service', return_value=mock_project_service):
         with patch('src.orchestrator.server.workflow_app', mock_workflow):

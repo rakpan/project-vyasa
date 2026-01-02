@@ -13,9 +13,6 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from pydantic import ValidationError
-
-from .state import PaperState
 from ..shared.logger import get_logger
 from ..shared.utils import get_utc_now
 from ..shared.config import TELEMETRY_PATH as TELEMETRY_PATH_ENV
@@ -130,20 +127,6 @@ def trace_node(func: Callable) -> Callable:
         error: Optional[str] = None
         try:
             result = func(state, *args, **kwargs)
-            # Validate resulting state; route failures to failure_cleanup
-            try:
-                PaperState.model_validate(result or {})
-            except ValidationError as ve:
-                error = f"state_validation_error: {ve}"
-                result = {
-                    **(state or {}),
-                    **(result or {}),
-                    "error": error,
-                    "force_failure_cleanup": True,
-                    "critic_status": "manual",
-                    # preserve existing revision_count; do not force increment
-                    "revision_count": (result or {}).get("revision_count") or (state or {}).get("revision_count", 0),
-                }
             return result
         except Exception as exc:
             error = str(exc)

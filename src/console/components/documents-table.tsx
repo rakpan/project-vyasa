@@ -31,7 +31,7 @@ import {
 import { Button } from "@/components/ui/button"
 import type { Triple } from "@/utils/text-processing"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { downloadDocument } from "@/lib/utils"
+import { downloadDocument, cn } from "@/lib/utils"
 import { toast } from "@/hooks/use-toast"
 
 export interface DocumentsTableProps {
@@ -141,7 +141,7 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
             <div className="flex flex-col">
               <span className="text-sm font-medium">
                 {selectedDocuments.length > 0 ? (
-                  <span className="text-nvidia-green">{selectedDocuments.length} selected</span>
+                  <span className="text-primary">{selectedDocuments.length} selected</span>
                 ) : (
                   <span className="text-foreground">Select all documents</span>
                 )}
@@ -159,7 +159,7 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
           {selectedDocuments.length > 0 && (
             <button 
               onClick={handleDeleteSelected} 
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-lg transition-colors"
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-red-500/10 hover:bg-red-500/20 text-red-600 rounded-lg transition-colors"
             >
               <Trash2 className="h-4 w-4" />
               <span>Delete Selected ({selectedDocuments.length})</span>
@@ -186,8 +186,8 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
             <tr>
               <td colSpan={showTriplesColumn ? 7 : 6} className="py-16">
                 <div className="flex flex-col items-center justify-center text-center">
-                  <div className="w-24 h-24 rounded-2xl bg-nvidia-green/10 flex items-center justify-center mb-6 border-2 border-dashed border-nvidia-green/20">
-                    <FileText className="h-12 w-12 text-nvidia-green" />
+                  <div className="w-24 h-24 rounded-2xl bg-primary/10 flex items-center justify-center mb-6 border-2 border-dashed border-primary/20">
+                    <FileText className="h-12 w-12 text-primary" />
                   </div>
                   <h3 className="text-xl font-semibold text-foreground mb-3">No documents uploaded yet</h3>
                   <p className="text-sm text-muted-foreground mb-6 max-w-md leading-relaxed">
@@ -202,7 +202,7 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
             </tr>
           ) : (
             documents.map((doc) => (
-               <tr key={doc.id} className={`transition-all duration-200 hover:bg-nvidia-green/5 cursor-pointer group border-b border-border/10 last:border-b-0 ${isSelected(doc.id) ? 'bg-nvidia-green/8 border-l-4 border-l-nvidia-green' : 'hover:border-l-4 hover:border-l-nvidia-green/40'}`}
+               <tr key={doc.id} className={`transition-all duration-200 hover:bg-primary/5 cursor-pointer group border-b border-border/10 last:border-b-0 ${isSelected(doc.id) ? 'bg-primary/8 border-l-4 border-l-primary' : 'hover:border-l-4 hover:border-l-primary/40'}`}
                    onClick={(e) => handleItemClick(doc, e)}>
                 <td className="pl-6 py-4" onClick={(e) => e.stopPropagation()}>
                   <input
@@ -214,7 +214,7 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
                 </td>
                  <td className="py-4">
                   <div className="flex items-center gap-3">
-                    <FileText className="h-4 w-4 text-nvidia-green flex-shrink-0" />
+                    <FileText className="h-4 w-4 text-primary flex-shrink-0" />
                     <span className="text-sm font-medium text-foreground truncate max-w-[200px]" title={doc.name}>{doc.name}</span>
                   </div>
                 </td>
@@ -222,17 +222,17 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
                   <div className="flex items-center gap-2">
                     {getStatusIcon(doc.status)}
                     <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                      doc.status === 'Processed' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
-                      doc.status === 'Processing' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' :
-                      doc.status === 'Error' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' :
-                      'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-400'
+                      doc.status === 'Processed' ? 'bg-green-100 text-green-800 :
+                      doc.status === 'Processing' ? 'bg-yellow-100 text-yellow-800 :
+                      doc.status === 'Error' ? 'bg-red-100 text-red-800 :
+                      'bg-cyan-100 text-cyan-800
                     }`}>{doc.status}</span>
                   </div>
                 </td>
                 <td className="py-4">
                   <div className="flex items-center gap-2">
-                    <CheckCircle className="h-4 w-4 text-nvidia-green" />
-                    <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">{doc.uploadStatus}</span>
+                    <CheckCircle className="h-4 w-4 text-primary" />
+                    <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-green-100 text-green-800">{doc.uploadStatus}</span>
                   </div>
                 </td>
                 <td className="py-4 text-right pr-4">
@@ -242,13 +242,13 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
                   <td className="py-4 text-center">
                     {doc.status === "Processed" && doc.triples ? (
                       <div className="flex items-center justify-center gap-3">
-                        <span className="text-xs font-bold text-nvidia-green bg-nvidia-green/15 px-2.5 py-1 rounded-full">{doc.triples.length}</span>
+                        <span className="text-xs font-bold text-primary bg-primary/15 px-2.5 py-1 rounded-full">{doc.triples.length}</span>
                         <button 
                           onClick={(e) => {
                             e.stopPropagation();
                             openTriplesDialog(doc.id);
                           }}
-                          className="p-2 text-nvidia-green hover:bg-nvidia-green/10 rounded-lg transition-colors"
+                          className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
                           title="View and edit triples"
                         >
                           <Eye className="h-4 w-4" />
@@ -268,7 +268,7 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
                         e.stopPropagation()
                         // Create a simple info modal or tooltip showing document details
                       }}
-                      className="p-2 text-muted-foreground hover:text-nvidia-green hover:bg-nvidia-green/10 rounded-lg transition-colors"
+                      className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors"
                       title="View document info"
                     >
                       <Info className="h-4 w-4" />
@@ -293,7 +293,7 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
                           })
                         }
                       }}
-                      className="p-2 text-muted-foreground hover:text-nvidia-green hover:bg-nvidia-green/10 rounded-lg transition-colors"
+                      className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors"
                       title="Download document"
                     >
                       <Download className="h-4 w-4" />
@@ -340,19 +340,26 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
               </Button>
             </div>
             
-            <div className="border rounded-md overflow-hidden">
+            <div className="border border-slate-200 rounded-md overflow-hidden">
               <table className="w-full">
                 <thead>
-                  <tr className="bg-muted/50 border-b border-border">
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-muted-foreground">Subject</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-muted-foreground">Predicate</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-muted-foreground">Object</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-muted-foreground w-20">Actions</th>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Subject</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Predicate</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Object</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-20">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {editableTriples.map((triple, index) => (
-                    <tr key={index} className="border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors">
+                    <tr 
+                      key={index} 
+                      className={cn(
+                        "border-b border-slate-200 last:border-b-0 transition-colors",
+                        index % 2 === 0 ? "bg-white" : "bg-slate-50/50",
+                        "hover:bg-slate-100/50"
+                      )}
+                    >
                       <td className="px-4 py-2">
                         {editingTripleIndex === index ? (
                           <input

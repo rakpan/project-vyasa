@@ -91,7 +91,7 @@ Login with `CONSOLE_PASSWORD` from `.env`.
 - Check GPU: `nvidia-smi`
 - Check ports: `./scripts/preflight_check.sh`
 - Check logs: `./scripts/run_stack.sh logs [--opik] [service]` or `cd deploy && docker compose logs <service>`
-- **Port conflicts**: The script automatically detects port conflicts (e.g., port 11434 for drafter). If detected, you'll see resolution options
+- **Port conflicts**: The script automatically detects port conflicts (e.g., port 11435 for drafter). If detected, you'll see resolution options
 - **Network issues**: The script automatically creates the `vyasa-net` network when using `--opik`
 
 **Orchestrator fails**:

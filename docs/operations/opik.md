@@ -73,7 +73,7 @@ If Opik is down or misconfigured, Vyasa continues normally (observe-only).
 
 - **Port conflicts**: 
   - The script checks for port conflicts before starting
-  - If port 11434 (drafter) is in use, you'll see a warning with resolution options
+  - If port 11435 (drafter) is in use, you'll see a warning with resolution options
 
 - **Verify ports**: Ports are bound to localhost only (127.0.0.1) for security
 

@@ -31,8 +31,8 @@ ENV HF_HOME="/app/.cache"
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${MODEL_NAME}')"
 
 # Expose the port
-EXPOSE 80
+EXPOSE 30010
 
 # Use Gunicorn for better performance
 # The app will automatically detect and use CUDA if available at runtime
-CMD ["gunicorn", "--bind", "0.0.0.0:80", "--workers", "1", "--threads", "8", "app:app"] 
+CMD ["gunicorn", "--bind", "0.0.0.0:30010", "--workers", "1", "--threads", "8", "app:app"] 

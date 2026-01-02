@@ -96,3 +96,18 @@ export async function getProject(id: string): Promise<ProjectConfig> {
   }
 }
 
+/**
+ * Update project rigor level.
+ */
+export async function updateRigor(id: string, rigor: "exploratory" | "conservative"): Promise<ProjectConfig> {
+  try {
+    return await apiFetch<ProjectConfig>(`${API_BASE}/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rigor_level: rigor }),
+    });
+  } catch (error) {
+    const message = safeParseError(error);
+    throw new ApiError(message, error instanceof ApiError ? error.status : 500, error);
+  }
+}

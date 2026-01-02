@@ -376,12 +376,12 @@ export default function RagPage() {
               <div className="nvidia-build-card">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded-md bg-nvidia-green/15 flex items-center justify-center">
-                      <BarChart2 className="h-3 w-3 text-nvidia-green" />
+                    <div className="w-6 h-6 rounded-md bg-primary/15 flex items-center justify-center">
+                      <BarChart2 className="h-3 w-3 text-primary" />
                     </div>
                     <h3 className="text-base font-semibold text-foreground">Performance Metrics</h3>
                   </div>
-                  <Link href="/rag/metrics" className="text-xs text-nvidia-green hover:text-nvidia-green/80 font-medium underline underline-offset-2">
+                  <Link href="/rag/metrics" className="text-xs text-primary hover:text-primary/80 font-medium underline underline-offset-2">
                     View All
                   </Link>
                 </div>
@@ -434,12 +434,12 @@ export default function RagPage() {
             {llmAnswer && (
               <div className="mt-8 nvidia-build-card">
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="w-6 h-6 rounded-md bg-nvidia-green/15 flex items-center justify-center">
-                    <SearchIcon className="h-3 w-3 text-nvidia-green" />
+                  <div className="w-6 h-6 rounded-md bg-primary/15 flex items-center justify-center">
+                    <SearchIcon className="h-3 w-3 text-primary" />
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">Answer</h3>
                   {currentParams.queryMode && (
-                    <span className="text-xs px-2.5 py-1 rounded-full font-medium bg-nvidia-green/10 text-nvidia-green border border-nvidia-green/20">
+                    <span className="text-xs px-2.5 py-1 rounded-full font-medium bg-primary/10 text-primary border border-primary/20">
                       {currentParams.queryMode === 'pure-rag' ? 'Pure RAG' :
                        currentParams.queryMode === 'vector-search' ? 'GraphRAG' :
                        'Graph Search'}
@@ -491,8 +491,8 @@ export default function RagPage() {
             {results && results.length > 0 && !currentParams.usePureRag && (
               <div className="mt-8 nvidia-build-card">
                 <div className="flex items-center gap-3 mb-6">
-                  <div className="w-6 h-6 rounded-md bg-nvidia-green/15 flex items-center justify-center">
-                    <SearchIcon className="h-3 w-3 text-nvidia-green" />
+                  <div className="w-6 h-6 rounded-md bg-primary/15 flex items-center justify-center">
+                    <SearchIcon className="h-3 w-3 text-primary" />
                   </div>
                   <h3 className="text-lg font-semibold text-foreground">
                     {llmAnswer ? `Retrieved Knowledge (${results.length})` : `Results (${results.length})`}
@@ -523,15 +523,15 @@ export default function RagPage() {
                         // Standard triple display for other modes
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                           <div className="bg-background/60 border border-border/30 p-3 rounded-lg">
-                            <p className="text-xs font-medium text-nvidia-green uppercase tracking-wider mb-1">Subject</p>
+                            <p className="text-xs font-medium text-primary uppercase tracking-wider mb-1">Subject</p>
                             <p className="font-medium break-words text-foreground">{triple.subject}</p>
                           </div>
                           <div className="bg-background/60 border border-border/30 p-3 rounded-lg">
-                            <p className="text-xs font-medium text-nvidia-green uppercase tracking-wider mb-1">Predicate</p>
+                            <p className="text-xs font-medium text-primary uppercase tracking-wider mb-1">Predicate</p>
                             <p className="font-medium break-words text-foreground">{triple.predicate}</p>
                           </div>
                           <div className="bg-background/60 border border-border/30 p-3 rounded-lg">
-                            <p className="text-xs font-medium text-nvidia-green uppercase tracking-wider mb-1">Object</p>
+                            <p className="text-xs font-medium text-primary uppercase tracking-wider mb-1">Object</p>
                             <p className="font-medium break-words text-foreground">{triple.object}</p>
                           </div>
                         </div>
@@ -539,14 +539,14 @@ export default function RagPage() {
                       {triple.confidence && !currentParams.usePureRag && (
                         <div className="mt-3 flex items-center gap-4 text-xs">
                           <div className="flex items-center gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-nvidia-green/60"></div>
+                            <div className="w-2 h-2 rounded-full bg-primary/60"></div>
                             <span className="text-muted-foreground">
                               Confidence: <span className="font-medium text-foreground">{(triple.confidence * 100).toFixed(1)}%</span>
                             </span>
                           </div>
                           {triple.depth !== undefined && (
                             <div className="flex items-center gap-1.5">
-                              <svg className="w-3 h-3 text-nvidia-green/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <svg className="w-3 h-3 text-primary/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                               </svg>
                               <span className="text-muted-foreground">

@@ -43,7 +43,7 @@ interface ProjectJob {
 
 export default function ProjectsPage() {
   const router = useRouter()
-  const { projects, isLoading, error, fetchProjects, createProject } = useProjectStore()
+  const { projects, isLoading, error, fetchProjects, createProject, setActiveJobContext } = useProjectStore()
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [projectJobs, setProjectJobs] = useState<Record<string, ProjectJob | null>>({})
@@ -177,10 +177,12 @@ export default function ProjectsPage() {
     const params = new URLSearchParams({
       jobId: job.job_id,
       projectId: projectId,
+      threadId: job.job_id,
     })
     if (pdfUrl) {
       params.set("pdfUrl", pdfUrl)
     }
+    setActiveJobContext(job.job_id, projectId, pdfUrl || null, job.job_id)
     router.push(`/research-workbench?${params.toString()}`)
   }
 
@@ -379,7 +381,7 @@ export default function ProjectsPage() {
 
       {/* Projects Table */}
       <Card>
-        <CardHeader>
+        <CardHeader variant="section">
           <CardTitle>Projects</CardTitle>
         </CardHeader>
         <CardContent>
@@ -402,12 +404,14 @@ export default function ProjectsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {projects.map((project) => {
+                {projects.map((project, index) => {
                   const latestJob = projectJobs[project.id]
                   return (
                     <TableRow
                       key={project.id}
-                      className="cursor-pointer hover:bg-muted/50"
+                      striped
+                      index={index}
+                      className="cursor-pointer"
                       onClick={() => router.push(`/projects/${project.id}`)}
                     >
                       <TableCell className="font-medium">{project.title}</TableCell>

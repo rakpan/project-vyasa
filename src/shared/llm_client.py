@@ -308,6 +308,22 @@ def chat(
             start = time.monotonic()
             try:
                 def _do_request():
+                    # Guard: url_base must not be None (usually happens when CORTEX_BASE_URL env var isn't mocked in tests)
+                    if url_base is None:
+                        logger.error(
+                            "LLM client configuration error: url_base is None",
+                            extra={
+                                "payload": {
+                                    "error": "CORTEX_BASE_URL environment variable not set or mocked",
+                                    "path": path,
+                                    "model_id": model_id,
+                                }
+                            },
+                        )
+                        raise RuntimeError(
+                            "LLM client configuration error: url_base is None. "
+                            "Ensure CORTEX_BASE_URL environment variable is set or properly mocked in tests."
+                        )
                     resp_inner = requests.post(
                         f"{url_base.rstrip('/')}/v1/chat/completions",
                         json=payload_base if path == "primary" else {**payload_base, "model": model_id},

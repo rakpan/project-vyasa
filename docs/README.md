@@ -10,7 +10,7 @@ Project Vyasa implements the **Fusion Architecture**, a modular system organized
 - **Brain** (Port 30000): High-level reasoning - SGLang + Llama 3.3 70B for routing and validation
 - **Worker** (Port 30001): Structured extraction - SGLang + Qwen 2.5 49B for JSON extraction and tagging
 - **Vision** (Port 30002): Image analysis - SGLang + Qwen 2 VL 72B for figure/table interpretation
-- **Drafter** (Port 11434): The Writer - Ollama for prose generation and summarization
+- **Drafter** (Port 11435): The Writer - Ollama for prose generation and summarization
 - **Graph** (Port 8529): The Knowledge Graph - ArangoDB for storing entities and relationships
 - **Vector** (Port 6333): The Search Index - Qdrant for storing embeddings and enabling semantic search
 - **Embedder** (Port 80): The Vectorizer - Sentence Transformers for converting text to vectors
@@ -24,7 +24,7 @@ Project Vyasa implements the **Fusion Architecture**, a modular system organized
 | **Brain** | 30000 | `cortex-brain` | SGLang + Llama 3.3 (reasoning) |
 | **Worker** | 30001 | `cortex-worker` | SGLang + Qwen 2.5 (extraction) |
 | **Vision** | 30002 | `cortex-vision` | SGLang + Qwen 2 VL (image analysis) |
-| **Drafter** | 11434 | `vyasa-drafter` | Ollama (prose generation) |
+| **Drafter** | 11435 | `drafter` | Ollama (prose generation) |
 | **Graph** | 8529 | `vyasa-graph` | ArangoDB (knowledge graph) |
 | **Vector** | 6333 | `vyasa-qdrant` | Qdrant (vector database) |
 | **Embedder** | 80 | `vyasa-embedder` | Sentence Transformers (embeddings) |
@@ -518,7 +518,7 @@ ArangoDB: http://localhost:8529
 
 ### 📐 [Architecture](./architecture/)
 - **[System Map](./architecture/system-map.md)**: Visual diagrams of data flows and system interactions
-- **[Agent Workflow](./architecture/agent-workflow.md)**: LangGraph state machine documentation
+- **[Agent Orchestration API](./architecture/07-agent-orchestration-api.md)**: LangGraph state machine and API surface
 - **[System Context](./architecture/system-context.md)**: High-level architecture overview
 
 ### 📋 [Decisions](./decisions/)
@@ -526,7 +526,7 @@ ArangoDB: http://localhost:8529
 - **[001: Local Vector DB](./decisions/001-local-vector-db.md)**: Decision to replace Pinecone with local Qdrant
 
 ### 📖 [Runbooks](./runbooks/)
-- **[Getting Started](./runbooks/getting-started.md)**: Step-by-step guide for new developers
+- **[Operator Handbook](./operations/01-operator-handbook.md)**: Step-by-step operations guide
 
 ---
 
@@ -559,6 +559,6 @@ ArangoDB: http://localhost:8529
 
 ## Contributing
 
-See the [Getting Started Guide](./runbooks/getting-started.md) for development setup instructions.
+See the [Operator Handbook](./operations/01-operator-handbook.md) for setup instructions.
 
 For questions or issues, please refer to the architecture documentation or open an issue in the repository.

@@ -139,8 +139,8 @@ export function ConfigureTab() {
       <div className="space-y-8">
         <div className="nvidia-build-card">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-8 h-8 rounded-lg bg-nvidia-green/15 flex items-center justify-center">
-              <Cpu className="h-4 w-4 text-nvidia-green" />
+            <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
+              <Cpu className="h-4 w-4 text-primary" />
             </div>
             <h2 className="text-lg font-semibold text-foreground">Current Configuration</h2>
           </div>
@@ -171,8 +171,8 @@ export function ConfigureTab() {
         
         <div className="nvidia-build-card">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-8 h-8 rounded-lg bg-nvidia-green/15 flex items-center justify-center">
-              <Sparkles className="h-4 w-4 text-nvidia-green" />
+            <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
+              <Sparkles className="h-4 w-4 text-primary" />
             </div>
             <h2 className="text-lg font-semibold text-foreground">Select Triple Extraction Model</h2>
           </div>
@@ -187,8 +187,8 @@ export function ConfigureTab() {
       <div className="space-y-8">
         <div className="nvidia-build-card">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-8 h-8 rounded-lg bg-nvidia-green/15 flex items-center justify-center">
-              <Zap className="h-4 w-4 text-nvidia-green" />
+            <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
+              <Zap className="h-4 w-4 text-primary" />
             </div>
             <h2 className="text-lg font-semibold text-foreground">Process Documents</h2>
           </div>
@@ -211,7 +211,7 @@ function ProcessingSummary() {
       <h3 className="text-sm font-semibold text-foreground mb-3">Documents Ready</h3>
       <div className="flex items-center gap-3 text-sm">
         <div className="w-6 h-6 rounded-md bg-muted/30 flex items-center justify-center">
-          <FileText className="h-4 w-4 text-nvidia-green" />
+          <FileText className="h-4 w-4 text-primary" />
         </div>
         <span className="text-foreground font-medium">
           {docsReadyCount === 1 

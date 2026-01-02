@@ -21,6 +21,7 @@ export interface ProjectConfig {
   target_journal?: string | null;
   seed_files: string[];
   created_at: string; // ISO format timestamp
+  rigor_level?: "exploratory" | "conservative";
 }
 
 export interface ProjectSummary {
@@ -29,4 +30,3 @@ export interface ProjectSummary {
   created_at: string; // ISO format timestamp
   seed_files?: string[]; // Optional, may be included in list response
 }
-

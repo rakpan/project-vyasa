@@ -1,13 +1,29 @@
 """
 Pytest configuration and shared fixtures for Project Vyasa tests.
+
+**Patching Strategy: "Patch the Source, Not the Consumer"**
+
+All mocks in this file follow the principle of patching at the source library/module,
+not at downstream consumers. This prevents AttributeError crashes when modules
+don't expose imported classes/functions as module-level attributes.
+
+Examples:
+- ✅ GOOD: `monkeypatch.setattr('arango.ArangoClient', ...)` - patches the source library
+- ✅ GOOD: `monkeypatch.setattr('requests.get', ...)` - patches the source library
+- ❌ BAD: `monkeypatch.setattr('src.orchestrator.nodes.ArangoClient', ...)` - patches downstream consumer
+- ❌ BAD: `monkeypatch.setattr('src.orchestrator.collectors.sglang_metrics.requests.get', ...)` - patches downstream consumer
+
+Exception: Patching our own functions/constants (e.g., `src.shared.config.get_arango_url`)
+is acceptable because we're patching the source definition, not a consumer.
 """
 
 import json
 import os
 import tempfile
+from datetime import datetime
 from pathlib import Path
-from typing import Generator
-from unittest.mock import Mock, patch
+from typing import Any, Dict, Generator, Optional, Tuple
+from unittest.mock import Mock, MagicMock, patch
 
 import pytest
 from reportlab.lib.pagesizes import letter
@@ -24,6 +40,51 @@ from src.shared.config import (
     MEMORY_URL,
     QDRANT_URL,
 )
+
+
+# Note: Autouse mocking fixtures have been moved to src/tests/unit/conftest.py
+# This file now contains only shared utilities that can be used by both unit and integration tests.
+
+
+# Note: mock_llm_client and mock_arango_db are now provided by src/tests/unit/conftest.py
+# as autouse fixtures. They are available to unit tests automatically.
+# Integration tests should use real_arango and real_qdrant from src/tests/integration/conftest.py
+
+
+@pytest.fixture
+def base_node_state() -> Dict[str, Any]:
+    """Base state dictionary with all standard required fields for node tests.
+    
+    This fixture provides a complete state dictionary that satisfies
+    all common node requirements, preventing KeyError and ValueError crashes.
+    
+    Returns:
+        Dictionary with all standard required fields:
+        - url: Mock source URL
+        - raw_text: Dummy text for extraction
+        - project_id: Test project ID
+        - job_id: Test job ID
+        - jobId: Test job ID (camelCase)
+        - threadId: Test thread ID
+        - manifest: Empty manifest dict
+        - triples: Empty triples list
+        - extracted_json: Empty extracted JSON structure
+        - manuscript_blocks: Empty blocks list
+    """
+    return {
+        "url": "http://mock-source.com",
+        "raw_text": "dummy text for extraction",
+        "project_id": "p1",
+        "job_id": "j1",
+        "jobId": "j1",
+        "threadId": "j1",
+        "manifest": {},
+        "triples": [],
+        "extracted_json": {"triples": []},
+        "manuscript_blocks": [],
+        "critiques": [],
+        "revision_count": 0,
+    }
 
 
 @pytest.fixture
@@ -267,94 +328,5 @@ def mock_cortex(mock_worker):
     return mock_worker
 
 
-@pytest.fixture
-def real_arango():
-    """Fixture for real ArangoDB connection (requires running database).
-    
-    This fixture connects to a real ArangoDB instance using environment
-    variables from deploy/.env. Mark tests using this with @pytest.mark.integration.
-    
-    Yields:
-        ArangoDB database connection object.
-        
-    Raises:
-        pytest.skip: If ArangoDB is not available or credentials are missing.
-        
-    Example:
-        ```python
-        @pytest.mark.integration
-        def test_arango_write(real_arango):
-            db = real_arango
-            # Test code
-        ```
-    """
-    try:
-        from arango import ArangoClient
-        
-        # Get connection details from config (single source of truth)
-        from ..shared.config import get_arango_url, get_arango_password, ARANGODB_DB, ARANGODB_USER
-        
-        url = get_arango_url()
-        db_name = ARANGODB_DB
-        username = ARANGODB_USER
-        password = get_arango_password()
-        
-        if not password:
-            pytest.skip("ArangoDB password not configured (set ARANGO_ROOT_PASSWORD or ARANGODB_PASSWORD)")
-        
-        client = ArangoClient(hosts=url)
-        
-        # Try to connect
-        try:
-            db = client.db(db_name, username=username, password=password)
-            # Test connection with a simple query
-            db.version()
-            yield db
-        except Exception as e:
-            pytest.skip(f"ArangoDB not available: {e}")
-    except ImportError:
-        pytest.skip("python-arango not installed")
-    except Exception as e:
-        pytest.skip(f"ArangoDB connection failed: {e}")
-
-
-@pytest.fixture
-def real_qdrant():
-    """Fixture for real Qdrant connection (requires running database).
-    
-    This fixture connects to a real Qdrant instance using environment
-    variables. Mark tests using this with @pytest.mark.integration.
-    
-    Yields:
-        QdrantClient instance.
-        
-    Raises:
-        pytest.skip: If Qdrant is not available.
-        
-    Example:
-        ```python
-        @pytest.mark.integration
-        def test_qdrant_collection(real_qdrant):
-            client = real_qdrant
-            # Test code
-        ```
-    """
-    try:
-        from qdrant_client import QdrantClient
-        
-        from ..shared.config import get_vector_url
-        
-        url = get_vector_url()
-        api_key = os.getenv("QDRANT_API_KEY", "")
-        
-        try:
-            client = QdrantClient(url=url, api_key=api_key if api_key else None)
-            # Test connection
-            client.get_collections()
-            yield client
-        except Exception as e:
-            pytest.skip(f"Qdrant not available: {e}")
-    except ImportError:
-        pytest.skip("qdrant-client not installed")
-    except Exception as e:
-        pytest.skip(f"Qdrant connection failed: {e}")
+# Note: real_arango and real_qdrant fixtures have been moved to src/tests/integration/conftest.py
+# They are available to integration tests automatically.

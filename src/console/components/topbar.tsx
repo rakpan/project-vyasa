@@ -5,40 +5,106 @@
 "use client"
 
 import Link from "next/link"
-import { Search as SearchIcon } from "lucide-react"
-import { NvidiaIcon } from "@/components/nvidia-icon"
+import { usePathname, useSearchParams } from "next/navigation"
+import { useEffect, useMemo } from "react"
+import { ChevronRight, Home } from "lucide-react"
+import { useProjectStore } from "@/state/useProjectStore"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { InfoModal } from "@/components/info-modal"
-import { SettingsModal } from "@/components/settings-modal"
 import { LogoutButton } from "@/components/logout-button"
-import { SidebarTrigger } from "@/components/ui/sidebar"
+import { cn } from "@/lib/utils"
 
+/**
+ * Breadcrumbs & Header Actions - Persistent global header
+ * Synchronized with URL parameters and project store state
+ * Auto-restores state from URL on page reload
+ */
 export function TopBar() {
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const { activeProject, activeProjectId, activeJobId, setActiveProject, setActiveJobContext } = useProjectStore()
+
+  // Extract URL parameters for auto-restore
+  const urlProjectId = useMemo(() => searchParams.get("projectId") || "", [searchParams])
+  const urlJobId = useMemo(() => searchParams.get("jobId") || "", [searchParams])
+  const urlThreadId = useMemo(() => searchParams.get("threadId") || "", [searchParams])
+  const urlPdfUrl = useMemo(() => searchParams.get("pdfUrl") || "", [searchParams])
+
+  // Auto-restore state from URL parameters on page reload
+  useEffect(() => {
+    if (urlProjectId && urlProjectId !== activeProjectId) {
+      setActiveProject(urlProjectId).catch((error) => {
+        console.error("Failed to restore project from URL:", error)
+      })
+    }
+    if (urlProjectId && urlJobId) {
+      setActiveJobContext(urlJobId, urlProjectId, urlPdfUrl || null, urlThreadId || urlJobId)
+    }
+  }, [urlProjectId, urlJobId, urlThreadId, urlPdfUrl, activeProjectId, setActiveProject, setActiveJobContext])
+
+  // Determine active pane from pathname
+  const activePane = useMemo(() => {
+    if (pathname === "/research-workbench") return "Workbench"
+    if (pathname.includes("/manuscript")) return "Manuscript"
+    if (pathname.match(/^\/projects\/[^/]+$/)) return "Evidence Engine"
+    return null
+  }, [pathname])
+
+  // Build breadcrumbs synchronized with URL and store state
+  const breadcrumbs = useMemo(() => {
+    const crumbs: Array<{ label: string; href?: string }> = [
+      { label: "Projects", href: "/projects" },
+    ]
+
+    // Add project name if available (from store or URL)
+    if (activeProjectId) {
+      const projectName = activeProject?.title || "Project"
+      crumbs.push({
+        label: projectName,
+        href: `/projects/${activeProjectId}`,
+      })
+    }
+
+    // Add active pane if available
+    if (activePane) {
+      crumbs.push({ label: activePane })
+    }
+
+    return crumbs
+  }, [activeProjectId, activeProject, activePane])
+
   return (
-    <header className="border-b border-border/50 backdrop-blur-md dark:bg-background/95 bg-background sticky top-0 z-50 shadow-sm">
-      <div className="container mx-auto px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <SidebarTrigger className="mr-2" />
-          <NvidiaIcon className="h-8 w-8" />
-          <div>
-            <span className="text-xl font-bold gradient-text">Project Vyasa</span>
+    <header className="sticky top-0 z-50 h-12 border-b border-slate-200 bg-white flex items-center justify-between px-4">
+      {/* Breadcrumbs */}
+      <nav className="flex items-center gap-1.5 text-sm text-foreground" aria-label="Breadcrumb">
+        <Link
+          href="/projects"
+          className="flex items-center gap-1 hover:text-muted-foreground transition-colors"
+          aria-label="Projects"
+        >
+          <Home className="h-3.5 w-3.5" />
+        </Link>
+        {breadcrumbs.map((crumb, index) => (
+          <div key={index} className="flex items-center gap-1.5">
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+            {crumb.href ? (
+              <Link
+                href={crumb.href}
+                className="hover:text-muted-foreground transition-colors"
+              >
+                {crumb.label}
+              </Link>
+            ) : (
+              <span className="font-medium" aria-current="page">{crumb.label}</span>
+            )}
           </div>
-        </div>
-        <div className="flex items-center gap-4">
-          <Link
-            href="/rag"
-            className="flex items-center gap-2 text-sm font-medium rounded-lg px-3 py-2 transition-colors border border-brand-nvidia/40 text-brand-nvidia bg-brand-nvidia/10 hover:bg-brand-nvidia/20 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-nvidia/50 dark:bg-brand-nvidia/20 dark:hover:bg-brand-nvidia/30 dark:border-brand-nvidia/50"
-          >
-            <SearchIcon className="h-4 w-4 text-current" />
-            <span>RAG Search</span>
-          </Link>
-          <InfoModal />
-          <SettingsModal />
-          <LogoutButton />
-          <ThemeToggle />
-        </div>
+        ))}
+      </nav>
+
+      {/* Global Actions - Right-aligned */}
+      <div className="flex items-center gap-2">
+        <LogoutButton />
+        <ThemeToggle />
       </div>
     </header>
   )
 }
-

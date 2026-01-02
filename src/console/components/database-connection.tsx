@@ -379,7 +379,7 @@ export function DatabaseConnection({ className }: DatabaseConnectionProps) {
             )}
             
             {graphError && (
-              <div className="text-xs md:text-sm text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400 p-2 rounded">
+              <div className="text-xs md:text-sm text-red-600 bg-red-50 p-2 rounded">
                 <p className="whitespace-normal break-words">Error: {graphError}</p>
               </div>
             )}
@@ -573,7 +573,7 @@ export function DatabaseConnection({ className }: DatabaseConnectionProps) {
             )}
             
             {vectorError && (
-              <div className="text-xs md:text-sm text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400 p-2 rounded">
+              <div className="text-xs md:text-sm text-red-600 bg-red-50 p-2 rounded">
                 <p className="whitespace-normal break-words">Error: {vectorError}</p>
               </div>
             )}

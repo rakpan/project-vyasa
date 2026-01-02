@@ -5,7 +5,6 @@ from datetime import datetime
 import pytest
 
 from src.orchestrator.artifacts.manifest_builder import (
-    build_block_stats,
     build_manifest,
     persist_manifest,
     ARTIFACT_ROOT,

@@ -14,9 +14,9 @@ export function LogoutButton() {
       variant="ghost"
       size="sm"
       onClick={() => signOut({ callbackUrl: "/login" })}
-      className="text-slate-400 hover:text-white"
+      className="h-8 px-3 text-xs text-[#111827] hover:bg-slate-100"
     >
-      <LogOut className="h-4 w-4 mr-2" />
+      <LogOut className="h-3.5 w-3.5 mr-1.5" />
       Logout
     </Button>
   )

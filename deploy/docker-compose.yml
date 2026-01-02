@@ -95,14 +95,14 @@ services:
     cpuset: "0-9"
     shm_size: "16gb"
     ports:
-      - "${PORT_DRAFTER}:11434"
+      - "${PORT_DRAFTER}:11435"
     volumes:
       - /raid/vyasa/ollama:/root/.ollama
     restart: unless-stopped
     networks:
       - ${NETWORK_NAME}
     healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/11434"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/11435"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -168,7 +168,7 @@ services:
       - NEXT_PUBLIC_API_URL=http://localhost:${PORT_BRAIN}/v1
       - CORTEX_SERVICE_URL=http://cortex-brain:30000
       - MEMORY_SERVICE_URL=http://graph:${PORT_MEMORY}
-      - SENTENCE_TRANSFORMER_URL=http://embedder:80
+      - SENTENCE_TRANSFORMER_URL=http://embedder:30010
       - QDRANT_URL=http://vector:${PORT_VECTOR}
       - ARANGODB_DB=${GRAPH_DB_NAME}
       - ARANGODB_USER=${ARANGODB_USER}
@@ -192,7 +192,7 @@ services:
     cpuset: "0-9"
     shm_size: "16gb"
     ports:
-      - "${PORT_EMBEDDER}:80"
+      - "${PORT_EMBEDDER}:30010"
     environment:
       - EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH:-BAAI/bge-large-en-v1.5}
       - HF_TOKEN=${HF_TOKEN}
@@ -206,7 +206,7 @@ services:
     networks:
       - ${NETWORK_NAME}
     healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/80"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/30010"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -232,7 +232,7 @@ services:
       - BRAIN_URL=http://cortex-brain:30000
       - WORKER_URL=http://cortex-worker:30001
       - VISION_URL=http://cortex-vision:30002
-      - DRAFTER_URL=http://drafter:11434
+      - DRAFTER_URL=http://drafter:11435
       - MEMORY_URL=http://graph:${PORT_MEMORY}
       - VECTOR_URL=http://vector:${PORT_VECTOR}
       - ARANGODB_DB=${GRAPH_DB_NAME}

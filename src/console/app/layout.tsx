@@ -24,9 +24,10 @@ import { DocumentProvider } from "@/contexts/document-context"
 import { ClientInitializer } from "@/components/client-init"
 import { Toaster } from "@/components/ui/toaster"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
-import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
-import { AppSidebar } from "@/components/app-sidebar"
+import { NavMain } from "@/components/nav-main"
+import { NavProject } from "@/components/nav-project"
 import { TopBar } from "@/components/topbar"
+import { MainContentArea } from "@/components/main-content-area"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -46,23 +47,30 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={inter.variable}>
-      <body className={inter.className}>
-        <ThemeProvider defaultTheme="dark">
+    <html lang="en" suppressHydrationWarning className={`${inter.variable} light`}>
+      <body className={`${inter.className} blueprint-grid`}>
+        <ThemeProvider defaultTheme="light" forcedTheme="light">
           <ErrorBoundary>
             <DocumentProvider>
               <ClientInitializer />
-              <SidebarProvider>
-                <Suspense fallback={<div className="w-64 bg-sidebar" />}>
-                  <AppSidebar />
+              {/* Dual-Sidebar Navigation System */}
+              <div className="flex h-screen">
+                {/* Global Navigation Rail */}
+                <NavMain />
+                
+                {/* Project Sub-Navigation (conditional) */}
+                <Suspense fallback={null}>
+                  <NavProject />
                 </Suspense>
-                <SidebarInset>
+
+                {/* Main Content Area - Dynamic margin based on nav visibility */}
+                <MainContentArea>
                   <TopBar />
-                  <div className="flex flex-1 flex-col overflow-hidden">
+                  <main className="flex-1 overflow-auto">
                     {children}
-                  </div>
-                </SidebarInset>
-              </SidebarProvider>
+                  </main>
+                </MainContentArea>
+              </div>
               <Toaster />
             </DocumentProvider>
           </ErrorBoundary>

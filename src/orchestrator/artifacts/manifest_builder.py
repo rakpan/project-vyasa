@@ -8,15 +8,18 @@ from typing import Any, Dict, List, Optional
 
 from ...shared.schema import (
     ArtifactManifest,
-    BlockStats,
+    ArtifactMetrics,
+    BlockArtifact,
     TableArtifact,
-    VisualArtifact,
+    FigureArtifact,
 )
 from ...shared.schema import ToneFlag  # re-export for typing
 from ...shared.logger import get_logger
 from ...shared.rigor_config import load_rigor_policy_yaml
 from ..guards.tone_guard import scan_text
 from ..guards.precision_guard import check_table_precision
+from ..guards.precision_contract import validate_table_precision
+from ...shared.schema import PrecisionContract
 from ...shared.utils import get_utc_now, ensure_utc_datetime
 from ...shared.config import get_artifact_root
 
@@ -29,21 +32,7 @@ def _word_count(text: str) -> int:
     return len((text or "").split())
 
 
-def build_block_stats(block: Dict[str, Any]) -> BlockStats:
-    content = block.get("content", "") or ""
-    tone_flags = scan_text(content)
-    return BlockStats(
-        block_id=block.get("block_id", ""),
-        section=block.get("section_title") or block.get("section"),
-        word_count=_word_count(content),
-        citation_count=len(block.get("citation_keys") or []),
-        claims_density=block.get("claims_density"),
-        tone_flags=tone_flags,
-        supported_by=block.get("claim_ids") or block.get("supported_by") or [],
-    )
-
-
-def _gather_tables(state: Dict[str, Any], max_decimals: int) -> List[TableArtifact]:
+def _gather_tables(state: Dict[str, Any], max_decimals: int, rigor: str) -> List[TableArtifact]:
     table_objs: List[Dict[str, Any]] = []
     for key in ("structured_tables", "tables"):
         candidate = state.get(key)
@@ -52,39 +41,54 @@ def _gather_tables(state: Dict[str, Any], max_decimals: int) -> List[TableArtifa
     artifacts: List[TableArtifact] = []
     for idx, table in enumerate(table_objs):
         table_id = table.get("table_id") or f"table_{idx}"
+        rq_id = table.get("rq_id") or "general"
+        source_claim_ids = table.get("source_claim_ids") or table.get("source_triples") or []
         precision_flags = check_table_precision(table, max_decimals_default=max_decimals)
+        contract_dict = table.get("precision_contract") or {
+            "max_decimals": max_decimals,
+            "max_sig_figs": int(table.get("max_sig_figs") or 4),
+            "rounding_rule": table.get("rounding_rule") or "half_up",
+            "consistency_rule": table.get("consistency_rule") or "per_column",
+        }
+        contract = PrecisionContract(**contract_dict)
+        rewritten_table, contract_flags, _warnings = validate_table_precision(table, contract, rigor=rigor)
+        if contract_flags:
+            precision_flags.extend(contract_flags)
+        table = rewritten_table
         artifacts.append(
             TableArtifact(
                 table_id=table_id,
+                rq_id=rq_id,
+                source_claim_ids=source_claim_ids,
                 title=table.get("title"),
-                source_triples=table.get("source_triples") or [],
-                unit_verification=table.get("unit_verification", "unknown"),
-                precision_flags=precision_flags,
+                precision_contract=contract_dict,
+                flags=[f.issue for f in precision_flags] if precision_flags else [],
             )
         )
     return artifacts
 
 
-def _gather_visuals(state: Dict[str, Any]) -> List[VisualArtifact]:
-    visuals: List[VisualArtifact] = []
+def _gather_figures(state: Dict[str, Any]) -> List[FigureArtifact]:
+    figures: List[FigureArtifact] = []
     vision_results = state.get("vision_results") or []
     if isinstance(vision_results, list):
         for idx, item in enumerate(vision_results):
             if not isinstance(item, dict):
                 continue
-            artifact_id = item.get("artifact_id") or f"vision_{idx}"
-            kind = item.get("kind") or "figure"
+            figure_id = item.get("artifact_id") or f"figure_{idx}"
+            rq_id = item.get("rq_id") or "general"
+            source_claim_ids = item.get("source_claim_ids") or []
             caption = item.get("caption")
-            visuals.append(
-                VisualArtifact(
-                    artifact_id=artifact_id,
-                    kind=kind,
-                    source_bbox=item.get("bbox"),
-                    generation_seed=item.get("seed"),
+            figures.append(
+                FigureArtifact(
+                    figure_id=figure_id,
+                    rq_id=rq_id,
+                    source_claim_ids=source_claim_ids,
                     caption=caption,
+                    flags=[],
                 )
             )
-    return visuals
+    return figures
 
 
 def _infer_doc_hash(state: Dict[str, Any]) -> str:
@@ -110,25 +114,88 @@ def build_manifest(
     blocks_raw = state.get("manuscript_blocks")
     if not isinstance(blocks_raw, list):
         blocks_raw = []
-    blocks: List[BlockStats] = []
+    blocks: List[BlockArtifact] = []
+    rq_links: set[str] = set()
+    flags: List[str] = []
     for b in blocks_raw:
-        if isinstance(b, dict):
-            blocks.append(build_block_stats(b))
+        if not isinstance(b, dict):
+            continue
+        rq_id = b.get("rq_id") or "general"
+        content = b.get("content", "") or ""
+        word_count = _word_count(content)
+        claim_ids = b.get("claim_ids") or b.get("supported_by") or []
+        citation_keys = b.get("citation_keys") or []
+        tone_flags = scan_text(content)
+        if rq_id != "general":
+            rq_links.add(rq_id)
+        blocks.append(
+            BlockArtifact(
+                block_id=b.get("block_id", ""),
+                rq_id=rq_id,
+                word_count=word_count,
+                claim_ids=claim_ids,
+                citation_keys=citation_keys,
+                section=b.get("section_title") or b.get("section"),
+                flags=[],
+                tone_flags=tone_flags,
+            )
+        )
 
-    tables = _gather_tables(state, max_decimals=max_decimals)
-    visuals = _gather_visuals(state)
+    tables = _gather_tables(state, max_decimals=max_decimals, rigor=rigor)
+    figures = _gather_figures(state)
 
-    totals = {
-        "words": sum(b.word_count for b in blocks),
-        "citations": sum(b.citation_count for b in blocks),
-        "figures": len(visuals),
-        "tables": len(tables),
-    }
+    total_words = sum(b.word_count for b in blocks)
+    # claims are counted STRICTLY from block.claim_ids only, not from table/figure source_claim_ids
+    # This ensures claim density reflects manuscript evidence, not artifact metadata
+    total_claims = sum(len(b.claim_ids) if isinstance(b.claim_ids, list) else 0 for b in blocks)
+    citation_count = sum(len(b.citation_keys) for b in blocks)
+    claims_per_100_words = total_claims / (total_words / 100.0) if total_words > 0 else 0.0
+    metrics = ArtifactMetrics(
+        total_words=total_words,
+        total_claims=total_claims,
+        claims_per_100_words=claims_per_100_words,
+        citation_count=citation_count,
+    )
 
     project_id = state.get("project_id", "")
     job_id = state.get("job_id", "")
     doc_hash = _infer_doc_hash(state)
     created_at = ensure_utc_datetime(state.get("created_at"))
+
+    # Contract enforcement
+    def _enforce_rq_link(rq_id: str) -> None:
+        nonlocal flags
+        if rq_id == "general" and rigor != "exploratory":
+            raise ValueError("rq_id 'general' is only allowed in exploratory rigor")
+        if not rq_id:
+            raise ValueError("rq_id is required for all artifacts")
+
+    for b in blocks:
+        _enforce_rq_link(b.rq_id)
+        if rigor == "exploratory" and b.rq_id == "general":
+            flags.append(f"block:{b.block_id}:rq_general")
+    for t in tables:
+        _enforce_rq_link(t.rq_id)
+        if not t.source_claim_ids:
+            msg = f"table:{t.table_id} missing source_claim_ids"
+            if rigor == "conservative":
+                raise ValueError(msg)
+            flags.append(msg)
+        if rigor == "exploratory" and t.rq_id == "general":
+            flags.append(f"table:{t.table_id}:rq_general")
+    for f in figures:
+        _enforce_rq_link(f.rq_id)
+        if not f.source_claim_ids:
+            msg = f"figure:{f.figure_id} missing source_claim_ids"
+            if rigor == "conservative":
+                raise ValueError(msg)
+            flags.append(msg)
+        if rigor == "exploratory" and f.rq_id == "general":
+            flags.append(f"figure:{f.figure_id}:rq_general")
+
+    rq_links.update({b.rq_id for b in blocks if b.rq_id})
+    rq_links.update({t.rq_id for t in tables if t.rq_id})
+    rq_links.update({f.rq_id for f in figures if f.rq_id})
 
     return ArtifactManifest(
         project_id=project_id,
@@ -136,10 +203,19 @@ def build_manifest(
         doc_hash=doc_hash,
         created_at=created_at,
         rigor_level=rigor,  # type: ignore[arg-type]
+        rq_links=sorted(rq_links),
         blocks=blocks,
         tables=tables,
-        visuals=visuals,
-        totals=totals,
+        figures=figures,
+        metrics=metrics,
+        flags=flags,
+        totals={
+            "words": metrics.total_words,
+            "claims": metrics.total_claims,
+            "citations": metrics.citation_count,
+            "tables": len(tables),
+            "figures": len(figures),
+        },
     )
 
 
@@ -174,9 +250,10 @@ def persist_manifest(
             {
                 "job_id": manifest.job_id,
                 "project_id": manifest.project_id,
-                "total_words": manifest.totals.get("words", 0),
-                "tone_flag_count": sum(len(b.tone_flags) for b in manifest.blocks),
-                "table_count": manifest.totals.get("tables", 0),
-                "figure_count": manifest.totals.get("figures", 0),
+                "total_words": manifest.metrics.total_words,
+                "total_claims": manifest.metrics.total_claims,
+                "claims_per_100_words": manifest.metrics.claims_per_100_words,
+                "table_count": len(manifest.tables),
+                "figure_count": len(manifest.figures),
             },
         )

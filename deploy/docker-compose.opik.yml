@@ -3,9 +3,13 @@ services:
     image: postgres:15
     restart: unless-stopped
     environment:
-      POSTGRES_USER: opik
-      POSTGRES_PASSWORD: opik
-      POSTGRES_DB: opik
+      # Opik PostgreSQL configuration
+      # OPIK_POSTGRES_USER: Optional, defaults to 'opik' if not set
+      # OPIK_POSTGRES_PASSWORD: Required - set in deploy/.env
+      # OPIK_POSTGRES_DB: Optional, defaults to 'opik' if not set
+      POSTGRES_USER: ${OPIK_POSTGRES_USER:-opik}
+      POSTGRES_PASSWORD: ${OPIK_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${OPIK_POSTGRES_DB:-opik}
     volumes:
       - /raid/vyasa/opik_data/postgres:/var/lib/postgresql/data
     networks:
@@ -31,9 +35,12 @@ services:
       - opik-postgres
       - opik-redis
     environment:
-      DATABASE_URL: postgres://opik:opik@opik-postgres:5432/opik
+      # Opik API configuration
+      # DATABASE_URL: Constructed from OPIK_POSTGRES_* variables
+      # OPIK_SECRET_KEY: Required - set in deploy/.env (use a strong random value)
+      DATABASE_URL: postgres://${OPIK_POSTGRES_USER:-opik}:${OPIK_POSTGRES_PASSWORD}@opik-postgres:5432/${OPIK_POSTGRES_DB:-opik}
       REDIS_URL: redis://opik-redis:6379/0
-      OPIK_SECRET_KEY: changeme-opik
+      OPIK_SECRET_KEY: ${OPIK_SECRET_KEY}
     volumes:
       - /raid/vyasa/opik_data/opik:/var/lib/opik
     networks:

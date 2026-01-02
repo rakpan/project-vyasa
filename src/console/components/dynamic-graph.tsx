@@ -27,7 +27,7 @@ const DynamicGraphVisualization = dynamic(
     ssr: false,
     loading: () => (
       <div className="h-[400px] bg-background rounded-lg flex items-center justify-center">
-        <div className="text-nvidia-green">Loading GPU-accelerated graph visualization...</div>
+        <div className="text-primary">Loading GPU-accelerated graph visualization...</div>
       </div>
     ),
   },

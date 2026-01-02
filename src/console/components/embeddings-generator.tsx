@@ -446,8 +446,8 @@ function EmbeddingsContent({
     <>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div className="w-6 h-6 rounded-md bg-nvidia-green/15 flex items-center justify-center">
-            <Sparkles className="h-3 w-3 text-nvidia-green" />
+          <div className="w-6 h-6 rounded-md bg-primary/15 flex items-center justify-center">
+            <Sparkles className="h-3 w-3 text-primary" />
           </div>
           <h3 className="text-base font-semibold text-foreground">Generate Embeddings</h3>
         </div>
@@ -540,7 +540,7 @@ function EmbeddingsContent({
             />
             <span className="text-sm font-medium">
               {selectedDocs.length > 0 ? (
-            <span className="text-nvidia-green text-xs">{selectedDocs.length} selected</span>
+            <span className="text-primary text-xs">{selectedDocs.length} selected</span>
               ) : (
                 <span className="text-xs">Select all</span>
               )}
@@ -552,7 +552,7 @@ function EmbeddingsContent({
               size="default"
               disabled={isGenerating || selectedDocs.length === 0}
               onClick={generateEmbeddings}
-              className="bg-nvidia-green hover:bg-nvidia-green/90 text-white font-medium px-6 py-2 gap-2"
+              className="bg-primary hover:bg-primary/90 text-white font-medium px-6 py-2 gap-2"
             >
               {isGenerating ? (
                 <>
@@ -821,8 +821,8 @@ function TriplesContent({
   return (
     <>
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-6 h-6 rounded-md bg-nvidia-green/15 flex items-center justify-center">
-          <Zap className="h-3 w-3 text-nvidia-green" />
+        <div className="w-6 h-6 rounded-md bg-primary/15 flex items-center justify-center">
+          <Zap className="h-3 w-3 text-primary" />
         </div>
         <h3 className="text-base font-semibold text-foreground">Knowledge Graph Triple Extraction</h3>
       </div>
@@ -1097,7 +1097,7 @@ function TriplesContent({
               size="default"
               onClick={handleExtractTriples}
               disabled={selectedDocs.length === 0 || isProcessing}
-              className="bg-nvidia-green hover:bg-nvidia-green/90 text-white font-medium px-6 py-2 gap-2"
+              className="bg-primary hover:bg-primary/90 text-white font-medium px-6 py-2 gap-2"
             >
               {isProcessing ? (
                 <>

@@ -658,55 +658,55 @@ class PrecisionFlag(BaseModel):
     """Flag for precision/format issues in tables."""
     table_id: str
     column: str
-    issue: Literal["INCONSISTENT_DECIMALS", "EXCESSIVE_PRECISION"]
+    issue: Literal["INCONSISTENT_DECIMALS", "EXCESSIVE_PRECISION", "SIGFIG_VIOLATION"]
     details: str
+
+
+class PrecisionContract(BaseModel):
+    """Deterministic precision/formatting contract for table artifacts."""
+    max_sig_figs: int
+    max_decimals: int
+    unit_resolution: Optional[float] = None
+    rounding_rule: Literal["half_up", "bankers"] = "half_up"
+    consistency_rule: Literal["per_column"] = "per_column"
+
+
+class BlockArtifact(BaseModel):
+    """Tracked manuscript block with evidence and citation bindings."""
+    block_id: str
+    rq_id: str
+    word_count: int
+    claim_ids: List[str] = Field(default_factory=list)
+    citation_keys: List[str] = Field(default_factory=list)
+    section: Optional[str] = None
+    flags: List[str] = Field(default_factory=list)
+    tone_flags: List[ToneFlag] = Field(default_factory=list)
 
 
 class TableArtifact(BaseModel):
     """Tracked table artifact with precision and provenance metadata."""
     table_id: str
+    rq_id: str
+    source_claim_ids: List[str] = Field(default_factory=list)
     title: Optional[str] = None
-    source_triples: List[str] = Field(default_factory=list, description="Triple IDs that fed this table")
-    unit_verification: Literal["unknown", "passed", "failed"] = "unknown"
-    precision_flags: List[PrecisionFlag] = Field(default_factory=list)
+    precision_contract: Optional[Dict[str, Any]] = None
+    flags: List[str] = Field(default_factory=list)
 
 
-class VisualArtifact(BaseModel):
-    """Tracked visual artifact (figure/diagram/chart) with optional source box."""
-    artifact_id: str
-    kind: Literal["figure", "diagram", "chart", "table_image"]
-    source_bbox: Optional[List[int]] = Field(
-        default=None,
-        description="[x0,y0,x1,y1] in 0..1000 space if bound to source evidence",
-    )
-    generation_seed: Optional[str] = None
+class FigureArtifact(BaseModel):
+    """Tracked figure artifact with provenance metadata."""
+    figure_id: str
+    rq_id: str
+    source_claim_ids: List[str] = Field(default_factory=list)
     caption: Optional[str] = None
-
-    @field_validator("source_bbox")
-    @classmethod
-    def validate_bbox(cls, v):
-        if v is None:
-            return v
-        if len(v) != 4:
-            raise ValueError("source_bbox must have 4 integers")
-        if any(not isinstance(x, (int, float)) for x in v):
-            raise ValueError("source_bbox values must be numeric")
-        if any(x < 0 or x > 1000 for x in v):
-            raise ValueError("source_bbox values must be between 0 and 1000")
-        return v
+    flags: List[str] = Field(default_factory=list)
 
 
-class BlockStats(BaseModel):
-    """Per-block rigor statistics and tone flags."""
-    block_id: str
-    section: Optional[str] = None
-    word_count: int
-    citation_count: int
-    claims_density: Optional[float] = Field(
-        default=None, description="Claims per 100 words (optional)"
-    )
-    tone_flags: List[ToneFlag] = Field(default_factory=list)
-    supported_by: List[str] = Field(default_factory=list, description="Triple IDs supporting this block")
+class ArtifactMetrics(BaseModel):
+    total_words: int = 0
+    total_claims: int = 0
+    claims_per_100_words: float = 0.0
+    citation_count: int = 0
 
 
 class ArtifactManifest(BaseModel):
@@ -716,7 +716,10 @@ class ArtifactManifest(BaseModel):
     doc_hash: str
     created_at: datetime
     rigor_level: Literal["conservative", "exploratory"] = "exploratory"
-    blocks: List[BlockStats] = Field(default_factory=list)
+    rq_links: List[str] = Field(default_factory=list)
+    blocks: List[BlockArtifact] = Field(default_factory=list)
     tables: List[TableArtifact] = Field(default_factory=list)
-    visuals: List[VisualArtifact] = Field(default_factory=list)
-    totals: Dict[str, int] = Field(default_factory=dict, description="Aggregate counts e.g., words/tables/figures/citations")
+    figures: List[FigureArtifact] = Field(default_factory=list)
+    metrics: ArtifactMetrics = Field(default_factory=ArtifactMetrics)
+    flags: List[str] = Field(default_factory=list, description="Warnings or contract violations when non-fatal")
+    totals: Dict[str, int] = Field(default_factory=dict, description="Backward-compatible aggregate counts")

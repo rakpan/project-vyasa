@@ -115,22 +115,43 @@ if [ -f "$PROJECT_ROOT/deploy/.env" ]; then
 fi
 
 # Check critical ports (best effort - may not catch all conflicts)
-PORT_DRAFTER="${PORT_DRAFTER:-11434}"
+PORT_DRAFTER="${PORT_DRAFTER:-11435}"
 if ! check_port_conflict "$PORT_DRAFTER" "drafter"; then
   echo "" >&2
   echo "Resolution options:" >&2
   echo "  1. Stop the conflicting container:" >&2
   echo "     docker stop ollama-compose" >&2
   echo "  2. Or use a different port by setting PORT_DRAFTER in deploy/.env" >&2
-  echo "     Example: PORT_DRAFTER=11435" >&2
+  echo "     Example: PORT_DRAFTER=11436" >&2
   echo "  3. Or remove the conflicting container if not needed:" >&2
   echo "     docker rm -f ollama-compose" >&2
   echo "" >&2
   # Don't exit - let Docker Compose handle the error with a clearer message
 fi
 
-# Ensure network exists if Opik is enabled (Opik compose requires external network)
+# Validate Opik environment variables and setup if Opik is enabled
 if $USE_OPIK; then
+  # Check for required Opik environment variables
+  if [ -z "${OPIK_POSTGRES_PASSWORD:-}" ]; then
+    echo "Error: OPIK_POSTGRES_PASSWORD is required when using --opik flag." >&2
+    echo "       Set it in deploy/.env or deploy/.secrets.env" >&2
+    exit 1
+  fi
+  
+  if [ -z "${OPIK_SECRET_KEY:-}" ]; then
+    echo "Error: OPIK_SECRET_KEY is required when using --opik flag." >&2
+    echo "       Set it in deploy/.env or deploy/.secrets.env" >&2
+    echo "       Use a strong random value (e.g., openssl rand -hex 32)" >&2
+    exit 1
+  fi
+  
+  # Warn if placeholder values are detected
+  if [ "${OPIK_SECRET_KEY:-}" = "changeme-opik" ] || [ "${OPIK_SECRET_KEY:-}" = "changeme" ]; then
+    echo "Warning: OPIK_SECRET_KEY appears to be a placeholder value." >&2
+    echo "         Please set a strong random secret before deploying." >&2
+  fi
+
+  # Ensure network exists (Opik compose requires external network)
   # Load NETWORK_NAME from .env if available, otherwise default to vyasa-net
   if [ -f "$PROJECT_ROOT/deploy/.env" ]; then
     # Source .env to get NETWORK_NAME (if set)

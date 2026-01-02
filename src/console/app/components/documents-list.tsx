@@ -108,19 +108,24 @@ export default function DocumentsList() {
           
           <div>
             <h3 className="text-lg font-semibold mb-2">Triples ({triples.length})</h3>
-            <div className="border rounded-md overflow-hidden">
+            <div className="border border-slate-200 rounded-md overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="bg-muted/50 border-b border-border">
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-muted-foreground">Subject</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-muted-foreground">Predicate</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-muted-foreground">Object</th>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Subject</th>
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Predicate</th>
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Object</th>
                     </tr>
                   </thead>
                   <tbody>
                     {triples.slice(0, 50).map((triple, index) => (
-                      <tr key={index} className="border-t border-border hover:bg-muted/30 transition-colors">
+                      <tr 
+                        key={index} 
+                        className={`border-b border-slate-200 last:border-b-0 transition-colors ${
+                          index % 2 === 0 ? "bg-white" : "bg-slate-50/50"
+                        } hover:bg-slate-100/50`}
+                      >
                         <td className="px-4 py-2 text-sm text-foreground">{triple.subject}</td>
                         <td className="px-4 py-2 text-sm text-foreground">{triple.predicate}</td>
                         <td className="px-4 py-2 text-sm text-foreground">{triple.object}</td>

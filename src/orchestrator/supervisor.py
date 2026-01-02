@@ -80,7 +80,7 @@ class Supervisor:
             arango_user: ArangoDB username.
                         If None, uses ARANGODB_USER from environment/config.
             arango_password: ArangoDB password.
-                            If None, uses ARANGODB_PASSWORD from environment/config.
+                            If None, uses get_arango_password() from environment/config.
         """
         self.cortex_url = cortex_url or CORTEX_URL
         self.drafter_url = drafter_url or DRAFTER_URL
@@ -528,7 +528,7 @@ def create_supervisor(
         arango_user: ArangoDB username.
                     If None, uses ARANGODB_USER from environment/config.
         arango_password: ArangoDB password.
-                        If None, uses ARANGODB_PASSWORD from environment/config.
+                        If None, uses get_arango_password() from environment/config.
         
     Returns:
         Initialized Supervisor instance

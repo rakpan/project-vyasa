@@ -452,10 +452,10 @@ export function TripleViewer() {
             disabled={isStoringToDb || documents.filter(doc => doc.triples && doc.triples.length > 0).length === 0}
             className={`inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-lg transition-all shadow-sm ${
               storeStatus === 'success' 
-                ? 'bg-green-50 border border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400' 
+                ? 'bg-green-50 border border-green-200 text-green-700 
                 : storeStatus === 'error' 
-                  ? 'bg-red-50 border border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400' 
-                  : 'bg-nvidia-green hover:bg-nvidia-green/90 text-white border-nvidia-green hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed'
+                  ? 'bg-red-50 border border-red-200 text-red-700 
+                  : 'bg-primary hover:bg-primary/90 text-white border-primary hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed'
             }`}
           >
             <Database className="h-4 w-4" />
@@ -477,11 +477,11 @@ export function TripleViewer() {
               <h4 className="text-sm font-semibold text-foreground">Document Statistics</h4>
               <div className="flex items-center gap-6 text-sm">
                 <div className="flex items-center gap-2">
-                  <span className="font-bold text-nvidia-green text-base">{selectedDoc.triples?.length || 0}</span>
+                  <span className="font-bold text-primary text-base">{selectedDoc.triples?.length || 0}</span>
                   <span className="text-xs text-muted-foreground font-medium">Triples</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="font-bold text-nvidia-green text-base">{uniqueEntities.length}</span>
+                  <span className="font-bold text-primary text-base">{uniqueEntities.length}</span>
                   <span className="text-xs text-muted-foreground font-medium">Entities</span>
                 </div>
               </div>
@@ -500,7 +500,7 @@ export function TripleViewer() {
                 }`}
               >
                 <div className={`nvidia-build-tab-icon ${viewMode === 'triples' ? 'scale-105' : ''}`}>
-                  <List className="h-3 w-3 text-nvidia-green" />
+                  <List className="h-3 w-3 text-primary" />
                 </div>
                 <span>Triples</span>
               </button>
@@ -513,7 +513,7 @@ export function TripleViewer() {
                 }`}
               >
                 <div className={`nvidia-build-tab-icon ${viewMode === 'entities' ? 'scale-105' : ''}`}>
-                  <Network className="h-3 w-3 text-nvidia-green" />
+                  <Network className="h-3 w-3 text-primary" />
                 </div>
                 <span>Entities</span>
               </button>
@@ -521,7 +521,7 @@ export function TripleViewer() {
             
             {selectedDoc.chunkCount && selectedDoc.chunkCount > 1 && (
               <div className="flex justify-end items-center mt-4">
-                <span className="text-xs px-3 py-1.5 rounded-full bg-nvidia-green/10 text-nvidia-green border border-nvidia-green/20 font-medium">
+                <span className="text-xs px-3 py-1.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-medium">
                   Processed in {selectedDoc.chunkCount} chunks
                 </span>
               </div>
@@ -548,7 +548,7 @@ export function TripleViewer() {
                         setIsAddingTriple(true)
                         setEditingIndex(null)
                       }}
-                      className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-nvidia-green hover:bg-nvidia-green/90 text-white rounded-lg transition-all shadow-sm hover:shadow-md"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-primary hover:bg-primary/90 text-white rounded-lg transition-all shadow-sm hover:shadow-md"
                     >
                       <Plus className="h-4 w-4" />
                       <span>Add Triple</span>
@@ -561,9 +561,9 @@ export function TripleViewer() {
                         disabled={isStoringToDb || !selectedDoc.triples || selectedDoc.triples.length === 0}
                         className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-all shadow-sm ${
                           storeStatus === 'success' 
-                            ? 'bg-green-50 border border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400' 
+                            ? 'bg-green-50 border border-green-200 text-green-700 
                             : storeStatus === 'error' 
-                              ? 'bg-red-50 border border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400' 
+                              ? 'bg-red-50 border border-red-200 text-red-700 
                               : 'bg-background border border-border hover:bg-muted/50 text-foreground hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed'
                         }`}
                       >
@@ -685,7 +685,7 @@ export function TripleViewer() {
                   </p>
                   <button
                     onClick={() => setIsAddingTriple(true)}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-nvidia-green hover:bg-nvidia-green/90 text-white rounded-lg transition-all shadow-sm hover:shadow-md"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-primary hover:bg-primary/90 text-white rounded-lg transition-all shadow-sm hover:shadow-md"
                   >
                     <Plus className="h-4 w-4" />
                     <span>Add First Triple</span>
@@ -710,7 +710,7 @@ export function TripleViewer() {
                   {/* Primary Action - Add Entity */}
                   <button
                     onClick={() => setIsAddingEntity(true)}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-nvidia-green hover:bg-nvidia-green/90 text-white rounded-lg transition-all shadow-sm hover:shadow-md"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-primary hover:bg-primary/90 text-white rounded-lg transition-all shadow-sm hover:shadow-md"
                   >
                     <Plus className="h-4 w-4" />
                     <span>Add Entity</span>
@@ -757,13 +757,13 @@ export function TripleViewer() {
                         type="text"
                         value={newEntityName}
                         onChange={(e) => setNewEntityName(e.target.value)}
-                        className="flex-1 bg-background border border-border rounded-lg p-3 text-sm text-foreground focus:ring-2 focus:ring-nvidia-green/50 focus:border-nvidia-green transition-colors"
+                        className="flex-1 bg-background border border-border rounded-lg p-3 text-sm text-foreground focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
                         placeholder="Enter entity name"
                       />
                       <button 
                         onClick={handleAddEntity}
                         disabled={!newEntityName.trim()}
-                        className="inline-flex items-center gap-2 px-4 py-3 text-sm font-medium bg-nvidia-green hover:bg-nvidia-green/90 text-white rounded-lg transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="inline-flex items-center gap-2 px-4 py-3 text-sm font-medium bg-primary hover:bg-primary/90 text-white rounded-lg transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Plus className="h-4 w-4" />
                         <span>Add</span>

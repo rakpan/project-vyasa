@@ -25,6 +25,7 @@ type Theme = "dark" | "light" | "system"
 type ThemeProviderProps = {
   children: React.ReactNode
   defaultTheme?: Theme
+  forcedTheme?: Theme
   storageKey?: string
 }
 
@@ -42,23 +43,33 @@ const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
 
 export function ThemeProvider({
   children,
-  defaultTheme = "dark",
+  defaultTheme = "light",
+  forcedTheme,
   storageKey = "project-vyasa-theme",
   ...props
 }: ThemeProviderProps) {
-  const [theme, setTheme] = useState<Theme>(defaultTheme)
+  const [theme, setTheme] = useState<Theme>(forcedTheme || defaultTheme)
 
   useEffect(() => {
+    if (forcedTheme) {
+      setTheme(forcedTheme)
+      return
+    }
     const savedTheme = localStorage.getItem(storageKey)
     if (savedTheme) {
       setTheme(savedTheme as Theme)
     }
-  }, [storageKey])
+  }, [forcedTheme, storageKey])
 
   useEffect(() => {
     const root = window.document.documentElement
 
     root.classList.remove("light", "dark")
+
+    if (forcedTheme) {
+      root.classList.add(forcedTheme)
+      return
+    }
 
     if (theme === "system") {
       const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
@@ -67,7 +78,7 @@ export function ThemeProvider({
     }
 
     root.classList.add(theme)
-  }, [theme])
+  }, [theme, forcedTheme])
 
   const value = {
     theme,

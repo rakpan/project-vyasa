@@ -69,12 +69,17 @@ TableFooter.displayName = "TableFooter"
 
 const TableRow = React.forwardRef<
   HTMLTableRowElement,
-  React.HTMLAttributes<HTMLTableRowElement>
->(({ className, ...props }, ref) => (
+  React.HTMLAttributes<HTMLTableRowElement> & {
+    striped?: boolean
+    index?: number
+  }
+>(({ className, striped, index, ...props }, ref) => (
   <tr
     ref={ref}
     className={cn(
-      "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
+      "border-b border-slate-200 transition-colors",
+      striped && index !== undefined && index % 2 === 0 && "bg-slate-50/50",
+      "hover:bg-slate-100/50 data-[state=selected]:bg-slate-100",
       className
     )}
     {...props}
@@ -89,7 +94,7 @@ const TableHead = React.forwardRef<
   <th
     ref={ref}
     className={cn(
-      "h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0",
+      "h-10 px-4 py-2 text-left align-middle text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-slate-50 [&:has([role=checkbox])]:pr-0",
       className
     )}
     {...props}
@@ -103,7 +108,7 @@ const TableCell = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <td
     ref={ref}
-    className={cn("p-4 align-middle [&:has([role=checkbox])]:pr-0", className)}
+    className={cn("px-4 py-2 align-middle text-sm [&:has([role=checkbox])]:pr-0", className)}
     {...props}
   />
 ))

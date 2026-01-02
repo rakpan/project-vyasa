@@ -134,6 +134,16 @@ if not triples_found:
 
 print(f"[OK] Verified triples for project {project_id}")
 
+# 5) Verify reframer interrupt and manifest
+if not result_payload.get("needs_signoff") and not result_payload.get("reframing_proposal_id"):
+    fail("Reframer interrupt not reached (missing needs_signoff/reframing_proposal_id).")
+
+manifest = result_payload.get("manifest") or {}
+if not manifest or not isinstance(manifest, dict):
+    fail("Manifest missing from result payload.")
+if manifest.get("word_count", 0) <= 0 or manifest.get("table_count") is None:
+    fail("Manifest missing word/table counts.")
+
 # Cleanup temporary artifacts (best-effort)
 try:
     db.aql.execute("FOR e IN extractions FILTER e.project_id==@pid REMOVE e IN extractions", bind_vars={"pid": project_id})

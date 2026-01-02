@@ -31,6 +31,6 @@ flowchart LR
 - [01-model-inventory](01-model-inventory.md)
 - [02-model-registry-and-router](02-model-registry-and-router.md)
 - [03-context-packing-and-rag](03-context-packing-and-rag.md)
-- [04-kv-cache-and-long-context](04-kv-cache-and-long-context.md)
-- [05-performance-and-observability](05-performance-and-observability.md)
+- [04-resource-optimization](04-resource-optimization.md)
+- [05-telemetry-and-observability](05-telemetry-and-observability.md)
 - [06-evaluation-and-regression](06-evaluation-and-regression.md)

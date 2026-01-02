@@ -12,6 +12,22 @@ import os
 from typing import Optional
 
 
+def get_checkpoint_saver():
+    """Initialize a shared in-memory checkpoint saver for LangGraph.
+    
+    Returns:
+        InMemorySaver instance shared across graph.compile() calls.
+    
+    Raises:
+        RuntimeError if langgraph is unavailable.
+    """
+    try:
+        from langgraph.checkpoint.memory import InMemorySaver
+        return InMemorySaver()
+    except Exception as exc:
+        raise RuntimeError("LangGraph checkpoint saver unavailable; install langgraph>=0.2.35") from exc
+
+
 def _env(key: str, default: str = "") -> str:
     """Read environment variable with a default.
     
@@ -45,7 +61,7 @@ def get_vector_url() -> str:
 
 def get_embedder_url() -> str:
     """Canonical embedder URL."""
-    return os.getenv("EMBEDDER_URL") or "http://embedder:80"
+    return os.getenv("EMBEDDER_URL") or "http://embedder:30010"
 
 
 def get_orchestrator_url() -> str:
@@ -84,7 +100,7 @@ CORTEX_URL: str = _env("CORTEX_URL", CORTEX_BRAIN_URL)
 CORTEX_SERVICE_URL: str = _env("CORTEX_SERVICE_URL", CORTEX_URL)
 
 # Drafter (Ollama) - Chat & Prose
-DRAFTER_URL: str = _env("DRAFTER_URL", "http://drafter:11434")
+DRAFTER_URL: str = _env("DRAFTER_URL", "http://drafter:11435")
 LEGACY_WORKER_URL: str = _env("LEGACY_WORKER_URL", DRAFTER_URL)  # Optional alias for legacy configs
 
 # Memory (ArangoDB) - Knowledge Graph
@@ -178,10 +194,10 @@ OOB_REQUIRE_SOURCE_URL_FOR_AUTO_PROMOTION: bool = _env("OOB_REQUIRE_SOURCE_URL_F
 # These can be set in docker-compose.yml or .env files:
 #
 # CORTEX_URL=http://cortex-brain:30000
-# DRAFTER_URL=http://drafter:11434
+# DRAFTER_URL=http://drafter:11435
 # MEMORY_URL=http://graph:8529
 # VECTOR_URL=http://vector:6333
-# EMBEDDER_URL=http://embedder:80
+# EMBEDDER_URL=http://embedder:30010
 #
 # ARANGODB_DB=project_vyasa
 # ARANGODB_USER=root

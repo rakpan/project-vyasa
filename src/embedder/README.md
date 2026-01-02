@@ -17,7 +17,7 @@ The Embedder service provides text-to-vector conversion using Sentence Transform
 ### Generate Embeddings
 
 ```bash
-curl -X POST http://embedder:80/embed \
+curl -X POST http://embedder:30010/embed \
   -H "Content-Type: application/json" \
   -d '{
     "texts": ["This is a sample text", "Another text to embed"],
@@ -56,7 +56,7 @@ The service automatically detects CUDA availability:
 ## Integration with Console
 
 The Console service calls this embedder via:
-- Environment variable: `SENTENCE_TRANSFORMER_URL=http://embedder:80`
+- Environment variable: `SENTENCE_TRANSFORMER_URL=http://embedder:30010`
 - Endpoint: `POST /embed` with `{ texts: string[], batch_size?: number }`
 - Response: `{ embeddings: number[][], model: string, processing_time: number }`
 

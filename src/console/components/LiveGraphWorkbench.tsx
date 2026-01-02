@@ -1,7 +1,8 @@
 "use client"
 
 import React, { useEffect, useCallback, useMemo, useState, useRef } from "react"
-import ReactFlow, {
+import {
+  ReactFlow,
   Node,
   Edge,
   Background,
@@ -16,9 +17,9 @@ import ReactFlow, {
   EdgeMouseHandler,
   OnNodesDelete,
   OnEdgesDelete,
-  OnEdgeUpdateFunc,
-} from "reactflow"
-import "reactflow/dist/style.css"
+  OnReconnect,
+} from "@xyflow/react"
+import "@xyflow/react/dist/style.css"
 import dagre from "dagre"
 
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
@@ -32,7 +33,7 @@ import { cn } from "@/lib/utils"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
 import { PdfVerificationView } from "./PdfVerificationView"
 import { useResearchStore } from "@/state/useResearchStore"
-import { useStoreApi } from "reactflow"
+import { useStoreApi } from "@xyflow/react"
 import { MergeAliasDialog } from "./MergeAliasDialog"
 
 interface GraphUpdateEvent {
@@ -90,7 +91,10 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]) {
   dagreGraph.setGraph({ rankdir: "TB", nodesep: 50, ranksep: 100 })
 
   nodes.forEach((node) => {
-    dagreGraph.setNode(node.id, { width: 150, height: 50 })
+    // Use measured dimensions if available (v12), otherwise use explicit width/height or defaults
+    const width = node.measured?.width ?? node.width ?? 150
+    const height = node.measured?.height ?? node.height ?? 50
+    dagreGraph.setNode(node.id, { width, height })
   })
 
   edges.forEach((edge) => {
@@ -101,12 +105,16 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]) {
 
   const layoutedNodes = nodes.map((node) => {
     const nodeWithPosition = dagreGraph.node(node.id)
+    const nodeWidth = node.measured?.width ?? node.width ?? 150
+    const nodeHeight = node.measured?.height ?? node.height ?? 50
     return {
       ...node,
       position: {
-        x: nodeWithPosition.x - 75, // Center the node
-        y: nodeWithPosition.y - 25,
+        x: nodeWithPosition.x - nodeWidth / 2, // Center the node
+        y: nodeWithPosition.y - nodeHeight / 2,
       },
+      width: nodeWidth, // Preserve width for v12 SSR support
+      height: nodeHeight, // Preserve height for v12 SSR support
     }
   })
 
@@ -138,6 +146,8 @@ export function LiveGraphWorkbench({ jobId, orchestratorUrl = "/api/proxy/orches
         is_expert_verified: node?.["is_expert_verified"] ?? false,
       },
       position: { x: 0, y: 0 }, // Will be positioned by layout
+      width: 150, // Explicit width for v12 (required for SSR support)
+      height: 50, // Explicit height for v12 (required for SSR support)
     }))
   }, [])
 
@@ -287,7 +297,7 @@ export function LiveGraphWorkbench({ jobId, orchestratorUrl = "/api/proxy/orches
     [redlineMode, setEdges, syncPatch]
   )
 
-  const onEdgeUpdate: OnEdgeUpdateFunc = useCallback(
+  const onReconnect: OnReconnect = useCallback(
     (oldEdge, newConnection) => {
       if (!redlineMode) return
       setEdges((eds) =>
@@ -378,7 +388,7 @@ export function LiveGraphWorkbench({ jobId, orchestratorUrl = "/api/proxy/orches
         onEdgesChange={onEdgesChange}
         onNodesDelete={onNodesDelete}
         onEdgesDelete={onEdgesDelete}
-        onEdgeUpdate={onEdgeUpdate}
+        onReconnect={onReconnect}
         onConnect={onConnect}
         onNodeClick={onNodeClick}
         onNodeContextMenu={toggleVerifyNode}
@@ -401,6 +411,7 @@ export function LiveGraphWorkbench({ jobId, orchestratorUrl = "/api/proxy/orches
           const showDetails = zoom >= 0.5
           return (
             <style jsx global>{`
+              /* v12: CSS class names maintain react-flow__ prefix for backward compatibility */
               .react-flow__edge-label {
                 display: ${showDetails ? "block" : "none"};
               }
@@ -580,7 +591,10 @@ export function LiveGraphWorkbench({ jobId, orchestratorUrl = "/api/proxy/orches
         <Panel defaultSize={60} minSize={30}>
           {graphPane}
         </Panel>
-        <PanelResizeHandle className="w-1 bg-border" />
+        <PanelResizeHandle 
+          hitAreaMargins={{ coarse: 12, fine: 6 }}
+          className="w-1 bg-border hover:bg-border/60 transition-colors cursor-col-resize"
+        />
         <Panel defaultSize={40} minSize={20}>
           <PdfVerificationView fileUrl={pdfUrl || ""} highlight={selectedEvidence} />
         </Panel>

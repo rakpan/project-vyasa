@@ -149,6 +149,5 @@ If migrating from a single Cortex service:
 ## References
 
 - [System Architecture](./architecture/system-map.md)
-- [Agent Workflow](./architecture/agent-workflow.md)
+- [Agent Orchestration API](./architecture/07-agent-orchestration-api.md)
 - [ADR 001: Local Vector DB](./decisions/001-local-vector-db.md)
-

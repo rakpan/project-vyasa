@@ -1,12 +1,81 @@
-hard_ban:
-  - revolutionary
-  - breakthrough
-  - game-changer
-  - shocking
-  - unprecedented
-soft_ban:
-  - critical
-  - massive
-  - dramatic
-  - significant
-  - substantial
+terms:
+  - word: revolutionary
+    replacement: notable
+    severity: fail
+    category: hype
+  - word: groundbreaking
+    replacement: significant
+    severity: fail
+    category: hype
+  - word: unprecedented
+    replacement: rare
+    severity: fail
+    category: hype
+  - word: game-changing
+    replacement: impactful
+    severity: fail
+    category: hype
+  - word: incredible
+    replacement: substantial
+    severity: fail
+    category: hype
+  - word: astonishing
+    replacement: noteworthy
+    severity: fail
+    category: hype
+  - word: miraculous
+    replacement: unexpected
+    severity: fail
+    category: hype
+  - word: flawless
+    replacement: robust
+    severity: warn
+    category: certainty
+  - word: perfect
+    replacement: strong
+    severity: warn
+    category: certainty
+  - word: obvious
+    replacement: apparent
+    severity: warn
+    category: certainty
+  - word: trivial
+    replacement: straightforward
+    severity: warn
+    category: certainty
+  - word: always
+    replacement: typically
+    severity: warn
+    category: certainty
+  - word: never
+    replacement: rarely
+    severity: warn
+    category: certainty
+  - word: extremely
+    replacement: markedly
+    severity: warn
+    category: intensity
+  - word: highly
+    replacement: strongly
+    severity: warn
+    category: intensity
+  - word: remarkably
+    replacement: notably
+    severity: warn
+    category: intensity
+  - word: urgently
+    replacement: promptly
+    severity: warn
+    category: urgency
+  - word: immediately
+    replacement: promptly
+    severity: warn
+    category: urgency
+  - word: critical
+    replacement: key
+    severity: warn
+    category: urgency
+  - word: catastrophic
+    replacement: severe
+    severity: fail
+    category: urgency

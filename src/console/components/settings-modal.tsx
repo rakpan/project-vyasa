@@ -324,8 +324,8 @@ export function SettingsModal() {
       <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto bg-background border-border">
         <DialogHeader className="pb-6 border-b border-border/10">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 rounded-lg bg-nvidia-green/15 flex items-center justify-center">
-              <Settings className="h-4 w-4 text-nvidia-green" />
+            <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
+              <Settings className="h-4 w-4 text-primary" />
             </div>
             <DialogTitle className="text-xl font-semibold text-foreground">
               Settings
@@ -345,25 +345,25 @@ export function SettingsModal() {
               <SelectContent>
                 <SelectItem value="graph">
                   <div className="flex items-center gap-3">
-                    <Database className="h-4 w-4 text-nvidia-green" />
+                    <Database className="h-4 w-4 text-primary" />
                     <span>Graph Database</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="vectordb">
                   <div className="flex items-center gap-3">
-                    <SearchIcon className="h-4 w-4 text-nvidia-green" />
+                    <SearchIcon className="h-4 w-4 text-primary" />
                     <span>Vector Database</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="embeddings">
                   <div className="flex items-center gap-3">
-                    <Cpu className="h-4 w-4 text-nvidia-green" />
+                    <Cpu className="h-4 w-4 text-primary" />
                     <span>Embeddings</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="models">
                   <div className="flex items-center gap-3">
-                    <Server className="h-4 w-4 text-nvidia-green" />
+                    <Server className="h-4 w-4 text-primary" />
                     <span>Model Management</span>
                   </div>
                 </SelectItem>
@@ -377,7 +377,7 @@ export function SettingsModal() {
               <form onSubmit={saveDbSettings} className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-semibold text-foreground flex items-center gap-2">
-                    <Database className="h-4 w-4 text-nvidia-green" />
+                    <Database className="h-4 w-4 text-primary" />
                     Database Type
                   </label>
                   <select
@@ -457,7 +457,7 @@ export function SettingsModal() {
                 <div className="flex justify-end pt-3 border-t border-border/30">
                   <button 
                     type="submit" 
-                    className="flex items-center gap-2 px-4 py-2 rounded-md bg-nvidia-green hover:bg-nvidia-green/90 text-white transition-colors text-sm font-medium shadow-sm"
+                    className="flex items-center gap-2 px-4 py-2 rounded-md bg-primary hover:bg-primary/90 text-white transition-colors text-sm font-medium shadow-sm"
                   >
                     <Save className="h-4 w-4" />
                     Save Settings
@@ -472,7 +472,7 @@ export function SettingsModal() {
               <form onSubmit={saveVectorDbSettings} className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-semibold text-foreground flex items-center gap-2">
-                    <SearchIcon className="h-4 w-4 text-nvidia-green" />
+                    <SearchIcon className="h-4 w-4 text-primary" />
                     Vector DB Status
                   </label>
                   <p className="text-xs text-muted-foreground">
@@ -543,7 +543,7 @@ export function SettingsModal() {
               <form onSubmit={saveEmbeddingsSettings} className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-semibold text-foreground flex items-center gap-2">
-                    <Cpu className="h-4 w-4 text-nvidia-green" />
+                    <Cpu className="h-4 w-4 text-primary" />
                     Embeddings Provider
                   </label>
                 </div>
@@ -574,9 +574,9 @@ export function SettingsModal() {
                         />
                       </div>
                       
-                      <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 rounded-md p-2">
-                        <p className="text-xs text-amber-800 dark:text-amber-300/90 flex items-start gap-2">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3 mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400">
+                      <div className="bg-amber-50 border border-amber-200 rounded-md p-2">
+                        <p className="text-xs text-amber-800 flex items-start gap-2">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3 mt-0.5 flex-shrink-0 text-amber-600">
                             <path fillRule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" />
                           </svg>
                           NVIDIA API key is configured via environment variables
@@ -605,7 +605,7 @@ export function SettingsModal() {
                 <div className="flex items-center justify-between">
                   <div className="space-y-1">
                     <label className="text-sm font-semibold text-foreground flex items-center gap-2">
-                      <Server className="h-4 w-4 text-nvidia-green" />
+                      <Server className="h-4 w-4 text-primary" />
                       Ollama Model Configuration
                     </label>
                     <p className="text-xs text-muted-foreground">
@@ -634,11 +634,11 @@ export function SettingsModal() {
                 )}
 
                 {ollamaConnectionStatus === 'connected' && (
-                  <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800/50 rounded-lg p-3">
-                    <div className="flex items-center gap-2 text-green-800 dark:text-green-300 text-xs">
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-green-800 text-xs">
                       <Check className="h-3 w-3 flex-shrink-0" />
                       <span className="font-medium">Connected</span>
-                      <span className="text-green-700 dark:text-green-400">
+                      <span className="text-green-700">
                         • {availableOllamaModels.length} model{availableOllamaModels.length !== 1 ? 's' : ''} found
                       </span>
                     </div>

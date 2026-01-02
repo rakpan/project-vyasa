@@ -47,23 +47,23 @@ function LoginContent() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      <div className="w-full max-w-md p-8 space-y-8">
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="w-full max-w-md p-8 space-y-8 bg-muted border border-border rounded-xl shadow-sm">
         <div className="text-center space-y-4">
           <div className="flex justify-center">
-            <div className="p-3 rounded-full bg-nvidia-green/20">
-              <Lock className="h-8 w-8 text-nvidia-green" />
+            <div className="p-3 rounded-full bg-primary/10 text-primary">
+              <Lock className="h-8 w-8 text-primary" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold text-white">Project Vyasa Access</h1>
-          <p className="text-slate-400">
+          <h1 className="text-3xl font-bold text-foreground">Project Vyasa Access</h1>
+          <p className="text-muted-foreground">
             Enter your password to access the research factory console
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
-            <Label htmlFor="password" className="text-slate-300">
+            <Label htmlFor="password" className="text-foreground">
               Password
             </Label>
             <Input
@@ -72,7 +72,7 @@ function LoginContent() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter access password"
-              className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500 focus:border-nvidia-green focus:ring-nvidia-green"
+              className="bg-background border-border text-foreground placeholder:text-muted-foreground focus:border-primary focus:ring-primary"
               required
               disabled={isLoading}
               autoFocus
@@ -87,7 +87,7 @@ function LoginContent() {
 
           <Button
             type="submit"
-            className="w-full bg-nvidia-green hover:bg-nvidia-green/90 text-white"
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
             disabled={isLoading || !password}
           >
             {isLoading ? (
@@ -101,7 +101,7 @@ function LoginContent() {
           </Button>
         </form>
 
-        <div className="text-center text-xs text-slate-500">
+        <div className="text-center text-xs text-muted-foreground">
           <p>Secure access to Project Vyasa research factory</p>
         </div>
       </div>
@@ -120,4 +120,3 @@ export default function LoginPage() {
     </Suspense>
   )
 }
-

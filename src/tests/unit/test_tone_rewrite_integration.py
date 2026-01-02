@@ -1,9 +1,9 @@
 import textwrap
 
+from src.orchestrator import nodes as nodes_module
 from src.orchestrator.nodes import synthesizer_node
 from src.orchestrator.guards import tone_rewrite
 from src.shared import rigor_config
-from src.shared.schema import ToneFlag
 from src.shared.schema import ToneFlag
 
 
@@ -18,6 +18,8 @@ def test_rewrite_not_called_in_exploratory(monkeypatch):
     monkeypatch.setattr(tone_rewrite, "rewrite_to_neutral", fake_rewrite)
     monkeypatch.setattr(rigor_config, "DEPLOY_DIR", rigor_config.DEPLOY_DIR)
     state = {
+        "jobId": "test-job-123",
+        "threadId": "test-thread-123",
         "synthesis": "A revolutionary result.",
         "rigor_level": "exploratory",
     }
@@ -34,14 +36,15 @@ def test_rewrite_called_only_on_hard_and_conservative(monkeypatch, tmp_path):
     tone_cfg.write_text("hard_ban:\n  - revolutionary\n", encoding="utf-8")
     monkeypatch.setattr(rigor_config, "DEPLOY_DIR", tmp_path)
     # Force scan_text to return a hard flag to guarantee rewrite path
-    from src.orchestrator import nodes as nodes_module
     monkeypatch.setattr(nodes_module, "load_rigor_policy_yaml", lambda: {"tone_enforcement": "rewrite"})
     monkeypatch.setattr(
         nodes_module, "scan_text", lambda text: [ToneFlag(word="revolutionary", severity="hard", locations=[0], suggestion=None)]
     )
-    base_fn = nodes_module.synthesizer_node.__wrapped__
-    base_fn.__globals__["scan_text"] = nodes_module.scan_text
-    base_fn.__globals__["load_rigor_policy_yaml"] = nodes_module.load_rigor_policy_yaml
+    # Try to get the unwrapped function if it exists, otherwise use the function directly
+    base_fn = getattr(nodes_module.synthesizer_node, "__wrapped__", nodes_module.synthesizer_node)
+    if hasattr(base_fn, "__globals__"):
+        base_fn.__globals__["scan_text"] = nodes_module.scan_text
+        base_fn.__globals__["load_rigor_policy_yaml"] = nodes_module.load_rigor_policy_yaml
 
     called = {"flag": False}
 
@@ -53,6 +56,8 @@ def test_rewrite_called_only_on_hard_and_conservative(monkeypatch, tmp_path):
     base_fn.__globals__["rewrite_to_neutral"] = nodes_module.rewrite_to_neutral
 
     state = {
+        "jobId": "test-job-123",
+        "threadId": "test-thread-123",
         "synthesis": "A revolutionary result.",
         "rigor_level": "conservative",
     }
@@ -78,9 +83,11 @@ def test_citations_preserved(tmp_path, monkeypatch):
             ToneFlag(word="unprecedented", severity="hard", locations=[30], suggestion=None),
         ],
     )
-    base_fn = nodes_module.synthesizer_node.__wrapped__
-    base_fn.__globals__["scan_text"] = nodes_module.scan_text
-    base_fn.__globals__["load_rigor_policy_yaml"] = nodes_module.load_rigor_policy_yaml
+    # Try to get the unwrapped function if it exists, otherwise use the function directly
+    base_fn = getattr(nodes_module.synthesizer_node, "__wrapped__", nodes_module.synthesizer_node)
+    if hasattr(base_fn, "__globals__"):
+        base_fn.__globals__["scan_text"] = nodes_module.scan_text
+        base_fn.__globals__["load_rigor_policy_yaml"] = nodes_module.load_rigor_policy_yaml
     monkeypatch.setattr(
         nodes_module,
         "rewrite_to_neutral",
@@ -91,7 +98,12 @@ def test_citations_preserved(tmp_path, monkeypatch):
     base_fn.__globals__["rewrite_to_neutral"] = nodes_module.rewrite_to_neutral
 
     text = "A revolutionary idea [Smith2020]. Unprecedented results [1][2]."
-    state = {"synthesis": text, "rigor_level": "conservative"}
+    state = {
+        "jobId": "test-job-123",
+        "threadId": "test-thread-123",
+        "synthesis": text,
+        "rigor_level": "conservative",
+    }
     out = synthesizer_node(state)
     assert "[Smith2020]" in out["synthesis"]
     assert "[1][2]" in out["synthesis"]

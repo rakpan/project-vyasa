@@ -63,6 +63,30 @@ When using `--opik`:
 - Port conflicts are detected before starting services
 - The script waits for Opik services to be ready before completing
 
+### Opik Environment Variables
+
+Opik requires the following environment variables in `deploy/.env`:
+
+**Required:**
+- `OPIK_POSTGRES_PASSWORD` - PostgreSQL password for Opik database (required, no default)
+- `OPIK_SECRET_KEY` - Secret key for Opik API authentication (required, no default). Use a strong random value.
+
+**Optional (with defaults):**
+- `OPIK_POSTGRES_USER` - PostgreSQL user for Opik (default: `opik`)
+- `OPIK_POSTGRES_DB` - PostgreSQL database name for Opik (default: `opik`)
+
+**Example `.env` entries:**
+```bash
+# Opik Configuration
+OPIK_POSTGRES_PASSWORD=your-secure-password-here
+OPIK_SECRET_KEY=your-random-secret-key-here
+# Optional - only set if you want to override defaults
+# OPIK_POSTGRES_USER=opik
+# OPIK_POSTGRES_DB=opik
+```
+
+**Security Note:** Never commit `.env` files to version control. These contain sensitive credentials.
+
 ## Notes
 
 - `.env` is git-ignored. Keep secrets out of the repo.

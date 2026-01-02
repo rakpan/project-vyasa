@@ -46,7 +46,7 @@ type FetchState = {
 }
 
 const GOLD = "var(--gold-verified, #f3d27f)"
-const BRAND = "var(--nvidia-green, #76b900)"
+const BRAND = "var(--primary, #76b900)"
 const PLATINUM = "var(--platinum-canonical, #94a3ff)"
 
 function formatPct(value: number, digits = 1) {

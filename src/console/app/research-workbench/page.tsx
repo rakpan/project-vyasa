@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useEffect, useState, Suspense } from "react"
+import { useMemo, useEffect, useState, Suspense, memo } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
 import { StrategicInterventionPanel } from "@/components/StrategicInterventionPanel"
@@ -17,6 +17,35 @@ import { toast } from "@/hooks/use-toast"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
+import { InterruptPanel } from "@/components/interrupt-panel"
+import { ManifestBar } from "@/components/manifest-bar"
+import { ManuscriptHealthTile } from "@/components/manuscript-health-tile"
+import { EmptyStateWorkbench } from "@/components/empty-state-workbench"
+import { BackendOffline } from "@/components/backend-offline"
+
+/**
+ * Skeleton loader component for panes
+ */
+function PaneSkeleton({ title }: { title: string }) {
+  return (
+    <div className="h-full flex flex-col p-4 space-y-4">
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-32" />
+        <Skeleton className="h-3 w-48" />
+      </div>
+      <div className="flex-1 space-y-3">
+        <Skeleton className="h-20 w-full" />
+        <Skeleton className="h-20 w-full" />
+        <Skeleton className="h-20 w-full" />
+        <Skeleton className="h-20 w-3/4" />
+      </div>
+    </div>
+  )
+}
+
+const MemoZenManuscriptEditor = memo(ZenManuscriptEditor)
+const MemoLiveGraphWorkbench = memo(LiveGraphWorkbench)
 
 /**
  * Zen-First Research Cockpit
@@ -34,11 +63,18 @@ function ResearchWorkbenchContent() {
   const jobId = useMemo(() => params.get("jobId") || "", [params])
   const pdfUrl = useMemo(() => params.get("pdfUrl") || "", [params])
   const projectId = useMemo(() => params.get("projectId") || "", [params])
+  const threadId = useMemo(() => params.get("threadId") || "", [params])
   const [guarded, setGuarded] = useState(false)
   const [jobStatus, setJobStatus] = useState<string>("")
   const [diag, setDiag] = useState<any>(null)
+  const [isLoadingJob, setIsLoadingJob] = useState(true)
   const { focusMode, toggleFocusMode } = useResearchStore()
   const { activeProjectId, setActiveProject, setActiveJobContext } = useProjectStore()
+  const [waitingProposal, setWaitingProposal] = useState<any>(null)
+  const neutralityScore = useMemo(() => {
+    const flags = diag?.tone_flags ?? 0
+    return Math.max(0, 100 - flags * 5)
+  }, [diag])
 
   // Sync projectId from URL with store to ensure correct project context
   useEffect(() => {
@@ -46,9 +82,9 @@ function ResearchWorkbenchContent() {
       setActiveProject(projectId)
     }
     if (projectId && jobId) {
-      setActiveJobContext(jobId, projectId, pdfUrl || null)
+      setActiveJobContext(jobId, projectId, pdfUrl || null, threadId || jobId)
     }
-  }, [projectId, jobId, pdfUrl, activeProjectId, setActiveProject, setActiveJobContext])
+  }, [projectId, jobId, pdfUrl, threadId, activeProjectId, setActiveProject, setActiveJobContext])
 
   const handleRescan = async (coords: any) => {
     try {
@@ -76,6 +112,7 @@ function ResearchWorkbenchContent() {
 
     // Verify job exists via status endpoint
     const verifyJob = async () => {
+      setIsLoadingJob(true)
       try {
         const response = await fetch(
           `/api/proxy/orchestrator/jobs/${jobId}/status?project_id=${encodeURIComponent(projectId)}`
@@ -114,6 +151,8 @@ function ResearchWorkbenchContent() {
         console.error("Error verifying job:", err)
         // On error, allow to proceed (graceful degradation)
         setGuarded(false)
+      } finally {
+        setIsLoadingJob(false)
       }
     }
 
@@ -133,13 +172,13 @@ function ResearchWorkbenchContent() {
         const conflict = result?.conflict_report || {}
         const counts = manifest?.totals || {}
         const toneFlags =
-          Array.isArray(manifest?.blocks) && manifest.blocks.length
-            ? manifest.blocks.reduce((acc: number, b: any) => acc + (Array.isArray(b.tone_flags) ? b.tone_flags.length : 0), 0)
+          Array.isArray(manifest?.flags) && manifest.flags.length
+            ? manifest.flags.filter((f: string) => f.toLowerCase().includes("tone")).length
             : 0
         const precisionFlags =
           Array.isArray(manifest?.tables) && manifest.tables.length
             ? manifest.tables.reduce(
-                (acc: number, t: any) => acc + (Array.isArray(t.precision_flags) ? t.precision_flags.length : 0),
+                (acc: number, t: any) => acc + (Array.isArray(t.flags) ? t.flags.length : 0),
                 0
               )
             : 0
@@ -153,25 +192,71 @@ function ResearchWorkbenchContent() {
           precision_flags: precisionFlags,
           counts,
           critiques: result?.critiques,
+          manifest,
         })
       } catch (e) {
         // ignore
       }
     }
     fetchDiag()
+    const handler = () => fetchDiag()
+    if (typeof window !== "undefined") {
+      window.addEventListener("refresh-manifest", handler)
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("refresh-manifest", handler)
+      }
+    }
+  }, [jobId])
+
+  // Listen for LangGraph interrupts via event stream
+  useEffect(() => {
+    if (!jobId) return
+    const src = new EventSource(`/api/proxy/orchestrator/events/${jobId}`)
+    src.onmessage = (evt) => {
+      try {
+        const payload = JSON.parse(evt.data || "{}")
+        if (payload.type === "event" && payload.event === "on_interrupt" && payload.value) {
+          setWaitingProposal(payload.value)
+        }
+      } catch (err) {
+        console.debug("Failed to parse event payload", err)
+      }
+    }
+    src.onerror = () => {
+      src.close()
+    }
+    return () => {
+      src.close()
+    }
   }, [jobId])
 
   if (guarded) {
     return null
   }
 
+  // Show empty state when no PDF and no job context
+  const showEmptyState = !pdfUrl && !jobId && !isLoadingJob
+  if (showEmptyState) {
+    return <EmptyStateWorkbench />
+  }
+
   const needsSignoff = jobStatus === "NEEDS_SIGNOFF"
   const showDiagnostics =
-    jobStatus === "FAILED" || (diag?.critic_status || "").toLowerCase() === "fail" || diag?.deadlock === True || diag?.deadlock === true
+    jobStatus === "FAILED" || (diag?.critic_status || "").toLowerCase() === "fail" || diag?.deadlock === true
   const opikEnabled = Boolean(diag?.opik_trace_url)
 
   return (
     <div className="h-full w-full flex flex-col bg-background">
+      <InterruptPanel
+        jobId={jobId}
+        projectId={projectId}
+        open={needsSignoff}
+        onClose={() => {
+          setWaitingProposal(null)
+        }}
+      />
       {/* Toolbar with Spark Pulse Mini and Focus Mode Toggle */}
       <div className="flex items-center justify-between px-4 py-2 bg-muted/20 border-b border-border/30 group transition-all duration-200 ease-in-out">
         <div className="flex items-center gap-4">
@@ -235,32 +320,184 @@ function ResearchWorkbenchContent() {
           </div>
         </div>
       ) : (
-        /* Normal Mode: Conditional layout based on pdfUrl */
+        /* Normal Mode: Resizable Workbench with adaptive layout */
         <PanelGroup direction="horizontal" className="flex-1">
           {pdfUrl ? (
-            /* Three-pane layout: 40% Source | 30% Knowledge | 30% Manuscript */
+            /* Three-pane layout: Source/Evidence (Left) | Synthesis/Editor (Center) | Context/Graph (Right) */
             <>
-              <Panel defaultSize={40} minSize={20} className="bg-muted/10 transition-all duration-200 ease-in-out">
-                <ZenSourceVault fileUrl={pdfUrl} onRescan={handleRescan} projectId={projectId} />
+              {/* Pane 1: Source/Evidence (Left) */}
+              <Panel 
+                defaultSize={35} 
+                minSize={15} 
+                maxSize={50}
+                collapsible={true}
+                className="bg-muted/5 border-r border-border/50"
+              >
+                <Suspense fallback={<PaneSkeleton title="Source/Evidence" />}>
+                  <div className="h-full flex flex-col">
+                    <div className="px-3 py-2 border-b border-border/50 bg-muted/30">
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Source/Evidence
+                      </h3>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      {isLoadingJob ? (
+                        <PaneSkeleton title="Loading PDF..." />
+                      ) : (
+                        <ZenSourceVault fileUrl={pdfUrl} onRescan={handleRescan} projectId={projectId} />
+                      )}
+                    </div>
+                  </div>
+                </Suspense>
               </Panel>
-              <PanelResizeHandle className="w-1 bg-muted/40 hover:bg-muted/60 transition-colors duration-200 ease-in-out" />
-              <Panel defaultSize={30} minSize={20} className="bg-muted/10 transition-all duration-200 ease-in-out">
-                <LiveGraphWorkbench jobId={jobId} pdfUrl={pdfUrl} embedSplit={false} />
+              <PanelResizeHandle
+                hitAreaMargins={{ coarse: 12, fine: 6 }}
+                className="w-2 bg-border/30 hover:bg-border/60 transition-colors cursor-col-resize relative group"
+              >
+                <span className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <span className="flex flex-col gap-1">
+                    <span className="h-1 w-[2px] rounded-full bg-border" />
+                    <span className="h-1 w-[2px] rounded-full bg-border" />
+                    <span className="h-1 w-[2px] rounded-full bg-border" />
+                  </span>
+                </span>
+              </PanelResizeHandle>
+              
+              {/* Pane 2: Synthesis/Editor (Center) */}
+              <Panel 
+                defaultSize={40} 
+                minSize={30} 
+                className="bg-background"
+              >
+                <Suspense fallback={<PaneSkeleton title="Synthesis/Editor" />}>
+                  <div className="h-full flex flex-col">
+                    <div className="px-3 py-2 border-b border-border/50 bg-muted/30">
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Synthesis/Editor
+                      </h3>
+                    </div>
+                    <div className="px-3 py-2 border-b border-border/50 space-y-2">
+                      <ManifestBar manifest={diag?.manifest} neutralityScore={neutralityScore} />
+                      <ManuscriptHealthTile
+                        manifest={diag?.manifest}
+                        onRefresh={() => window.dispatchEvent(new Event("refresh-manifest"))}
+                      />
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      {isLoadingJob ? (
+                        <PaneSkeleton title="Loading editor..." />
+                      ) : (
+                        <MemoZenManuscriptEditor key={jobId || "manuscript"} />
+                      )}
+                    </div>
+                  </div>
+                </Suspense>
               </Panel>
-              <PanelResizeHandle className="w-1 bg-muted/40 hover:bg-muted/60 transition-colors duration-200 ease-in-out" />
-              <Panel defaultSize={30} minSize={20} className="bg-background transition-all duration-200 ease-in-out">
-                <ZenManuscriptEditor />
+              <PanelResizeHandle
+                hitAreaMargins={{ coarse: 12, fine: 6 }}
+                className="w-2 bg-border/30 hover:bg-border/60 transition-colors cursor-col-resize relative group"
+              >
+                <span className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <span className="flex flex-col gap-1">
+                    <span className="h-1 w-[2px] rounded-full bg-border" />
+                    <span className="h-1 w-[2px] rounded-full bg-border" />
+                    <span className="h-1 w-[2px] rounded-full bg-border" />
+                  </span>
+                </span>
+              </PanelResizeHandle>
+              
+              {/* Pane 3: Context/Graph (Right) */}
+              <Panel 
+                defaultSize={25} 
+                minSize={15} 
+                maxSize={40}
+                collapsible={true}
+                className="bg-muted/5 border-l border-border/50"
+              >
+                <Suspense fallback={<PaneSkeleton title="Context/Graph" />}>
+                  <div className="h-full flex flex-col">
+                    <div className="px-3 py-2 border-b border-border/50 bg-muted/30">
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Context/Graph
+                      </h3>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      {isLoadingJob ? (
+                        <PaneSkeleton title="Loading knowledge graph..." />
+                      ) : (
+                        <MemoLiveGraphWorkbench key={jobId || "graph"} jobId={jobId} pdfUrl={pdfUrl} embedSplit={false} />
+                      )}
+                    </div>
+                  </div>
+                </Suspense>
               </Panel>
             </>
           ) : (
-            /* Two-pane layout: 50% Knowledge | 50% Manuscript (no PDF panel) */
+            /* Two-pane layout: Synthesis/Editor (Left) | Context/Graph (Right) - Source pane auto-collapsed */
             <>
-              <Panel defaultSize={50} minSize={20} className="bg-muted/10 transition-all duration-200 ease-in-out">
-                <LiveGraphWorkbench jobId={jobId} pdfUrl={pdfUrl} embedSplit={false} />
+              {/* Pane 1: Synthesis/Editor (Left) */}
+              <Panel 
+                defaultSize={55} 
+                minSize={40} 
+                className="bg-background"
+              >
+                <Suspense fallback={<PaneSkeleton title="Synthesis/Editor" />}>
+                  <div className="h-full flex flex-col">
+                    <div className="px-3 py-2 border-b border-border/50 bg-muted/30">
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Synthesis/Editor
+                      </h3>
+                    </div>
+                    <div className="px-3 py-2 border-b border-border/50">
+                      <ManifestBar manifest={diag?.manifest} neutralityScore={neutralityScore} />
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      {isLoadingJob ? (
+                        <PaneSkeleton title="Loading editor..." />
+                      ) : (
+                        <MemoZenManuscriptEditor key={jobId || "manuscript"} />
+                      )}
+                    </div>
+                  </div>
+                </Suspense>
               </Panel>
-              <PanelResizeHandle className="w-1 bg-muted/40 hover:bg-muted/60 transition-colors duration-200 ease-in-out" />
-              <Panel defaultSize={50} minSize={20} className="bg-background transition-all duration-200 ease-in-out">
-                <ZenManuscriptEditor />
+              <PanelResizeHandle
+                hitAreaMargins={{ coarse: 12, fine: 6 }}
+                className="w-2 bg-border/30 hover:bg-border/60 transition-colors cursor-col-resize relative group"
+              >
+                <span className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <span className="flex flex-col gap-1">
+                    <span className="h-1 w-[2px] rounded-full bg-border" />
+                    <span className="h-1 w-[2px] rounded-full bg-border" />
+                    <span className="h-1 w-[2px] rounded-full bg-border" />
+                  </span>
+                </span>
+              </PanelResizeHandle>
+              
+              {/* Pane 2: Context/Graph (Right) */}
+              <Panel 
+                defaultSize={45} 
+                minSize={30} 
+                maxSize={60}
+                collapsible={true}
+                className="bg-muted/5 border-l border-border/50"
+              >
+                <Suspense fallback={<PaneSkeleton title="Context/Graph" />}>
+                  <div className="h-full flex flex-col">
+                    <div className="px-3 py-2 border-b border-border/50 bg-muted/30">
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Context/Graph
+                      </h3>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      {isLoadingJob ? (
+                        <PaneSkeleton title="Loading knowledge graph..." />
+                      ) : (
+                        <MemoLiveGraphWorkbench key={jobId || "graph"} jobId={jobId} pdfUrl={pdfUrl} embedSplit={false} />
+                      )}
+                    </div>
+                  </div>
+                </Suspense>
               </Panel>
             </>
           )}
@@ -332,7 +569,14 @@ function ResearchWorkbenchContent() {
 
 export default function ResearchWorkbenchPage() {
   return (
-    <Suspense fallback={<div className="h-full w-full flex items-center justify-center">Loading...</div>}>
+    <Suspense fallback={
+      <div className="h-full w-full flex items-center justify-center">
+        <div className="space-y-4 text-center">
+          <Skeleton className="h-8 w-48 mx-auto" />
+          <Skeleton className="h-4 w-32 mx-auto" />
+        </div>
+      </div>
+    }>
       <ResearchWorkbenchContent />
     </Suspense>
   )

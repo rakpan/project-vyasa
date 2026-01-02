@@ -130,8 +130,8 @@ export function RagQuery({
     <div className={`nvidia-build-card ${className}`}>
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-nvidia-green/15 flex items-center justify-center">
-            <SearchIcon className="h-4 w-4 text-nvidia-green" />
+          <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
+            <SearchIcon className="h-4 w-4 text-primary" />
           </div>
           <h2 className="text-xl font-semibold text-foreground">RAG Query Engine</h2>
         </div>
@@ -150,21 +150,21 @@ export function RagQuery({
             disabled={!vectorEnabled}
             className={`relative flex flex-col items-center p-3 border rounded-lg transition-all duration-200 hover:shadow-md ${
               queryMode === 'pure-rag' 
-                ? 'border-nvidia-green bg-nvidia-green/10 text-nvidia-green shadow-sm' 
+                ? 'border-primary bg-primary/10 text-primary shadow-sm' 
                 : vectorEnabled 
                   ? 'border-border/40 hover:border-border/60 hover:bg-muted/20' 
                   : 'border-border/30 opacity-50 cursor-not-allowed'
             }`}
           >
-            <div className="w-5 h-5 rounded-md bg-nvidia-green/15 flex items-center justify-center mb-1.5">
-              <Zap className="h-2.5 w-2.5 text-nvidia-green" />
+            <div className="w-5 h-5 rounded-md bg-primary/15 flex items-center justify-center mb-1.5">
+              <Zap className="h-2.5 w-2.5 text-primary" />
             </div>
             <span className="text-sm font-semibold">Pure RAG</span>
             <span className="text-[10px] mt-0.5 text-center text-muted-foreground leading-tight">
               Vector DB + LLM
             </span>
             {queryMode === 'pure-rag' && (
-              <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-nvidia-green rounded-full"></div>
+              <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-primary rounded-full"></div>
             )}
           </button>
 
@@ -173,19 +173,19 @@ export function RagQuery({
             onClick={() => handleQueryModeChange('traditional')}
             className={`relative flex flex-col items-center p-3 border rounded-lg transition-all duration-200 hover:shadow-md ${
               queryMode === 'traditional' 
-                ? 'border-nvidia-green bg-nvidia-green/10 text-nvidia-green shadow-sm' 
+                ? 'border-primary bg-primary/10 text-primary shadow-sm' 
                 : 'border-border/40 hover:border-border/60 hover:bg-muted/20'
             }`}
           >
-            <div className="w-5 h-5 rounded-md bg-nvidia-green/15 flex items-center justify-center mb-1.5">
-              <Database className="h-2.5 w-2.5 text-nvidia-green" />
+            <div className="w-5 h-5 rounded-md bg-primary/15 flex items-center justify-center mb-1.5">
+              <Database className="h-2.5 w-2.5 text-primary" />
             </div>
             <span className="text-sm font-semibold">Graph Search</span>
             <span className="text-[10px] mt-0.5 text-center text-muted-foreground leading-tight">
               Graph DB + LLM
             </span>
             {queryMode === 'traditional' && (
-              <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-nvidia-green rounded-full"></div>
+              <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-primary rounded-full"></div>
             )}
           </button>
           
@@ -233,7 +233,7 @@ export function RagQuery({
               }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="w-full p-3 pl-11 rounded-xl border border-border/60 bg-background text-foreground focus:border-nvidia-green/50 focus:ring-2 focus:ring-nvidia-green/20 transition-colors"
+              className="w-full p-3 pl-11 rounded-xl border border-border/60 bg-background text-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/20 transition-colors"
               disabled={isLoading}
             />
             <SearchIcon className="absolute left-3.5 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -241,7 +241,7 @@ export function RagQuery({
           <button 
             type="submit" 
             disabled={isLoading || !query.trim()} 
-            className="px-6 py-3 bg-nvidia-green text-white hover:bg-nvidia-green/90 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none shadow-sm"
+            className="px-6 py-3 bg-primary text-white hover:bg-primary/90 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none shadow-sm"
           >
             {isLoading ? "Searching..." : "Search"}
           </button>
@@ -288,7 +288,7 @@ export function RagQuery({
                   <div>
                     <div className="flex justify-between items-center mb-2">
                       <label className="text-sm font-medium text-foreground">KNN Neighbors</label>
-                      <span className="text-sm font-semibold text-nvidia-green bg-nvidia-green/10 px-2 py-1 rounded-md">{params.kNeighbors}</span>
+                      <span className="text-sm font-semibold text-primary bg-primary/10 px-2 py-1 rounded-md">{params.kNeighbors}</span>
                     </div>
                     <input
                       type="range"
@@ -304,7 +304,7 @@ export function RagQuery({
                   <div>
                     <div className="flex justify-between items-center mb-2">
                       <label className="text-sm font-medium text-foreground">Fanout</label>
-                      <span className="text-sm font-semibold text-nvidia-green bg-nvidia-green/10 px-2 py-1 rounded-md">{params.fanout}</span>
+                      <span className="text-sm font-semibold text-primary bg-primary/10 px-2 py-1 rounded-md">{params.fanout}</span>
                     </div>
                     <input
                       type="range"
@@ -320,7 +320,7 @@ export function RagQuery({
                   <div>
                     <div className="flex justify-between items-center mb-2">
                       <label className="text-sm font-medium text-foreground">Number of Hops</label>
-                      <span className="text-sm font-semibold text-nvidia-green bg-nvidia-green/10 px-2 py-1 rounded-md">{params.numHops}</span>
+                      <span className="text-sm font-semibold text-primary bg-primary/10 px-2 py-1 rounded-md">{params.numHops}</span>
                     </div>
                     <input
                       type="range"
@@ -338,7 +338,7 @@ export function RagQuery({
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-sm font-medium text-foreground">Top K Results</label>
-                  <span className="text-sm font-semibold text-nvidia-green bg-nvidia-green/10 px-2 py-1 rounded-md">{params.topK}</span>
+                  <span className="text-sm font-semibold text-primary bg-primary/10 px-2 py-1 rounded-md">{params.topK}</span>
                 </div>
                 <input
                   type="range"

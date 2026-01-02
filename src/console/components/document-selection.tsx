@@ -184,7 +184,7 @@ export function DocumentSelection() {
             />
             <span className="text-sm font-medium">
               {selectedDocs.length > 0 ? (
-                <span className="text-nvidia-green text-xs">{selectedDocs.length} selected</span>
+                <span className="text-primary text-xs">{selectedDocs.length} selected</span>
               ) : (
                 <span className="text-xs">Select all</span>
               )}

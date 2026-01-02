@@ -9,17 +9,18 @@ from unittest.mock import Mock
 
 from ...orchestrator import nodes
 from ...orchestrator.nodes import cartographer_node
-from ...orchestrator.state import PaperState
+from ...orchestrator.state import ResearchState
 
 
-def test_cartographer_handles_timeout(monkeypatch):
+def test_cartographer_handles_timeout(monkeypatch, base_node_state):
     """SGLang timeout should result in empty triples (no crash)."""
     def fake_post(*args, **kwargs):
         raise requests.exceptions.Timeout()
 
     monkeypatch.setattr(nodes.requests, "post", fake_post)
 
-    state: PaperState = {"raw_text": "Test text"}
+    # Use base_node_state for required fields
+    state: ResearchState = {**base_node_state, "raw_text": "Test text"}
     result = cartographer_node(state)
 
     assert "extracted_json" in result
@@ -27,7 +28,7 @@ def test_cartographer_handles_timeout(monkeypatch):
     assert result["extracted_json"]["triples"] == []
 
 
-def test_cartographer_handles_garbage_json(monkeypatch):
+def test_cartographer_handles_garbage_json(monkeypatch, base_node_state):
     """Garbage JSON response should be handled gracefully."""
     def fake_post(*args, **kwargs):
         resp = Mock()
@@ -39,7 +40,8 @@ def test_cartographer_handles_garbage_json(monkeypatch):
 
     monkeypatch.setattr(nodes.requests, "post", fake_post)
 
-    state: PaperState = {"raw_text": "Test text"}
+    # Use base_node_state for required fields
+    state: ResearchState = {**base_node_state, "raw_text": "Test text"}
     result = cartographer_node(state)
 
     assert "extracted_json" in result

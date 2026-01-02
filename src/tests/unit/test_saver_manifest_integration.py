@@ -1,4 +1,7 @@
 import types
+from unittest.mock import Mock
+
+import pytest
 
 from src.orchestrator import nodes
 
@@ -11,6 +14,9 @@ class FakeCollection:
 class FakeDB:
     def __init__(self):
         self._collections = {"extractions": FakeCollection(), "manuscript_blocks": FakeCollection()}
+        # Mock aql for version queries
+        self.aql = types.SimpleNamespace()
+        self.aql.execute = lambda query, bind_vars=None: iter([])  # Return empty iterator
 
     def has_collection(self, name):
         return name in self._collections
@@ -31,8 +37,11 @@ class FakeClient:
         return FakeDB()
 
 
-def test_saver_builds_manifest_once(monkeypatch):
+def test_saver_builds_manifest_once(monkeypatch, base_node_state):
+    """Test that saver builds manifest once and persists it."""
     call_count = {"build": 0, "persist": 0, "telemetry": 0}
+
+    # Note: pathlib.Path.mkdir and builtins.open are automatically mocked by the firewall
 
     def fake_build(state, rigor_level=None):
         call_count["build"] += 1
@@ -51,12 +60,19 @@ def test_saver_builds_manifest_once(monkeypatch):
     def fake_emit(event_type, data):
         call_count["telemetry"] += 1
 
-    monkeypatch.setattr(nodes, "ArangoClient", FakeClient)
+    # ArangoClient is already mocked by mock_arango_firewall (autouse fixture)
     monkeypatch.setattr(nodes, "build_manifest", fake_build)
     monkeypatch.setattr(nodes, "persist_manifest", fake_persist)
     monkeypatch.setattr(nodes.telemetry_emitter, "emit_event", fake_emit)
 
-    state = {"project_id": "p1", "job_id": "j1", "extracted_json": {"triples": []}}
+    # Use base_node_state which includes all required fields including manifest
+    state = {
+        **base_node_state,
+        "project_id": "p1",
+        "job_id": "j1",
+        "triples": [{"subject": "A", "predicate": "relates", "object": "B", "confidence": 0.9}],
+        "extracted_json": {"triples": [{"subject": "A", "predicate": "relates", "object": "B", "confidence": 0.9}]},
+    }
     out = nodes.saver_node(state)
     assert "save_receipt" in out
     assert call_count["build"] == 1
@@ -64,8 +80,11 @@ def test_saver_builds_manifest_once(monkeypatch):
     assert call_count["telemetry"] >= 0  # telemetry may not fire in this simplified test
 
 
-def test_saver_emits_failure_on_manifest_error(monkeypatch):
+def test_saver_emits_failure_on_manifest_error(monkeypatch, base_node_state):
+    """Test that saver emits failure event when manifest build fails."""
     call_count = {"fail": 0}
+
+    # Note: pathlib.Path.mkdir and builtins.open are automatically mocked by the firewall
 
     def fake_build(state, rigor_level=None):
         raise RuntimeError("boom")
@@ -74,12 +93,18 @@ def test_saver_emits_failure_on_manifest_error(monkeypatch):
         if event_type == "artifact_manifest_failed":
             call_count["fail"] += 1
 
-    monkeypatch.setattr(nodes, "ArangoClient", FakeClient)
+    # ArangoClient is already mocked by mock_arango_firewall (autouse fixture)
     monkeypatch.setattr(nodes, "build_manifest", fake_build)
     monkeypatch.setattr(nodes, "persist_manifest", lambda *args, **kwargs: None)
     monkeypatch.setattr(nodes.telemetry_emitter, "emit_event", fake_emit)
 
-    state = {"project_id": "p1", "job_id": "j1", "extracted_json": {"triples": []}}
+    # Use base_node_state which includes all required fields
+    state = {
+        **base_node_state,
+        "project_id": "p1",
+        "job_id": "j1",
+        "extracted_json": {"triples": []},
+    }
     out = nodes.saver_node(state)
     assert "save_receipt" in out
     assert call_count["fail"] == 1

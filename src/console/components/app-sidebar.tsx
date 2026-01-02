@@ -7,7 +7,7 @@
 import { useMemo } from "react"
 import Link from "next/link"
 import { usePathname, useSearchParams, useRouter } from "next/navigation"
-import { FileText, Network } from "lucide-react"
+import { FileText, Network, FolderKanban, Activity } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -24,6 +24,7 @@ import { useProjectStore } from "@/state/useProjectStore"
 import { toast } from "@/hooks/use-toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
 
 export function AppSidebar() {
   const pathname = usePathname()
@@ -121,79 +122,131 @@ export function AppSidebar() {
   const currentJobId = workbenchJobId || activeJobId || null
 
   return (
-    <Sidebar>
+    <Sidebar collapsible="icon" className="border-r border-border">
       <SidebarContent>
-        {/* Active Context Indicator */}
-        {(currentProjectId || currentJobId) && (
-          <>
-            <SidebarHeader className="pb-2">
-              <SidebarGroupLabel>Context</SidebarGroupLabel>
-              <div className="space-y-1 px-2 text-xs">
-                {currentProjectName && (
-                  <div className="flex items-center gap-2 text-sidebar-foreground/70">
-                    <FileText className="h-3 w-3" />
-                    <span className="truncate font-medium">{currentProjectName}</span>
-                    <Badge variant="secondary" className="h-5 px-2 animate-pulse">
-                      Active
-                    </Badge>
-                  </div>
-                )}
-                {currentJobId && (
-                  <div className="flex items-center gap-2 text-sidebar-foreground/60">
-                    <Network className="h-3 w-3" />
-                    <span className="truncate font-mono text-[10px]">
-                      Job: {currentJobId.substring(0, 8)}...
-                    </span>
-                  </div>
-                )}
-              </div>
-            </SidebarHeader>
-            <SidebarSeparator />
-          </>
-        )}
-
-        {/* Navigation Items */}
-        <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {navigationItems.map((item, index) => {
-                  const baseHref = item.href.split("?")[0]
-                  const isActive = pathname === baseHref || pathname?.startsWith(baseHref + "/")
-
-                  return (
-                    <SidebarMenuItem key={`${item.href}-${index}`}>
-                      {"onClick" in item ? (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <SidebarMenuButton
-                                onClick={item.onClick}
-                                isActive={pathname === "/research-workbench"}
-                                className="cursor-not-allowed opacity-60"
-                                aria-disabled
-                              >
-                                <item.icon />
-                                <span>{item.title}</span>
-                              </SidebarMenuButton>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              Select a project/job to open workbench.
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : (
-                        <SidebarMenuButton asChild isActive={isActive}>
-                          <Link href={item.href}>
-                            <item.icon />
-                            <span>{item.title}</span>
-                          </Link>
-                        </SidebarMenuButton>
+        {/* Active Project Context - High Density */}
+        <SidebarHeader className="px-2 py-1.5">
+          <SidebarGroupLabel className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground group-data-[collapsible=icon]:hidden">
+            Active Project
+          </SidebarGroupLabel>
+          {currentProjectName ? (
+            <div className="mt-1 space-y-0.5">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded group-data-[collapsible=icon]:justify-center">
+                      <FolderKanban className="h-3.5 w-3.5 text-foreground/70 shrink-0" />
+                      <span className="text-[12px] font-medium text-foreground truncate group-data-[collapsible=icon]:hidden">
+                        {currentProjectName}
+                      </span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="group-data-[collapsible=icon]:block hidden">
+                    <div className="text-xs">
+                      <div className="font-semibold">{currentProjectName}</div>
+                      {currentJobId && (
+                        <div className="text-muted-foreground mt-0.5">
+                          Job: {currentJobId.substring(0, 8)}...
+                        </div>
                       )}
-                    </SidebarMenuItem>
-                  )
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              {currentJobId && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded group-data-[collapsible=icon]:justify-center">
+                        <Activity className="h-3 w-3 text-muted-foreground shrink-0" />
+                        <span className="text-[12px] text-muted-foreground font-mono truncate group-data-[collapsible=icon]:hidden">
+                          {currentJobId.substring(0, 8)}...
+                        </span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="group-data-[collapsible=icon]:block hidden">
+                      <div className="text-xs font-mono">{currentJobId}</div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+            </div>
+          ) : (
+            <div className="mt-1 px-1.5 py-0.5 text-[12px] text-muted-foreground group-data-[collapsible=icon]:hidden">
+              No active project
+            </div>
+          )}
+        </SidebarHeader>
+
+        <SidebarSeparator className="my-1" />
+
+        {/* Navigation Items - High Density Icons */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-2 py-1 group-data-[collapsible=icon]:hidden">
+            Navigation
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {navigationItems.map((item, index) => {
+                const baseHref = item.href.split("?")[0]
+                const isActive = pathname === baseHref || pathname?.startsWith(baseHref + "/")
+
+                return (
+                  <SidebarMenuItem key={`${item.href}-${index}`}>
+                    {"onClick" in item ? (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <SidebarMenuButton
+                              onClick={item.onClick}
+                              isActive={pathname === "/research-workbench"}
+                              className={cn(
+                                "h-8 px-2 cursor-not-allowed opacity-60",
+                                "group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:px-0"
+                              )}
+                              aria-disabled
+                            >
+                              <item.icon className="h-4 w-4 shrink-0" />
+                              <span className="text-[12px] group-data-[collapsible=icon]:hidden">{item.title}</span>
+                            </SidebarMenuButton>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="group-data-[collapsible=icon]:block hidden">
+                            <div className="text-xs">{item.title}</div>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                              Select a project/job to open workbench
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <SidebarMenuButton
+                              asChild
+                              isActive={isActive}
+                              className={cn(
+                                "h-8 px-2",
+                                "group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:px-0"
+                              )}
+                            >
+                              <Link href={item.href}>
+                                <item.icon className="h-4 w-4 shrink-0" />
+                                <span className="text-[12px] group-data-[collapsible=icon]:hidden">{item.title}</span>
+                              </Link>
+                            </SidebarMenuButton>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="group-data-[collapsible=icon]:block hidden">
+                            <div className="text-xs">{item.title}</div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                  </SidebarMenuItem>
+                )
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
     </Sidebar>
