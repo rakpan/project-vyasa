@@ -85,6 +85,7 @@ dist/
 # ## ADDED: Explicitly block deploy envs
 deploy/.env
 deploy/.env.local
+deploy/.secrets.env
 src/orchestrator/.env
 
 # ============================================

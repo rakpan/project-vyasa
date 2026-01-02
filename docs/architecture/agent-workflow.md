@@ -186,7 +186,7 @@ stateDiagram-v2
 **Purpose**: Persist extracted graph to ArangoDB with project linkage.
 
 **Implementation**:
-- Direct ArangoDB connection (`memory:8529`)
+- Direct ArangoDB connection (`graph:8529`)
 - Saves to `extractions` collection
 - **Links to project**: Stores `project_id` with all entities/relations
 - **Saves claims with priority tags**: HIGH/LOW tags preserved

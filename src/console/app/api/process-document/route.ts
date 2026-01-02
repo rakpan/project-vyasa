@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
           const password = process.env.NEO4J_PASSWORD;
           graphDbService.initialize(uri, username, password);
         } else if (graphDbType === 'arangodb') {
-          const url = process.env.MEMORY_SERVICE_URL || process.env.ARANGODB_URL || 'http://vyasa-memory:8529';
+          const url = process.env.MEMORY_SERVICE_URL || process.env.ARANGODB_URL || 'http://graph:8529';
           const dbName = process.env.ARANGODB_DB || 'project_vyasa';
           const username = process.env.ARANGODB_USER || 'root';
           const password = process.env.ARANGODB_PASSWORD || '';

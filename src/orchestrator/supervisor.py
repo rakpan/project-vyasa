@@ -21,9 +21,9 @@ from ..shared.config import (
     get_cortex_url,
     get_drafter_url,
     get_memory_url,
+    get_arango_password,
     ARANGODB_DB,
     ARANGODB_USER,
-    ARANGODB_PASSWORD
 )
 from ..shared.logger import get_logger
 from ..shared.role_manager import RoleRegistry
@@ -85,17 +85,18 @@ class Supervisor:
         self.cortex_url = cortex_url or CORTEX_URL
         self.drafter_url = drafter_url or DRAFTER_URL
         self.db: Optional[StandardDatabase] = None
+        resolved_password = arango_password or get_arango_password()
         self.role_registry = RoleRegistry(
             arango_url or MEMORY_URL,
             arango_db or ARANGODB_DB,
             arango_user or ARANGODB_USER,
-            arango_password or ARANGODB_PASSWORD
+            resolved_password
         )
         self._init_arangodb(
             arango_url or MEMORY_URL,
             arango_db or ARANGODB_DB,
             arango_user or ARANGODB_USER,
-            arango_password or ARANGODB_PASSWORD
+            resolved_password
         )
     
     def _init_arangodb(
@@ -111,7 +112,7 @@ class Supervisor:
         (entities, edges, documents) are available.
         
         Args:
-            arango_url: ArangoDB connection URL (e.g., "http://vyasa-memory:8529").
+            arango_url: ArangoDB connection URL (e.g., "http://graph:8529").
             arango_db: Database name (e.g., "project_vyasa").
             arango_user: ArangoDB username (e.g., "root").
             arango_password: ArangoDB password.

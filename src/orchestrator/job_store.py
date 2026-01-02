@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from arango import ArangoClient
 
-from ..shared.config import MEMORY_URL, ARANGODB_DB, ARANGODB_USER, ARANGODB_PASSWORD
+from ..shared.config import get_memory_url, get_arango_password, ARANGODB_DB, ARANGODB_USER
 from ..shared.logger import get_logger
 from ..shared.utils import get_utc_now
 from .state import JobStatus
@@ -26,8 +26,8 @@ _reframe_store: Dict[str, Dict[str, Any]] = {}
 
 
 def _get_db():
-    client = ArangoClient(hosts=MEMORY_URL)
-    return client.db(ARANGODB_DB, username=ARANGODB_USER, password=ARANGODB_PASSWORD)
+    client = ArangoClient(hosts=get_memory_url())
+    return client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
 
 
 def _ensure_collection(db):

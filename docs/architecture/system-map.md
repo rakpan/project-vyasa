@@ -69,7 +69,7 @@ C4Container
 - Asynchronous job management (max 2 concurrent jobs)
 - Project context injection (early middleware pattern)
 - Workflow routing decisions
-- Memory query orchestration
+- Graph query orchestration
 - Content drafting coordination
 
 **Key API Endpoints**:
@@ -102,7 +102,7 @@ C4Container
 **Responsibilities**:
 - High-level reasoning and routing decisions
 - JSON planning and structured output
-- Supervisor workflow routing (QUERY_MEMORY, DRAFT_CONTENT, FINISH)
+- Supervisor workflow routing (QUERY_GRAPH, DRAFT_CONTENT, FINISH)
 
 **Key Endpoints**:
 - `/v1/chat/completions` - OpenAI-compatible API
@@ -275,7 +275,7 @@ All services run in a single Docker network (`${NETWORK_NAME}`, default: `vyasa-
 - `orchestrator` → `drafter` (Port 11434)
 - `console` → `embedder` (Port 80)
 - `embedder` → `vector` (Port 6333)
-- All services → `memory` (ArangoDB, Port 8529)
+- All services → `graph` (ArangoDB, Port 8529)
 - All services → `vector` (Qdrant, Port 6333)
 
 ## Security

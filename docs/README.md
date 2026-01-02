@@ -11,7 +11,7 @@ Project Vyasa implements the **Fusion Architecture**, a modular system organized
 - **Worker** (Port 30001): Structured extraction - SGLang + Qwen 2.5 49B for JSON extraction and tagging
 - **Vision** (Port 30002): Image analysis - SGLang + Qwen 2 VL 72B for figure/table interpretation
 - **Drafter** (Port 11434): The Writer - Ollama for prose generation and summarization
-- **Memory** (Port 8529): The Knowledge Graph - ArangoDB for storing entities and relationships
+- **Graph** (Port 8529): The Knowledge Graph - ArangoDB for storing entities and relationships
 - **Vector** (Port 6333): The Search Index - Qdrant for storing embeddings and enabling semantic search
 - **Embedder** (Port 80): The Vectorizer - Sentence Transformers for converting text to vectors
 - **Orchestrator** (Port 8000): The Coordinator - Python/LangGraph for workflow orchestration
@@ -25,7 +25,7 @@ Project Vyasa implements the **Fusion Architecture**, a modular system organized
 | **Worker** | 30001 | `cortex-worker` | SGLang + Qwen 2.5 (extraction) |
 | **Vision** | 30002 | `cortex-vision` | SGLang + Qwen 2 VL (image analysis) |
 | **Drafter** | 11434 | `vyasa-drafter` | Ollama (prose generation) |
-| **Memory** | 8529 | `vyasa-memory` | ArangoDB (knowledge graph) |
+| **Graph** | 8529 | `vyasa-graph` | ArangoDB (knowledge graph) |
 | **Vector** | 6333 | `vyasa-qdrant` | Qdrant (vector database) |
 | **Embedder** | 80 | `vyasa-embedder` | Sentence Transformers (embeddings) |
 | **Orchestrator** | 8000 | `vyasa-orchestrator` | Python/LangGraph (workflow) |
@@ -50,7 +50,7 @@ graph TB
         end
         
         subgraph "Efficiency Cores (10x A725)"
-            E1["ArangoDB<br/>Memory Service"]
+            E1["ArangoDB<br/>Graph Service"]
             E2["Orchestrator<br/>LangGraph Workflow"]
             E3["Console<br/>Next.js Frontend"]
             E4["Embedder<br/>Sentence Transformers"]
@@ -123,14 +123,14 @@ sequenceDiagram
     participant Knowledge as Knowledge Kernel<br/>(Extraction)
     participant Manuscript as Manuscript Kernel<br/>(Synthesis)
     participant Governance as Governance Kernel<br/>(Validation)
-    participant Memory as ArangoDB<br/>(Memory)
+    participant Graph as ArangoDB<br/>(Graph)
     participant Vector as Qdrant<br/>(Vector)
 
     Note over Researcher,Vector: Phase 1: Intent Definition
     Researcher->>Console: Create Project (Thesis, RQs, Anti-Scope)
     Console->>Orchestrator: POST /api/projects
     Orchestrator->>Intent: Store ProjectConfig
-    Intent->>Memory: Persist to projects collection
+    Intent->>Graph: Persist to projects collection
     
     Note over Researcher,Vector: Phase 2: Knowledge Extraction
     Researcher->>Console: Upload PDF Document
@@ -141,23 +141,23 @@ sequenceDiagram
     Orchestrator->>Knowledge: Cartographer Node (Worker)
     Knowledge->>Knowledge: Vision Node (Qwen-VL)
     Knowledge->>Knowledge: Extract Triples + Evidence
-    Knowledge->>Memory: Store Entities, Relations, Claims
+    Knowledge->>Graph: Store Entities, Relations, Claims
     Knowledge->>Vector: Store Embeddings (via Embedder)
     
     Note over Researcher,Vector: Phase 3: Manuscript Synthesis
     Orchestrator->>Manuscript: Brain Node (Llama 3.3)
-    Manuscript->>Memory: Query Knowledge Graph
-    Memory-->>Manuscript: Triples + Evidence
+    Manuscript->>Graph: Query Knowledge Graph
+    Graph-->>Manuscript: Triples + Evidence
     Manuscript->>Manuscript: Generate Manuscript Blocks
     Manuscript->>Governance: Librarian Key-Guard (Citation Validation)
-    Governance->>Memory: Validate Citations (project_bibliography)
+    Governance->>Graph: Validate Citations (project_bibliography)
     Governance-->>Manuscript: Validation Result
-    Manuscript->>Memory: Store Blocks (versioned)
+    Manuscript->>Graph: Store Blocks (versioned)
     
     Note over Researcher,Vector: Phase 4: Expert Review & Export
     Researcher->>Console: Review Manuscript (Redline Mode)
     Console->>Governance: Submit Patches
-    Governance->>Memory: Store Patches (Pending/Accepted/Rejected)
+    Governance->>Graph: Store Patches (Pending/Accepted/Rejected)
     Researcher->>Console: Export (Markdown/BibTeX/JSON-LD)
     Console->>Orchestrator: GET /export/{job_id}?format=markdown
     Orchestrator-->>Console: Final Manuscript
@@ -166,10 +166,10 @@ sequenceDiagram
     Researcher->>Console: Finalize Project
     Console->>Orchestrator: POST /jobs/{job_id}/finalize
     Orchestrator->>Orchestrator: Synthesis Service (Entity Resolution)
-    Orchestrator->>Memory: Merge into canonical_knowledge
+    Orchestrator->>Graph: Merge into canonical_knowledge
     Orchestrator->>Orchestrator: Knowledge Harvester
     Orchestrator->>Orchestrator: Generate JSONL Dataset
-    Orchestrator->>Memory: Store Dataset Metadata
+    Orchestrator->>Graph: Store Dataset Metadata
 ```
 
 ### Kernel Responsibilities
@@ -433,7 +433,7 @@ Checking for expertise configuration... WARN
 Checking port availability...
   Port 30000 (Brain (Cortex))... AVAILABLE
   Port 30001 (Worker (Cortex))... AVAILABLE
-  Port 8529 (Memory (ArangoDB))... AVAILABLE
+  Port 8529 (Graph (ArangoDB))... AVAILABLE
 
 ==========================================
 Preflight Check Summary
@@ -460,7 +460,7 @@ Preflight Check Summary
    - Removes orphaned containers
 
 3. **Health Verification**:
-   - Waits for ArangoDB (`vyasa-memory`) to become healthy (max 30 attempts, 2s intervals)
+   - Waits for ArangoDB (`vyasa-graph`) to become healthy (max 30 attempts, 2s intervals)
    - Seeds role profiles via orchestrator container
    - Polls orchestrator `/health` endpoint (max 30 attempts, 2s intervals)
 
@@ -478,7 +478,7 @@ chmod +x start.sh
 **Expected Output**:
 ```
 Starting Project Vyasa stack...
-Waiting for vyasa-memory to become healthy.....
+Waiting for vyasa-graph to become healthy.....
 ArangoDB is healthy.
 Seeding roles via orchestrator...
 Waiting for orchestrator to become ready.....

@@ -25,6 +25,15 @@ const nextConfig = {
     // No duration limit - let large models complete naturally
     maxDuration: 0,
   },
+  // Avoid installing native canvas for pdfjs-dist (@react-pdf-viewer) during SSR bundling
+  webpack: (config) => {
+    config.resolve = config.resolve || {};
+    config.resolve.fallback = {
+      ...(config.resolve.fallback || {}),
+      canvas: false,
+    };
+    return config;
+  },
 }
 
 // Define environment variables that should be available to the client

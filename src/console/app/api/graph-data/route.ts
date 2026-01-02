@@ -135,7 +135,7 @@ export async function GET(request: NextRequest) {
 
     // Query ArangoDB (memory service) for graph data
     try {
-      const memoryUrl = process.env.MEMORY_SERVICE_URL || 'http://memory:8529';
+      const memoryUrl = process.env.MEMORY_SERVICE_URL || 'http://graph:8529';
       const dbName = process.env.ARANGODB_DB || 'project_vyasa';
       const username = process.env.ARANGODB_USER || 'root';
       const password = process.env.ARANGODB_PASSWORD || '';
@@ -229,4 +229,3 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Failed to retrieve graph data" }, { status: 500 })
   }
 }
-

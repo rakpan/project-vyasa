@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useEffect, useState } from "react"
+import { useMemo, useEffect, useState, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
 import { StrategicInterventionPanel } from "@/components/StrategicInterventionPanel"
@@ -28,7 +28,7 @@ import { Badge } from "@/components/ui/badge"
  * - Collapsible sidebars (Librarian, Patch)
  * - Focus Mode (hide Source/Graph, expand Manuscript)
  */
-export default function ResearchWorkbenchPage() {
+function ResearchWorkbenchContent() {
   const params = useSearchParams()
   const router = useRouter()
   const jobId = useMemo(() => params.get("jobId") || "", [params])
@@ -327,5 +327,13 @@ export default function ResearchWorkbenchPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function ResearchWorkbenchPage() {
+  return (
+    <Suspense fallback={<div className="h-full w-full flex items-center justify-center">Loading...</div>}>
+      <ResearchWorkbenchContent />
+    </Suspense>
   )
 }

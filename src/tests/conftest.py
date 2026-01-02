@@ -291,14 +291,16 @@ def real_arango():
     try:
         from arango import ArangoClient
         
-        # Get connection details from environment
-        url = os.getenv("MEMORY_URL", MEMORY_URL)
-        db_name = os.getenv("ARANGODB_DB", ARANGODB_DB)
-        username = os.getenv("ARANGODB_USER", ARANGODB_USER)
-        password = os.getenv("ARANGODB_PASSWORD", ARANGODB_PASSWORD) or os.getenv("ARANGO_ROOT_PASSWORD", "")
+        # Get connection details from config (single source of truth)
+        from ..shared.config import get_arango_url, get_arango_password, ARANGODB_DB, ARANGODB_USER
+        
+        url = get_arango_url()
+        db_name = ARANGODB_DB
+        username = ARANGODB_USER
+        password = get_arango_password()
         
         if not password:
-            pytest.skip("ArangoDB password not configured (set ARANGODB_PASSWORD or ARANGO_ROOT_PASSWORD)")
+            pytest.skip("ArangoDB password not configured (set ARANGO_ROOT_PASSWORD or ARANGODB_PASSWORD)")
         
         client = ArangoClient(hosts=url)
         
@@ -340,7 +342,9 @@ def real_qdrant():
     try:
         from qdrant_client import QdrantClient
         
-        url = os.getenv("QDRANT_URL", QDRANT_URL)
+        from ..shared.config import get_vector_url
+        
+        url = get_vector_url()
         api_key = os.getenv("QDRANT_API_KEY", "")
         
         try:

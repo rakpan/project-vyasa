@@ -5,9 +5,9 @@ import { ReferenceReviewPanel } from "@/components/ReferenceReviewPanel"
 import { useRouter } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { useEffect, useState } from "react"
+import { useEffect, useState, Suspense } from "react"
 
-export default function ReferenceReviewPage() {
+function ReferenceReviewContent() {
   const params = useParams()
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -77,6 +77,14 @@ export default function ReferenceReviewPage() {
         onRejected={handleRejected}
       />
     </div>
+  )
+}
+
+export default function ReferenceReviewPage() {
+  return (
+    <Suspense fallback={<div className="container mx-auto px-4 py-6 max-w-6xl">Loading...</div>}>
+      <ReferenceReviewContent />
+    </Suspense>
   )
 }
 

@@ -18,10 +18,11 @@ from ...shared.rigor_config import load_rigor_policy_yaml
 from ..guards.tone_guard import scan_text
 from ..guards.precision_guard import check_table_precision
 from ...shared.utils import get_utc_now, ensure_utc_datetime
+from ...shared.config import get_artifact_root
 
 logger = get_logger("orchestrator", __name__)
 
-ARTIFACT_ROOT = Path(os.getenv("ARTIFACT_ROOT", "/raid/artifacts"))
+ARTIFACT_ROOT = Path(get_artifact_root())
 
 
 def _word_count(text: str) -> int:

@@ -71,7 +71,7 @@
     "recharts": "^2.12.7",
     "zustand": "^5.0.2",
     "reactflow": "^11.11.4",
-    "@reactflow/controls": "^11.2.16",
+    "@reactflow/controls": "^11.2.14",
     "@reactflow/background": "^11.3.6",
     "dagre": "^0.8.5",
     "@types/dagre": "^0.7.52",

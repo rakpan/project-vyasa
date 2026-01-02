@@ -42,8 +42,8 @@ Requires Docker services to be running:
 cd deploy
 docker compose up -d
 
-# Run all tests
-./scripts/test_local.sh --with-integration
+# Run all tests (automatically uses .venv if available)
+./scripts/run_tests.sh --with-integration
 ```
 
 Or directly:
@@ -111,25 +111,30 @@ def test_database_operation(real_arango):
 
 ## Environment Variables
 
-Integration tests use these environment variables (from `deploy/.env`):
+Integration tests use these environment variables (from `deploy/.env` or `deploy/.secrets.env`):
 
-- `MEMORY_URL`: ArangoDB connection URL
-- `ARANGODB_DB`: Database name
-- `ARANGODB_USER`: Database username
-- `ARANGODB_PASSWORD` or `ARANGO_ROOT_PASSWORD`: Database password
-- `QDRANT_URL`: Qdrant connection URL
+- `MEMORY_URL` or `ARANGODB_URL`: ArangoDB connection URL (defaults to `http://graph:8529`)
+- `ARANGODB_DB`: Database name (default: `project_vyasa`)
+- `ARANGODB_USER`: Database username (default: `root`)
+- `ARANGO_ROOT_PASSWORD` (canonical) or `ARANGODB_PASSWORD` (legacy): Database password
+- `QDRANT_URL` or `VECTOR_URL`: Qdrant connection URL (defaults to `http://vector:6333`)
 - `QDRANT_API_KEY`: Qdrant API key (optional)
+
+**Note**: All configuration should use the getter methods from `src/shared/config.py` rather than raw `os.getenv()` calls. The test fixtures automatically use these getters for consistency.
 
 ## Continuous Integration
 
 For CI/CD, run:
 
 ```bash
+# Setup virtual environment
+./scripts/setup_venv.sh
+
 # Unit tests only (fast, no dependencies)
-pytest tests/unit/ -v
+./scripts/run_tests.sh --unit
 
 # Integration tests (requires services)
 docker compose -f deploy/docker-compose.yml up -d
-pytest tests/ -v -m integration
+./scripts/run_tests.sh --integration
 docker compose -f deploy/docker-compose.yml down
 ```

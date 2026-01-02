@@ -59,7 +59,7 @@ async function ensureConnection(request?: NextRequest): Promise<GraphDBType> {
       graphDbService.initialize(uri, username, password);
     } else if (graphDbType === 'arangodb') {
       // ArangoDB connection params - use memory service URL or environment variables
-      let url = process.env.MEMORY_SERVICE_URL || process.env.ARANGODB_URL || 'http://memory:8529';
+      let url = process.env.MEMORY_SERVICE_URL || process.env.ARANGODB_URL || 'http://graph:8529';
       let dbName = process.env.ARANGODB_DB || 'vyasa';
       let username = process.env.ARANGODB_USER || 'root';
       let password = process.env.ARANGODB_PASSWORD || '';

@@ -18,12 +18,18 @@ from arango.database import StandardDatabase
 from arango.exceptions import ArangoError
 
 from ..shared.logger import get_logger
-from ..shared.config import get_memory_url, ARANGODB_DB, ARANGODB_USER, get_arango_password
+from ..shared.config import (
+    get_memory_url,
+    ARANGODB_DB,
+    ARANGODB_USER,
+    get_arango_password,
+    get_dataset_dir,
+)
 
 logger = get_logger("orchestrator", __name__)
 
 # Dataset output directory (configurable via env var)
-DEFAULT_DATASET_DIR = Path("/raid/datasets")
+DEFAULT_DATASET_DIR = Path(get_dataset_dir())
 DATASET_FILENAME = "fine_tuning_v1.jsonl"
 
 
@@ -42,9 +48,8 @@ class KnowledgeHarvester:
         self._ensure_dataset_dir()
     
     def _get_dataset_dir(self) -> Path:
-        """Get dataset directory from env var or use default."""
-        dataset_path = os.getenv("VYASA_DATASET_DIR", str(DEFAULT_DATASET_DIR))
-        return Path(dataset_path)
+        """Get dataset directory from config (single source of truth)."""
+        return DEFAULT_DATASET_DIR
     
     def _ensure_dataset_dir(self) -> None:
         """Ensure the dataset directory exists."""

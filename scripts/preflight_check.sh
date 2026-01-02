@@ -20,50 +20,51 @@ CHECKS_PASSED=0
 CHECKS_FAILED=0
 WARNINGS=0
 
-# Env sync and secret generation
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEPLOY_DIR="$PROJECT_ROOT/deploy"
-ENV_EXAMPLE="$DEPLOY_DIR/.env.example"
 ENV_FILE="$DEPLOY_DIR/.env"
+SECRETS_FILE="$DEPLOY_DIR/.secrets.env"
 . "$SCRIPT_DIR/lib/env.sh"
 load_env_defaults
-touch "$ENV_FILE"
 
-ensure_env_secret() {
-  local var_name="$1"
-  local env_file="$2"
-  local current
-  current="$(grep -E "^${var_name}=" "$env_file" 2>/dev/null | cut -d'=' -f2- || true)"
-  if [ -z "$current" ]; then
-    local generated
-    generated=$(openssl rand -hex 24)
-    echo "${var_name}=${generated}" >> "$env_file"
-    echo "  • Generated ${var_name}"
+# Load environment files without mutating them
+load_env_file() {
+  local file="$1"
+  if [ -f "$file" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$file"
+    set +a
   fi
 }
 
-if [ -f "$ENV_EXAMPLE" ]; then
-  echo "Syncing environment from $ENV_EXAMPLE..."
-  while IFS= read -r line; do
-    [[ -z "$line" || "$line" =~ ^# ]] && continue
-    key="${line%%=*}"
-    val="$(grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- || true)"
-    if [ -z "$val" ]; then
-      if [[ "$key" =~ PASSWORD|TOKEN|SECRET|KEY ]]; then
-        ensure_env_secret "$key" "$ENV_FILE"
-      else
-        echo "$line" >> "$ENV_FILE"
-        echo "  • Added default $key from example"
-      fi
-    fi
-  done < "$ENV_EXAMPLE"
-fi
+load_env_file "$ENV_FILE"
+load_env_file "$SECRETS_FILE"
 
 echo "=========================================="
 echo "Project Vyasa - Preflight Check"
 echo "DGX Spark (GB10) Validation"
 echo "=========================================="
+echo ""
+
+# ============================================
+# Check 0: Python runtime imports (a2wsgi, nvidia_smi)
+# ============================================
+echo -n "Checking Python import readiness (a2wsgi, nvidia_smi)... "
+if python3 - <<'PY' >/dev/null 2>&1
+import a2wsgi  # noqa: F401
+import nvidia_smi  # noqa: F401
+PY
+then
+  echo -e "${GREEN}PASS${NC}"
+  ((CHECKS_PASSED++))
+else
+  echo -e "${RED}FAIL${NC}"
+  echo "  Missing python deps (a2wsgi or nvidia-ml-py)."
+  echo "  Remediation: pip install -r requirements.txt"
+  ((CHECKS_FAILED++))
+fi
 echo ""
 
 # ============================================
@@ -202,7 +203,7 @@ if [ -f "$EXPERTISE_FILE" ]; then
     echo "  Using custom expert prompts."
     ((CHECKS_PASSED++))
 else
-    echo -e "${YELLOW}WARN${NC}"
+echo -e "${YELLOW}WARN${NC}"
     echo "  Warning: $EXPERTISE_FILE not found."
     echo "  The system will use generic prompts instead of expert-tuned prompts."
     echo "  To enable expert prompts, create $EXPERTISE_FILE with your domain expertise."
@@ -212,14 +213,49 @@ fi
 echo ""
 
 # ============================================
-# Check 5: Port Availability
+# Check 5: Canonical service hostnames resolve
+# ============================================
+echo "Checking service hostnames (graph/vector/orchestrator)..."
+SERVICE_ENDPOINTS=(
+  "graph:8529:Graph (ArangoDB)"
+  "vector:6333:Vector (Qdrant)"
+  "orchestrator:8000:Orchestrator API"
+)
+
+for endpoint in "${SERVICE_ENDPOINTS[@]}"; do
+  host="${endpoint%%:*}"
+  rest="${endpoint#*:}"
+  port="${rest%%:*}"
+  label="${rest#*:}"
+  echo -n "  ${label} @ ${host}:${port}... "
+  if command -v nc >/dev/null 2>&1; then
+    if nc -z "$host" "$port" >/dev/null 2>&1; then
+      echo -e "${GREEN}REACHABLE${NC}"
+      ((CHECKS_PASSED++))
+    else
+      echo -e "${YELLOW}WARN${NC}"
+      echo "    Could not reach ${host}:${port} (may be offline). Verify after stack start."
+      ((WARNINGS++))
+    fi
+  else
+    echo -e "${YELLOW}SKIP${NC}"
+    echo "    nc not available; skipping reachability test."
+    ((WARNINGS++))
+  fi
+done
+echo ""
+
+# ============================================
+# Check 6: Port Availability
 # ============================================
 echo "Checking port availability..."
 
 PORTS_TO_CHECK=(
     "30000:Brain (Cortex)"
     "30001:Worker (Cortex)"
-    "8529:Memory (ArangoDB)"
+    "8529:Graph (ArangoDB)"
+    "6333:Vector (Qdrant)"
+    "8000:Orchestrator"
 )
 
 PORT_CONFLICTS=0

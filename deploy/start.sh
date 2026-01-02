@@ -45,14 +45,16 @@ fi
 echo -e "${GREEN}Starting Project Vyasa stack...${NC}"
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans
 
-# Wait for ArangoDB (vyasa-memory)
-MEMORY_CONTAINER=${CONTAINER_MEMORY:-vyasa-memory}
+# Wait for ArangoDB (graph)
+MEMORY_CONTAINER=${CONTAINER_GRAPH:-vyasa-graph}
+MEMORY_CONTAINER_ID=$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q graph 2>/dev/null || true)
+TARGET_CONTAINER="${MEMORY_CONTAINER_ID:-$MEMORY_CONTAINER}"
 ATTEMPTS=30
 SLEEP_SECONDS=2
 
-printf "Waiting for %s to become healthy" "$MEMORY_CONTAINER"
+printf "Waiting for %s to become healthy" "$TARGET_CONTAINER"
 for i in $(seq 1 $ATTEMPTS); do
-  STATUS=$(docker inspect -f '{{.State.Health.Status}}' "$MEMORY_CONTAINER" 2>/dev/null || echo "")
+  STATUS=$(docker inspect -f '{{.State.Health.Status}}' "$TARGET_CONTAINER" 2>/dev/null || echo "")
   if [[ "$STATUS" == "healthy" ]]; then
     echo -e "\n${GREEN}ArangoDB is healthy.${NC}"
     break

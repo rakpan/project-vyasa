@@ -4,6 +4,18 @@ Opik provides a self-hosted “flight data recorder” for Vyasa. It is optional
 
 ## Starting Opik
 
+**Recommended**: Use the unified stack runner:
+```bash
+./scripts/run_stack.sh start --opik
+```
+
+This automatically:
+- Creates the `vyasa-net` network if it doesn't exist
+- Creates Opik data directories if needed (no sudo required)
+- Checks for port conflicts before starting
+- Waits for Opik services to be ready
+
+**Alternative**: Manual start:
 ```bash
 cd deploy
 docker compose -f docker-compose.yml -f docker-compose.opik.yml up -d
@@ -11,6 +23,12 @@ docker compose -f docker-compose.yml -f docker-compose.opik.yml up -d
 
 ## Stopping Opik
 
+**Recommended**: Use the unified stack runner:
+```bash
+./scripts/run_stack.sh stop --opik
+```
+
+**Alternative**: Manual stop:
 ```bash
 cd deploy
 docker compose -f docker-compose.yml -f docker-compose.opik.yml down
@@ -36,9 +54,28 @@ If Opik is down or misconfigured, Vyasa continues normally (observe-only).
 - No raw prompt text is sent by default.
 
 ## Troubleshooting
-- Check container logs: `docker compose -f docker-compose.yml -f docker-compose.opik.yml logs opik-api`
-- Ensure `/raid/vyasa/opik_data/*` is writable by Docker.
-- Verify ports are bound to localhost only (127.0.0.1) for security.
+
+- **Check container logs**: 
+  ```bash
+  ./scripts/run_stack.sh logs --opik opik-api
+  # Or manually:
+  docker compose -f docker-compose.yml -f docker-compose.opik.yml logs opik-api
+  ```
+
+- **Directory permissions**: 
+  - The script automatically creates `/raid/vyasa/opik_data/*` directories if possible
+  - If creation fails, Docker will create them when containers start (owned by root)
+  - No sudo required - Docker handles directory creation automatically
+
+- **Network issues**: 
+  - The script automatically creates the `vyasa-net` network if it doesn't exist
+  - If you see "network vyasa-net declared as external, but could not be found", the script should handle this automatically
+
+- **Port conflicts**: 
+  - The script checks for port conflicts before starting
+  - If port 11434 (drafter) is in use, you'll see a warning with resolution options
+
+- **Verify ports**: Ports are bound to localhost only (127.0.0.1) for security
 
 ## Offline Evaluation Scaffold (optional)
 

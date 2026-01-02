@@ -19,7 +19,20 @@ from werkzeug.utils import secure_filename
 from pydantic import ValidationError
 import requests
 from fastapi import FastAPI
-from a2wsgi import WSGIMiddleware
+from fastapi.responses import JSONResponse
+
+try:
+    # [Integration Guard] WSGIMiddleware Bridge
+    # Purpose: Unify Flask (legacy ingestion routes) and FastAPI (observatory API) under a single ASGI surface.
+    # Rationale: The orchestrator uses Flask for PDF ingestion/workflow endpoints and FastAPI for observability.
+    # The bridge allows both frameworks to coexist without requiring a full migration.
+    # Failure Handling: If a2wsgi is missing, the server will fail gracefully with a clear error message
+    # instead of crashing with a generic 500 proxy error.
+    from a2wsgi import WSGIMiddleware
+    _WSGI_BRIDGE_ERROR: Optional[Exception] = None
+except Exception as exc:  # pragma: no cover - defensive import guard
+    WSGIMiddleware = None
+    _WSGI_BRIDGE_ERROR = exc
 
 from arango import ArangoClient
 
@@ -88,9 +101,18 @@ _sse_connections: Dict[str, Set[threading.Event]] = defaultdict(set)
 _sse_lock = threading.Lock()
 
 # ASGI gateway (FastAPI) with observatory router; mounts Flask app for legacy routes.
+# The bridge keeps a unified surface for both FastAPI (observability) and Flask (ingestion).
 api_app = FastAPI(title="Vyasa Orchestrator Gateway", version="1.0.0")
 api_app.include_router(observatory_router)
-api_app.mount("/", WSGIMiddleware(app))
+
+if WSGIMiddleware is None:
+    @api_app.get("/", include_in_schema=False)
+    def bridge_missing():
+        msg = "a2wsgi not installed; install with 'pip install -r requirements.txt' to enable Flask routes."
+        logger.error(msg)
+        return JSONResponse(status_code=503, content={"error": msg})
+else:
+    api_app.mount("/", WSGIMiddleware(app))
 
 
 @app.route("/api/jobs/<job_id>/signoff", methods=["GET"])
@@ -100,7 +122,11 @@ def get_job_signoff(job_id: str):
     proposal = None
     try:
         from arango import ArangoClient
-        db = ArangoClient(hosts=MEMORY_URL).db(ARANGODB_DB, username=ARANGODB_USER, password=ARANGODB_PASSWORD)
+        db = ArangoClient(hosts=get_memory_url()).db(
+            ARANGODB_DB,
+            username=ARANGODB_USER,
+            password=get_arango_password(),
+        )
         if proposal_id and db.has_collection("reframing_proposals"):
             proposal = db.collection("reframing_proposals").get(proposal_id)
     except Exception:
@@ -1261,7 +1287,7 @@ def _run_synthesis_async(project_id: str, job_ids: List[str]) -> None:
         from arango import ArangoClient
         
         client = ArangoClient(hosts=get_memory_url())
-        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=ARANGODB_PASSWORD)
+        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
         
         service = SynthesisService(db)
         result = service.finalize_project(project_id, job_ids)
@@ -1288,7 +1314,7 @@ def _run_harvesting_async(project_id: str, job_ids: List[str]) -> None:
         from arango import ArangoClient
         
         client = ArangoClient(hosts=get_memory_url())
-        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=ARANGODB_PASSWORD)
+        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
         
         harvester = KnowledgeHarvester(db)
         result = harvester.harvest_project(project_id, job_ids)
@@ -1377,7 +1403,7 @@ def merge_extractions(job_id: str):
     
     try:
         client = ArangoClient(hosts=get_memory_url())
-        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=ARANGODB_PASSWORD)
+        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
         
         # Ensure collections exist
         if not db.has_collection("extractions"):

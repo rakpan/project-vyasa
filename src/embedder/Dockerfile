@@ -4,6 +4,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Default model can be overridden at build time with --build-arg MODEL_NAME=...
+ARG MODEL_NAME=BAAI/bge-large-en-v1.5
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -18,7 +21,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py /app/
 
 # Set default model name
-ENV MODEL_NAME="all-MiniLM-L6-v2"
+ENV MODEL_NAME="${MODEL_NAME}"
+ENV EMBEDDING_MODEL_PATH="${MODEL_NAME}"
 ENV TRANSFORMERS_CACHE="/app/.cache"
 ENV HF_HOME="/app/.cache"
 

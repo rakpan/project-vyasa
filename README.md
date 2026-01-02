@@ -202,8 +202,10 @@ docker compose down
 
 | Script | Location | Purpose |
 |--------|----------|---------|
-| **Preflight Check** | `scripts/preflight_check.sh` | Validates hardware, memory, ports before startup |
-| **Start/Stop** | `scripts/run_stack.sh` | Unified start/stop/logs (add `--opik` to include Opik services) |
+| **Bootstrap Secrets** | `scripts/init_vyasa.sh --bootstrap-secrets` | Generates secure credentials in `.secrets.env` |
+| **Preflight Check** | `scripts/preflight_check.sh` | Validates hardware, memory, ports, Python imports before startup |
+| **Deployment Verify** | `scripts/deploy_verify.sh` | End-to-end integration test (Go/No-Go gate) |
+| **Start/Stop** | `scripts/run_stack.sh` | Unified start/stop/logs (add `--opik` to include Opik services). Automatically handles network creation, directory setup, and port conflict detection. |
 | **Console Navigation** | `docs/runbooks/console-navigation.md` | Describes Projects → Job → Workbench flow, guards, and layout rules |
 | **Operational CLI** | `scripts/vyasa-cli.sh` | Operational utilities (merge nodes, etc.) |
 | **Test Runner** | `scripts/run_tests.sh` | Run pytest test suite |

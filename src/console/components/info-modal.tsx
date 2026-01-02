@@ -41,13 +41,12 @@ export function InfoModal() {
               <Sparkles className="h-5 w-5 text-nvidia-green" />
             </div>
             <DialogTitle className="text-2xl font-bold text-foreground nvidia-build-gradient-text">
-              Text to Knowledge Graph
+              Research Workbench
             </DialogTitle>
           </div>
           <DialogDescription className="text-base text-muted-foreground leading-relaxed">
-            An AI-powered platform that transforms your documents into structured knowledge graphs. 
-            Extract meaningful relationships from text using state-of-the-art language models and visualize 
-            your data in interactive, explorable formats.
+            Turn documents into structured knowledge you can search, link, and visualize. Use built-in models
+            or bring your own to extract entities, relations, and insights, then explore them in the graph.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-8 pt-6">
@@ -63,25 +62,25 @@ export function InfoModal() {
               <div className="flex items-start gap-3">
                 <div className="w-2 h-2 rounded-full bg-nvidia-green mt-2 flex-shrink-0"></div>
                 <p className="text-sm text-foreground leading-relaxed">
-                  <span className="font-semibold">Knowledge Triple Extraction:</span> Automatically identify subject-predicate-object relationships from your text documents
+                  <span className="font-semibold">Structured extraction:</span> Pull entities and relations from text and tables
                 </p>
               </div>
               <div className="flex items-start gap-3">
                 <div className="w-2 h-2 rounded-full bg-nvidia-green mt-2 flex-shrink-0"></div>
                 <p className="text-sm text-foreground leading-relaxed">
-                  <span className="font-semibold">Interactive Visualization:</span> Explore relationships through dynamic, interactive knowledge graphs
+                  <span className="font-semibold">Interactive graphs:</span> Explore and filter connections in 2D/3D
                 </p>
               </div>
               <div className="flex items-start gap-3">
                 <div className="w-2 h-2 rounded-full bg-nvidia-green mt-2 flex-shrink-0"></div>
                 <p className="text-sm text-foreground leading-relaxed">
-                  <span className="font-semibold">Multi-Format Export:</span> Export your knowledge graphs in JSON, CSV, and PNG formats
+                  <span className="font-semibold">Export & share:</span> Download JSON/CSV/PNG or hand off via API
                 </p>
               </div>
               <div className="flex items-start gap-3">
                 <div className="w-2 h-2 rounded-full bg-nvidia-green mt-2 flex-shrink-0"></div>
                 <p className="text-sm text-foreground leading-relaxed">
-                  <span className="font-semibold">AI-Powered:</span> Leverage cutting-edge language models including NVIDIA, OpenAI, and Ollama
+                  <span className="font-semibold">Model flexibility:</span> Run NVIDIA, OpenAI, Ollama, or custom endpoints
                 </p>
               </div>
             </div>
@@ -101,8 +100,8 @@ export function InfoModal() {
                   <Upload className="h-3 w-3 text-nvidia-green" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-foreground mb-1">1. Upload Documents</p>
-                  <p className="text-xs text-muted-foreground">Upload markdown, CSV, text, or JSON files to get started</p>
+                  <p className="text-sm font-semibold text-foreground mb-1">1. Add data</p>
+                  <p className="text-xs text-muted-foreground">Upload markdown, CSV, text, or JSON</p>
                 </div>
               </div>
               <div className="flex items-start gap-4">
@@ -110,8 +109,8 @@ export function InfoModal() {
                   <Sparkles className="h-3 w-3 text-nvidia-green" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-foreground mb-1">2. Configure Models</p>
-                  <p className="text-xs text-muted-foreground">Select your preferred language model and configure processing options</p>
+                  <p className="text-sm font-semibold text-foreground mb-1">2. Pick a model</p>
+                  <p className="text-xs text-muted-foreground">Choose NVIDIA, OpenAI, Ollama, or a custom endpoint</p>
                 </div>
               </div>
               <div className="flex items-start gap-4">
@@ -119,8 +118,8 @@ export function InfoModal() {
                   <Zap className="h-3 w-3 text-nvidia-green" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-foreground mb-1">3. Extract Knowledge</p>
-                  <p className="text-xs text-muted-foreground">Process your documents to generate structured knowledge triples</p>
+                  <p className="text-sm font-semibold text-foreground mb-1">3. Extract</p>
+                  <p className="text-xs text-muted-foreground">Generate entities, relations, and summaries</p>
                 </div>
               </div>
               <div className="flex items-start gap-4">
@@ -128,8 +127,8 @@ export function InfoModal() {
                   <Eye className="h-3 w-3 text-nvidia-green" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-foreground mb-1">4. Visualize & Explore</p>
-                  <p className="text-xs text-muted-foreground">Navigate your knowledge graph in 2D or 3D interactive visualizations</p>
+                  <p className="text-sm font-semibold text-foreground mb-1">4. Explore</p>
+                  <p className="text-xs text-muted-foreground">Filter, search, and export the graph</p>
                 </div>
               </div>
             </div>
@@ -140,7 +139,7 @@ export function InfoModal() {
             <div className="flex items-center gap-3 mb-4">
             </div>
             <p className="text-sm text-muted-foreground leading-relaxed">
-              Built with NVIDIA's advanced AI infrastructure and optimized for enterprise-grade knowledge extraction workflows.
+              Built on NVIDIA AI infrastructure, optimized for enterprise knowledge extraction workflows.
             </p>
           </div>
         </div>

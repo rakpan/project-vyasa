@@ -108,8 +108,8 @@ services:
       retries: 3
       start_period: 10s
 
-  # ArangoDB - Memory
-  memory:
+  # ArangoDB - Graph
+  graph:
     image: ${MEMORY_IMAGE}
     cpuset: "0-9"
     ports:
@@ -167,7 +167,7 @@ services:
       - NODE_ENV=${NODE_ENV:-production}
       - NEXT_PUBLIC_API_URL=http://localhost:${PORT_BRAIN}/v1
       - CORTEX_SERVICE_URL=http://cortex-brain:30000
-      - MEMORY_SERVICE_URL=http://memory:${PORT_MEMORY}
+      - MEMORY_SERVICE_URL=http://graph:${PORT_MEMORY}
       - SENTENCE_TRANSFORMER_URL=http://embedder:80
       - QDRANT_URL=http://vector:${PORT_VECTOR}
       - ARANGODB_DB=${GRAPH_DB_NAME}
@@ -179,7 +179,7 @@ services:
       - NEXTAUTH_URL=http://localhost:${PORT_CONSOLE}
     depends_on:
       - cortex-brain
-      - memory
+      - graph
       - vector
     networks:
       - ${NETWORK_NAME}
@@ -194,7 +194,7 @@ services:
     ports:
       - "${PORT_EMBEDDER}:80"
     environment:
-      - EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH:-}
+      - EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH:-BAAI/bge-large-en-v1.5}
       - HF_TOKEN=${HF_TOKEN}
       - CUDA_VISIBLE_DEVICES=1
       - HF_HOME=/raid/vyasa/hf_cache
@@ -216,12 +216,15 @@ services:
   orchestrator:
     image: ${ORCHESTRATOR_IMAGE}
     working_dir: /app
-    command: ["uvicorn", "src.orchestrator.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # Install system dependencies and Python packages, then run uvicorn
+    # Note: Install build tools first, then install requirements (torch_memory_saver will build if needed)
+    command: ["sh", "-c", "apt-get update && apt-get install -y build-essential g++ && rm -rf /var/lib/apt/lists/* && pip install --no-cache-dir -r requirements.txt && uvicorn src.orchestrator.main:app --host 0.0.0.0 --port 8000"]
     cpuset: "0-9"
     ports:
       - "8000:8000"
     volumes:
       - ../src:/app
+      - ../requirements.txt:/app/requirements.txt:ro
       - ./scripts:/app/deploy/scripts:ro
       - /raid/vyasa/telemetry:/raid/telemetry
       - /raid/vyasa/scratch:/raid/scratch
@@ -230,7 +233,7 @@ services:
       - WORKER_URL=http://cortex-worker:30001
       - VISION_URL=http://cortex-vision:30002
       - DRAFTER_URL=http://drafter:11434
-      - MEMORY_URL=http://memory:${PORT_MEMORY}
+      - MEMORY_URL=http://graph:${PORT_MEMORY}
       - VECTOR_URL=http://vector:${PORT_VECTOR}
       - ARANGODB_DB=${GRAPH_DB_NAME}
       - ARANGODB_USER=${ARANGODB_USER}
@@ -242,7 +245,7 @@ services:
       - cortex-worker
       - cortex-vision
       - drafter
-      - memory
+      - graph
       - vector
     networks:
       - ${NETWORK_NAME}

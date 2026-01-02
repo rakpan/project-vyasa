@@ -14,14 +14,15 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from ..shared.config import (
+    _env,
     get_worker_url,
     get_brain_url,
     get_vision_url,
     get_drafter_url,
     get_memory_url,
+    get_arango_password,
     ARANGODB_DB,
     ARANGODB_USER,
-    ARANGODB_PASSWORD,
 )
 from .context_packer import build_extraction_layers, stub_retrieve_evidence
 from ..shared.model_registry import get_model_config
@@ -182,13 +183,18 @@ def _get_synthesis_service() -> Optional[Any]:
     if _synthesis_service is None:
         try:
             from .synthesis_service import SynthesisService
-            from ..shared.config import get_memory_url, ARANGODB_DB, ARANGODB_USER, ARANGODB_PASSWORD
-            
-            arango_url = os.getenv("MEMORY_URL", get_memory_url())
-            arango_db = os.getenv("ARANGODB_DB", ARANGODB_DB)
-            arango_user = os.getenv("ARANGODB_USER", ARANGODB_USER)
-            arango_password = os.getenv("ARANGO_ROOT_PASSWORD") or os.getenv("ARANGODB_PASSWORD", ARANGODB_PASSWORD)
-            
+            from ..shared.config import (
+                get_memory_url,
+                get_arango_password,
+                ARANGODB_DB,
+                ARANGODB_USER,
+            )
+
+            arango_url = get_memory_url()
+            arango_db = ARANGODB_DB
+            arango_user = ARANGODB_USER
+            arango_password = get_arango_password()
+
             client = ArangoClient(hosts=arango_url)
             db = client.db(arango_db, username=arango_user, password=arango_password)
             _synthesis_service = SynthesisService(db)
@@ -427,11 +433,10 @@ def _get_project_service() -> Optional[Any]:
         try:
             # Lazy imports to avoid circular dependencies
             from ..project.service import ProjectService
-            from ..shared.config import MEMORY_URL, ARANGODB_DB, ARANGODB_USER, ARANGODB_PASSWORD
-            arango_url = os.getenv("MEMORY_URL", MEMORY_URL)
-            arango_db = os.getenv("ARANGODB_DB", ARANGODB_DB)
-            arango_user = os.getenv("ARANGODB_USER", ARANGODB_USER)
-            arango_password = os.getenv("ARANGO_ROOT_PASSWORD") or os.getenv("ARANGODB_PASSWORD", ARANGODB_PASSWORD)
+            arango_url = get_memory_url()
+            arango_db = ARANGODB_DB
+            arango_user = ARANGODB_USER
+            arango_password = get_arango_password()
             
             client = ArangoClient(hosts=arango_url)
             db = client.db(arango_db, username=arango_user, password=arango_password)
@@ -589,7 +594,7 @@ def cartographer_node(state: PaperState) -> PaperState:
         system_prompt = f"{system_prompt}\nForce refresh context: prioritize latest evidence and candidate facts."
 
     layered_section = ""
-    if os.getenv("ENABLE_CONTEXT_PACKING_EXTRACT", "false").lower() in ("1", "true", "yes"):
+    if _env("ENABLE_CONTEXT_PACKING_EXTRACT", "false").lower() in ("1", "true", "yes"):
         corpus_memory = state.get("corpus_memory") or []
         evidence_chunks = state.get("evidence_chunks") or stub_retrieve_evidence(raw_text)
         working_state = {
@@ -1128,7 +1133,7 @@ def select_images_for_vision(image_paths: List[str]) -> List[str]:
     """Select a subset of images to send to Vision."""
     if not image_paths:
         return []
-    max_images = int(os.getenv("VISION_MAX_IMAGES", "5"))
+    max_images = int(_env("VISION_MAX_IMAGES", "5"))
     preferred = []
     others = []
     for path in image_paths:
@@ -1343,7 +1348,7 @@ def saver_node(state: PaperState) -> PaperState:
 
     try:
         client = ArangoClient(hosts=get_memory_url())
-        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=ARANGODB_PASSWORD)
+        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
         if not db.has_collection("extractions"):
             db.create_collection("extractions")
         if not db.has_collection("manuscript_blocks"):

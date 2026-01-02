@@ -17,6 +17,7 @@
 import type React from "react"
 import type { Metadata } from "next"
 import { Inter } from "next/font/google"
+import { Suspense } from "react"
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { DocumentProvider } from "@/contexts/document-context"
@@ -52,7 +53,9 @@ export default function RootLayout({
             <DocumentProvider>
               <ClientInitializer />
               <SidebarProvider>
-                <AppSidebar />
+                <Suspense fallback={<div className="w-64 bg-sidebar" />}>
+                  <AppSidebar />
+                </Suspense>
                 <SidebarInset>
                   <TopBar />
                   <div className="flex flex-1 flex-col overflow-hidden">

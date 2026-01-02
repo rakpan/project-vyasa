@@ -16,7 +16,7 @@ except ImportError:
     pymupdf = None
 
 from ..shared.logger import get_logger
-from ..shared.config import get_memory_url, ARANGODB_DB, ARANGODB_USER, ARANGODB_PASSWORD
+from ..shared.config import get_memory_url, get_arango_password, ARANGODB_DB, ARANGODB_USER
 
 logger = get_logger("orchestrator", __name__)
 
@@ -51,7 +51,7 @@ def store_page_text(doc_hash: str, page: int, text: str, pdf_path: Optional[str]
         try:
             from arango import ArangoClient
             client = ArangoClient(hosts=get_memory_url())
-            db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=ARANGODB_PASSWORD)
+            db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
             
             if not db.has_collection("pdf_text_cache"):
                 db.create_collection("pdf_text_cache")
@@ -105,7 +105,7 @@ def load_page_text(doc_hash: str, page: int, pdf_path: Optional[str] = None) -> 
     try:
         from arango import ArangoClient
         client = ArangoClient(hosts=get_memory_url())
-        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=ARANGODB_PASSWORD)
+        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
         
         if db.has_collection("pdf_text_cache"):
             cache_col = db.collection("pdf_text_cache")
@@ -148,4 +148,3 @@ def load_page_text(doc_hash: str, page: int, pdf_path: Optional[str] = None) -> 
         f"Page text not found in cache for doc_hash={doc_hash[:16]}... page={page}. "
         "Provide pdf_path to extract from source PDF."
     )
-
