@@ -1,0 +1,37 @@
+# Development Dockerfile with hot reload
+# Build context: src/console
+FROM node:18-slim
+
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm --force --yes
+
+# Copy dependency files
+COPY package.json pnpm-lock.yaml* package-lock.json* yarn.lock* ./
+
+# Install dependencies (including dev dependencies for hot reload)
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm config set auto-install-peers true && \
+    if [ -f pnpm-lock.yaml ]; then \
+        pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile; \
+    elif [ -f package-lock.json ]; then \
+        npm ci || npm install; \
+    elif [ -f yarn.lock ]; then \
+        yarn install --frozen-lockfile || yarn install; \
+    else \
+        pnpm install --no-frozen-lockfile; \
+    fi
+
+# Set development environment
+ENV NODE_ENV=development
+ENV NEXT_TELEMETRY_DISABLED=1
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Run development server with hot reload
+CMD ["pnpm", "dev"]
+

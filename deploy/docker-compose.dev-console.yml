@@ -1,0 +1,23 @@
+# Development override for console service with hot reload
+# This file is automatically used when --dev-console flag is passed to run_stack.sh
+# Note: Network is defined in the main docker-compose.yml, so we just reference it here
+
+services:
+  console:
+    build:
+      dockerfile: Dockerfile.dev
+    environment:
+      - NODE_ENV=development
+    volumes:
+      # Mount source code for hot reload
+      - ../src/console:/app:rw
+      # Preserve node_modules from container (prevents overwriting with host's node_modules)
+      - console_node_modules:/app/node_modules
+    networks:
+      - vyasa-net
+    # Install dependencies on first start if node_modules is empty
+    command: sh -c "if [ ! -d /app/node_modules/.bin ]; then echo 'Installing dependencies...' && pnpm install; fi && pnpm dev"
+
+volumes:
+  console_node_modules:
+
