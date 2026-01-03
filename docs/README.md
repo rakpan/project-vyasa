@@ -526,7 +526,7 @@ ArangoDB: http://localhost:8529
 - **[001: Local Vector DB](./decisions/001-local-vector-db.md)**: Decision to replace Pinecone with local Qdrant
 
 ### 📖 [Runbooks](./runbooks/)
-- **[Operator Handbook](./operations/01-operator-handbook.md)**: Step-by-step operations guide
+- **[Operator Handbook](./runbooks/operator-handbook.md)**: Step-by-step operations guide
 
 ---
 
@@ -559,6 +559,6 @@ ArangoDB: http://localhost:8529
 
 ## Contributing
 
-See the [Operator Handbook](./operations/01-operator-handbook.md) for setup instructions.
+See the [Operator Handbook](./runbooks/operator-handbook.md) for setup instructions.
 
 For questions or issues, please refer to the architecture documentation or open an issue in the repository.

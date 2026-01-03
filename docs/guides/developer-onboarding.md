@@ -1,4 +1,4 @@
-# 02 Developer Onboarding
+# Developer Onboarding
 
 Content merged from `development.md` and `model-migration.md`.
 
@@ -14,3 +14,4 @@ Content merged from `development.md` and `model-migration.md`.
 
 ## Debugging and Tests
 - Running unit/integration tests, fixtures, common failure modes
+

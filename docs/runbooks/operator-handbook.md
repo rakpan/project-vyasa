@@ -1,4 +1,4 @@
-# 01 Operator Handbook
+# Operator Handbook
 
 Content merged from `getting-started.md` and `user-guide.md`.
 
@@ -13,3 +13,4 @@ Content merged from `getting-started.md` and `user-guide.md`.
 
 ## Troubleshooting
 - Common errors, logs to inspect, how to restart failing services
+

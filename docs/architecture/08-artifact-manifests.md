@@ -18,3 +18,4 @@ Contents:
 Telemetry:
 - `artifact_manifest_written` on success
 - `artifact_manifest_failed` on failure (job continues)
+

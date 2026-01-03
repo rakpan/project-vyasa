@@ -34,3 +34,5 @@ flowchart LR
 - [04-resource-optimization](04-resource-optimization.md)
 - [05-telemetry-and-observability](05-telemetry-and-observability.md)
 - [06-evaluation-and-regression](06-evaluation-and-regression.md)
+- [07-agent-orchestration-api](07-agent-orchestration-api.md)
+- [08-artifact-manifests](08-artifact-manifests.md)

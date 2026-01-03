@@ -323,7 +323,8 @@ project-vyasa/
 │   └── run_mock_llm.sh
 └── docs/
     ├── architecture/     # System design (C4, workflow, model inventory)
-    ├── operations/       # Operational guides (getting-started, development)
+    ├── runbooks/        # Operational runbooks (operator handbook)
+    ├── guides/          # Developer guides (onboarding, testing)
     ├── decisions/        # Architecture Decision Records
     ├── configuration/    # Configuration guides (rigor levels)
     └── migrations/       # Migration guides (React Flow, etc.)
@@ -334,11 +335,11 @@ project-vyasa/
 ## Documentation & Resources
 
 - **[Quick Start Guide](QUICK_START.md)** - Fastest path to running Project Vyasa (5 minutes)
-- **[Getting Started Guide](docs/operations/getting-started.md)** - Detailed step-by-step setup
+- **[Operator Handbook](docs/runbooks/operator-handbook.md)** - Detailed step-by-step setup
 - **[System Architecture](docs/architecture/system-map.md)** - C4 Container Diagram
-- **[Console Navigation](docs/operations/console-navigation.md)** - Projects → Jobs → Workbench flow
+- **[Console Navigation](docs/runbooks/console-navigation.md)** - Projects → Jobs → Workbench flow
 - **[Agent Workflow](docs/architecture/agent-workflow.md)** - LangGraph State Machine
-- **[Development Guide](docs/operations/development.md)** - Coding standards (Strict JSON, Pydantic-first)
+- **[Developer Onboarding](docs/guides/developer-onboarding.md)** - Coding standards (Strict JSON, Pydantic-first)
 - **[Architecture Overview](docs/architecture/00-overview.md)** - Full architecture docs
 
 ---

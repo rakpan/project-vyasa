@@ -182,7 +182,7 @@ export function OpikLiveFeedPanel({ jobId, opikEnabled, opikTraceUrl }: OpikLive
             </Badge>
           </div>
           <Link
-            href="/docs/operations/opik"
+            href="/docs/architecture/05-telemetry-and-observability#opik-observability"
             className="text-xs text-primary hover:underline flex items-center gap-1"
             target="_blank"
             rel="noopener noreferrer"
