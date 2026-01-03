@@ -36,7 +36,7 @@ export function VectorConnection({ className }: VectorConnectionProps) {
   // Fetch vector DB stats
   const fetchStats = async () => {
     try {
-      const data = await apiFetch<any>('/api/pinecone-diag/stats');
+      const data = await apiFetch<any>('/api/qdrant/stats');
 
       setStats({
         nodes: typeof data.totalVectorCount === 'number' ? data.totalVectorCount : 0,
@@ -123,7 +123,9 @@ export function VectorConnection({ className }: VectorConnectionProps) {
                   setConnectionStatus("checking");
                   setError(null);
                   try {
-                    await apiFetch('/api/pinecone-diag/create-index', { method: 'POST' });
+                    // Collection creation is handled automatically by QdrantService.initialize()
+                    // No separate endpoint needed
+                    await apiFetch('/api/qdrant/stats', { method: 'GET' });
                     // Wait a bit for the collection to be created
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     checkConnection();

@@ -1,293 +1,283 @@
-//
-// SPDX-FileCopyrightText: Copyright (c) 1993-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-// SPDX-License-Identifier: Apache-2.0
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-
 /**
- * Tests for ProjectsPage job fetching race condition protection.
- * 
- * Verifies:
- * - Request cancellation on rerender/unmount
- * - Stale response protection (earlier response doesn't overwrite newer state)
- * - Only latest fetch updates state
+ * Tests for Projects Hub Page
+ * Tests grouping render, view toggle, filter apply/reset
  */
 
-import React from "react"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { useRouter } from "next/navigation"
 import ProjectsPage from "../page"
-import { useProjectStore } from "@/state/useProjectStore"
-
-// Mock the project store
-jest.mock("@/state/useProjectStore", () => ({
-  useProjectStore: jest.fn(),
-}))
+import * as projectService from "@/services/projectService"
 
 // Mock next/navigation
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({
-    push: jest.fn(),
-  }),
+  useRouter: jest.fn(),
 }))
 
-// Mock toast
-jest.mock("@/hooks/use-toast", () => ({
-  toast: jest.fn(),
+// Mock project service
+jest.mock("@/services/projectService", () => ({
+  createProject: jest.fn(),
+  listProjectsHub: jest.fn(),
 }))
 
-// Mock fetch globally
-global.fetch = jest.fn()
-
-describe("ProjectsPage Job Fetching", () => {
-  const mockProjects = [
-    { id: "proj-1", title: "Project 1", created_at: "2024-01-01", seed_files: [] },
-    { id: "proj-2", title: "Project 2", created_at: "2024-01-02", seed_files: [] },
-  ]
-
-  const mockJobs = {
-    "proj-1": { job_id: "job-1", status: "completed" },
-    "proj-2": { job_id: "job-2", status: "running" },
+// Mock localStorage
+const localStorageMock = (() => {
+  let store: Record<string, string> = {}
+  return {
+    getItem: jest.fn((key: string) => store[key] || null),
+    setItem: jest.fn((key: string, value: string) => {
+      store[key] = value
+    }),
+    removeItem: jest.fn((key: string) => {
+      delete store[key]
+    }),
+    clear: jest.fn(() => {
+      store = {}
+    }),
   }
+})()
+
+Object.defineProperty(window, "localStorage", {
+  value: localStorageMock,
+})
+
+describe("ProjectsPage", () => {
+  const mockPush = jest.fn()
+  const mockListProjectsHub = projectService.listProjectsHub as jest.MockedFunction<
+    typeof projectService.listProjectsHub
+  >
 
   beforeEach(() => {
     jest.clearAllMocks()
-    jest.useFakeTimers()
-
-    // Mock useProjectStore
-    ;(useProjectStore as jest.Mock).mockReturnValue({
-      projects: mockProjects,
-      isLoading: false,
-      error: null,
-      fetchProjects: jest.fn(),
-      createProject: jest.fn(),
+    localStorageMock.clear()
+    ;(useRouter as jest.Mock).mockReturnValue({
+      push: mockPush,
     })
   })
 
-  afterEach(() => {
-    jest.useRealTimers()
+  const mockGrouping = {
+    active_research: [
+      {
+        project_id: "active-1",
+        title: "Active Project 1",
+        tags: ["security"],
+        rigor_level: "exploratory" as const,
+        last_updated: "2024-01-15T10:30:00Z",
+        status: "Processing" as const,
+        open_flags_count: 0,
+        manifest_summary: {
+          words: 5000,
+          claims: 150,
+          density: 3.0,
+          citations: 25,
+          tables: 3,
+          figures: 2,
+          flags_count_by_type: {},
+        },
+      },
+    ],
+    archived_insights: [
+      {
+        project_id: "archived-1",
+        title: "Archived Project 1",
+        tags: ["research"],
+        rigor_level: "conservative" as const,
+        last_updated: "2023-12-01T10:30:00Z",
+        status: "Idle" as const,
+        open_flags_count: 0,
+      },
+    ],
+  }
+
+  it("renders loading state initially", async () => {
+    mockListProjectsHub.mockImplementation(
+      () => new Promise(() => {}) // Never resolves
+    )
+
+    render(<ProjectsPage />)
+
+    expect(screen.getByText(/Loading projects/i)).toBeInTheDocument()
   })
 
-  it("should cancel previous requests when projects change", async () => {
-    const abortControllers: AbortController[] = []
+  it("renders active research and archived insights sections", async () => {
+    mockListProjectsHub.mockResolvedValue(mockGrouping)
 
-    ;(global.fetch as jest.Mock).mockImplementation((url: string, opts?: RequestInit) => {
-      if (opts?.signal) {
-        abortControllers.push(opts.signal as any)
-      }
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({ jobs: [] }),
-      })
+    render(<ProjectsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Research")).toBeInTheDocument()
+      expect(screen.getByText("Archived Insights")).toBeInTheDocument()
     })
 
-    const { rerender } = render(<ProjectsPage />)
-
-    // Wait for initial fetch
-    await jest.runOnlyPendingTimersAsync()
-
-    expect(abortControllers.length).toBeGreaterThan(0)
-    const firstController = abortControllers[0]
-
-    // Change projects (simulate by updating the mock)
-    ;(useProjectStore as jest.Mock).mockReturnValue({
-      projects: [...mockProjects, { id: "proj-3", title: "Project 3", created_at: "2024-01-03", seed_files: [] }],
-      isLoading: false,
-      error: null,
-      fetchProjects: jest.fn(),
-      createProject: jest.fn(),
-    })
-
-    rerender(<ProjectsPage />)
-
-    // Previous requests should be aborted
-    expect(firstController.aborted).toBe(true)
+    expect(screen.getByText("Active Project 1")).toBeInTheDocument()
+    expect(screen.getByText("Archived Project 1")).toBeInTheDocument()
   })
 
-  it("should not overwrite state with stale response", async () => {
-    let resolveFirst: (value: any) => void
-    let resolveSecond: (value: any) => void
+  it("toggles between list and card view", async () => {
+    mockListProjectsHub.mockResolvedValue(mockGrouping)
 
-    const firstPromise = new Promise((resolve) => {
-      resolveFirst = resolve
+    render(<ProjectsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Project 1")).toBeInTheDocument()
     })
 
-    const secondPromise = new Promise((resolve) => {
-      resolveSecond = resolve
+    // Should start with list view (default)
+    expect(screen.getByRole("table")).toBeInTheDocument()
+
+    // Find and click card view toggle
+    const cardToggle = screen.getByLabelText("Card view")
+    fireEvent.click(cardToggle)
+
+    // Should switch to card view (no table)
+    await waitFor(() => {
+      expect(screen.queryByRole("table")).not.toBeInTheDocument()
     })
 
-    let fetchCallCount = 0
-    ;(global.fetch as jest.Mock).mockImplementation(() => {
-      fetchCallCount++
-      if (fetchCallCount === 1) {
-        return firstPromise
-      }
-      return secondPromise
-    })
+    // Click list view toggle
+    const listToggle = screen.getByLabelText("List view")
+    fireEvent.click(listToggle)
 
-    const { rerender } = render(<ProjectsPage />)
-
-    // Start first fetch
-    await jest.runOnlyPendingTimersAsync()
-
-    // Trigger second fetch by changing projects
-    ;(useProjectStore as jest.Mock).mockReturnValue({
-      projects: mockProjects,
-      isLoading: false,
-      error: null,
-      fetchProjects: jest.fn(),
-      createProject: jest.fn(),
-    })
-    rerender(<ProjectsPage />)
-
-    // Resolve second fetch first (faster response)
-    resolveSecond!({
-      ok: true,
-      json: async () => ({
-        jobs: [{ job_id: "job-new", status: "completed" }],
-      }),
-    })
-
-    await jest.runOnlyPendingTimersAsync()
-
-    // Resolve first fetch second (slower response, should be ignored)
-    resolveFirst!({
-      ok: true,
-      json: async () => ({
-        jobs: [{ job_id: "job-old", status: "running" }],
-      }),
-    })
-
-    await jest.runOnlyPendingTimersAsync()
-
-    // The second (newer) response should be the one that updates state
-    // Since we can't easily test state in this scenario without more setup,
-    // we verify that both fetches were initiated
-    expect(fetchCallCount).toBe(2)
-  })
-
-  it("should cancel requests on component unmount", async () => {
-    const abortControllers: AbortController[] = []
-
-    ;(global.fetch as jest.Mock).mockImplementation((url: string, opts?: RequestInit) => {
-      if (opts?.signal) {
-        abortControllers.push(opts.signal as any)
-      }
-      // Return a promise that never resolves (simulating slow network)
-      return new Promise(() => {})
-    })
-
-    const { unmount } = render(<ProjectsPage />)
-
-    // Wait for fetch to be initiated
-    await jest.runOnlyPendingTimersAsync()
-
-    expect(abortControllers.length).toBeGreaterThan(0)
-
-    // Unmount component
-    unmount()
-
-    // All abort controllers should be aborted
-    abortControllers.forEach((controller) => {
-      expect(controller.aborted).toBe(true)
+    // Should switch back to list view
+    await waitFor(() => {
+      expect(screen.getByRole("table")).toBeInTheDocument()
     })
   })
 
-  it("should ignore AbortError when requests are cancelled", async () => {
-    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation()
+  it("applies filters when changed", async () => {
+    mockListProjectsHub.mockResolvedValue(mockGrouping)
 
-    ;(global.fetch as jest.Mock).mockImplementation(() => {
-      const abortError = new Error("Aborted")
-      Object.defineProperty(abortError, "name", { value: "AbortError" })
-      return Promise.reject(abortError)
+    render(<ProjectsPage />)
+
+    await waitFor(() => {
+      expect(mockListProjectsHub).toHaveBeenCalled()
     })
 
-    const { rerender } = render(<ProjectsPage />)
+    // Get initial call
+    const initialCall = mockListProjectsHub.mock.calls[0][0]
 
-    await jest.runOnlyPendingTimersAsync()
+    // Find search input and type
+    const searchInput = screen.getByPlaceholderText(/Search projects/i)
+    fireEvent.change(searchInput, { target: { value: "security" } })
 
-    // Change projects to trigger cancellation
-    ;(useProjectStore as jest.Mock).mockReturnValue({
-      projects: mockProjects,
-      isLoading: false,
-      error: null,
-      fetchProjects: jest.fn(),
-      createProject: jest.fn(),
-    })
-    rerender(<ProjectsPage />)
+    // Wait for debounced filter update
+    await waitFor(
+      () => {
+        expect(mockListProjectsHub).toHaveBeenCalledTimes(2)
+      },
+      { timeout: 1000 }
+    )
 
-    await jest.runOnlyPendingTimersAsync()
-
-    // AbortError should be ignored (no console.error for AbortError)
-    // We can't easily verify this without more setup, but the component should not crash
-    expect(consoleErrorSpy).not.toHaveBeenCalled()
-
-    consoleErrorSpy.mockRestore()
+    const filterCall = mockListProjectsHub.mock.calls[1][0]
+    expect(filterCall?.query).toBe("security")
   })
 
-  it("should pass AbortSignal to fetch requests", async () => {
-    let capturedSignal: AbortSignal | undefined
+  it("resets filters when reset button is clicked", async () => {
+    mockListProjectsHub.mockResolvedValue(mockGrouping)
 
-    ;(global.fetch as jest.Mock).mockImplementation((url: string, opts?: RequestInit) => {
-      capturedSignal = opts?.signal
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({ jobs: [] }),
-      })
+    render(<ProjectsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Research")).toBeInTheDocument()
+    })
+
+    // Set a filter
+    const searchInput = screen.getByPlaceholderText(/Search projects/i)
+    fireEvent.change(searchInput, { target: { value: "test" } })
+
+    // Open more filters popover
+    const moreFiltersButton = screen.getByText(/More Filters/i)
+    fireEvent.click(moreFiltersButton)
+
+    // Find and click reset button
+    await waitFor(() => {
+      const resetButton = screen.getByText(/Reset Filters/i)
+      fireEvent.click(resetButton)
+    })
+
+    // Search input should be cleared
+    await waitFor(() => {
+      expect(searchInput).toHaveValue("")
+    })
+  })
+
+  it("persists view mode preference in localStorage", async () => {
+    mockListProjectsHub.mockResolvedValue(mockGrouping)
+
+    render(<ProjectsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Research")).toBeInTheDocument()
+    })
+
+    // Switch to card view
+    const cardToggle = screen.getByLabelText("Card view")
+    fireEvent.click(cardToggle)
+
+    // Check localStorage was updated
+    await waitFor(() => {
+      expect(localStorageMock.setItem).toHaveBeenCalledWith(
+        "vyasa-project-view",
+        "card"
+      )
+    })
+  })
+
+  it("restores view mode from localStorage on mount", async () => {
+    localStorageMock.setItem("vyasa-project-view", "card")
+    mockListProjectsHub.mockResolvedValue(mockGrouping)
+
+    render(<ProjectsPage />)
+
+    await waitFor(() => {
+      // Should not have table (card view)
+      expect(screen.queryByRole("table")).not.toBeInTheDocument()
+    })
+  })
+
+  it("shows empty state when no active projects", async () => {
+    mockListProjectsHub.mockResolvedValue({
+      active_research: [],
+      archived_insights: [],
     })
 
     render(<ProjectsPage />)
 
-    await jest.runOnlyPendingTimersAsync()
-
-    expect(capturedSignal).toBeInstanceOf(AbortSignal)
+    await waitFor(() => {
+      expect(screen.getByText(/No active research projects/i)).toBeInTheDocument()
+      expect(screen.getByText(/Create Your First Project/i)).toBeInTheDocument()
+    })
   })
 
-  it("should handle multiple rapid project changes without leaks", async () => {
-    const abortControllers: AbortController[] = []
-
-    ;(global.fetch as jest.Mock).mockImplementation((url: string, opts?: RequestInit) => {
-      if (opts?.signal) {
-        abortControllers.push(opts.signal as any)
-      }
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({ jobs: [] }),
-      })
+  it("shows empty state when no archived projects", async () => {
+    mockListProjectsHub.mockResolvedValue({
+      active_research: mockGrouping.active_research,
+      archived_insights: [],
     })
 
-    const { rerender } = render(<ProjectsPage />)
+    render(<ProjectsPage />)
 
-    // Rapidly change projects multiple times
-    for (let i = 0; i < 5; i++) {
-      ;(useProjectStore as jest.Mock).mockReturnValue({
-        projects: mockProjects,
-        isLoading: false,
-        error: null,
-        fetchProjects: jest.fn(),
-        createProject: jest.fn(),
-      })
-      rerender(<ProjectsPage />)
-      await jest.runOnlyPendingTimersAsync()
+    await waitFor(() => {
+      expect(screen.getByText(/No archived insights yet/i)).toBeInTheDocument()
+    })
+  })
+
+  it("navigates to project when row is clicked", async () => {
+    mockListProjectsHub.mockResolvedValue(mockGrouping)
+
+    render(<ProjectsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText("Active Project 1")).toBeInTheDocument()
+    })
+
+    // Click on the project row
+    const projectRow = screen.getByText("Active Project 1").closest("tr")
+    if (projectRow) {
+      fireEvent.click(projectRow)
     }
 
-    // All previous controllers except the last should be aborted
-    for (let i = 0; i < abortControllers.length - 1; i++) {
-      expect(abortControllers[i].aborted).toBe(true)
-    }
-
-    // Last controller should still be active (or at least the last one created)
-    // Note: This might not be perfect due to timing, but we verify cleanup happens
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/projects/active-1")
+    })
   })
 })
-

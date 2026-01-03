@@ -38,8 +38,8 @@ const config: Config = {
         'widest': '0.05em',
       },
       colors: {
-        background: "rgb(var(--background) / <alpha-value>)",
-        foreground: "rgb(var(--foreground) / <alpha-value>)",
+        background: "#FFFFFF",
+        foreground: "#0F172A",
         card: {
           DEFAULT: "rgb(var(--card) / <alpha-value>)",
           foreground: "rgb(var(--card-foreground) / <alpha-value>)",
@@ -57,7 +57,7 @@ const config: Config = {
           foreground: "rgb(var(--secondary-foreground) / <alpha-value>)",
         },
         muted: {
-          DEFAULT: "rgb(var(--muted) / <alpha-value>)",
+          DEFAULT: "#F8FAFC",
           foreground: "rgb(var(--muted-foreground) / <alpha-value>)",
         },
         accent: {

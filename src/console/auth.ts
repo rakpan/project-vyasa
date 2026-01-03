@@ -6,6 +6,7 @@ import NextAuth from "next-auth"
 import Credentials from "next-auth/providers/credentials"
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  trustHost: true, // Allow access from any hostname (localhost, hostname, IP, etc.)
   providers: [
     Credentials({
       credentials: {

@@ -37,7 +37,7 @@ class FakeClient:
         return FakeDB()
 
 
-def test_saver_builds_manifest_once(monkeypatch, base_node_state):
+def test_saver_builds_manifest_once(mock_arango_firewall, monkeypatch, base_node_state):
     """Test that saver builds manifest once and persists it."""
     call_count = {"build": 0, "persist": 0, "telemetry": 0}
 
@@ -60,7 +60,11 @@ def test_saver_builds_manifest_once(monkeypatch, base_node_state):
     def fake_emit(event_type, data):
         call_count["telemetry"] += 1
 
-    # ArangoClient is already mocked by mock_arango_firewall (autouse fixture)
+    # Configure the firewall's mock explicitly
+    mock_client = mock_arango_firewall("http://fake:8529")
+    mock_db = mock_client.db()
+    mock_db.has_collection.return_value = True
+
     monkeypatch.setattr(nodes, "build_manifest", fake_build)
     monkeypatch.setattr(nodes, "persist_manifest", fake_persist)
     monkeypatch.setattr(nodes.telemetry_emitter, "emit_event", fake_emit)
@@ -80,7 +84,7 @@ def test_saver_builds_manifest_once(monkeypatch, base_node_state):
     assert call_count["telemetry"] >= 0  # telemetry may not fire in this simplified test
 
 
-def test_saver_emits_failure_on_manifest_error(monkeypatch, base_node_state):
+def test_saver_emits_failure_on_manifest_error(mock_arango_firewall, monkeypatch, base_node_state):
     """Test that saver emits failure event when manifest build fails."""
     call_count = {"fail": 0}
 
@@ -93,7 +97,11 @@ def test_saver_emits_failure_on_manifest_error(monkeypatch, base_node_state):
         if event_type == "artifact_manifest_failed":
             call_count["fail"] += 1
 
-    # ArangoClient is already mocked by mock_arango_firewall (autouse fixture)
+    # Configure the firewall's mock explicitly
+    mock_client = mock_arango_firewall("http://fake:8529")
+    mock_db = mock_client.db()
+    mock_db.has_collection.return_value = True
+
     monkeypatch.setattr(nodes, "build_manifest", fake_build)
     monkeypatch.setattr(nodes, "persist_manifest", lambda *args, **kwargs: None)
     monkeypatch.setattr(nodes.telemetry_emitter, "emit_event", fake_emit)

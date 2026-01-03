@@ -62,6 +62,40 @@ def pytest_configure(config):
         Memory.__init__ = noop_init
     except ImportError:
         pass  # joblib might not be installed
+    
+    # Patch RoleRegistry._init_arangodb early to prevent DB connections during import
+    # RoleRegistry is instantiated at module level in nodes.py and tone_guard.py,
+    # so we need to patch it before those modules are imported
+    try:
+        # Patch _init_arangodb early to prevent connections during module import
+        # This is a no-op that just sets db=None
+        def early_mock_init_arangodb(self):
+            self.db = None
+        
+        # Try to patch if the module is already loaded
+        import sys
+        if "src.shared.role_manager" in sys.modules:
+            role_manager_module = sys.modules["src.shared.role_manager"]
+            if hasattr(role_manager_module, "RoleRegistry"):
+                # Patch the method on the class
+                role_manager_module.RoleRegistry._init_arangodb = early_mock_init_arangodb
+                
+                # Also patch any existing instances in modules that might have been imported
+                modules_to_check = [
+                    "src.orchestrator.nodes.nodes",
+                    "src.orchestrator.tone_guard",
+                    "src.orchestrator.nodes.tone_guard",
+                ]
+                for module_name in modules_to_check:
+                    if module_name in sys.modules:
+                        module = sys.modules[module_name]
+                        if hasattr(module, "role_registry"):
+                            # Set db to None and patch methods on the instance
+                            instance = module.role_registry
+                            instance.db = None
+                            instance._init_arangodb = lambda: None  # No-op
+    except Exception:
+        pass  # Will be handled by fixture, but early patch helps if module is already loaded
 
 
 @pytest.fixture(autouse=True)
@@ -378,6 +412,89 @@ def mock_filesystem_firewall(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def mock_role_registry_firewall(monkeypatch):
+    """Automatically mock RoleRegistry for all unit tests.
+    
+    RoleRegistry is instantiated at module level in nodes.py and tone_guard.py,
+    which causes it to try to connect to ArangoDB during import. This firewall
+    prevents those connections by:
+    1. Patching RoleRegistry methods to prevent DB connections
+    2. Patching module-level role_registry instances if they already exist
+    """
+    from src.shared.schema import RoleProfile
+    
+    # Create a mock RoleProfile with default role configuration
+    default_role = RoleProfile(
+        name="The Cartographer",
+        description="Extracts structured entities and relations from text",
+        system_prompt="You are a knowledge graph extractor. Extract triples in JSON format.",
+        version=1,
+        allowed_tools=[],
+        focus_entities=[],
+        is_enabled=True
+    )
+    
+    # Also create a Brain role for tone_guard tests
+    brain_role = RoleProfile(
+        name="The Brain",
+        description="High-level reasoning and JSON planning",
+        system_prompt="You are a reasoning assistant. Rewrite text for neutral tone while preserving citations.",
+        version=1,
+        allowed_tools=[],
+        focus_entities=[],
+        is_enabled=True
+    )
+    
+    # Patch _init_arangodb to be a no-op (prevents DB connection during __init__)
+    # This is called by RoleRegistry.__init__, so patching it prevents connections
+    def mock_init_arangodb(self):
+        """No-op that prevents ArangoDB connection."""
+        self.db = None
+        # Don't try to connect - just set db to None
+    
+    # Patch get_role to return default role without DB lookup
+    def mock_get_role(self, name: str, version=None):
+        """Return default role without DB lookup."""
+        # Return appropriate role based on name
+        if name == "The Brain":
+            return brain_role
+        return default_role
+    
+    # Patch both methods to prevent DB connections
+    # IMPORTANT: Patch _init_arangodb first, as it's called during __init__
+    monkeypatch.setattr(
+        "src.shared.role_manager.RoleRegistry._init_arangodb",
+        mock_init_arangodb
+    )
+    monkeypatch.setattr(
+        "src.shared.role_manager.RoleRegistry.get_role",
+        mock_get_role
+    )
+    
+    # Also patch module-level role_registry instances if they already exist
+    # This handles cases where modules were imported before the fixture ran
+    import sys
+    modules_to_patch = [
+        "src.orchestrator.nodes.nodes",
+        "src.orchestrator.tone_guard",
+        "src.orchestrator.nodes.tone_guard",
+    ]
+    for module_name in modules_to_patch:
+        if module_name in sys.modules:
+            try:
+                module = sys.modules[module_name]
+                if hasattr(module, "role_registry"):
+                    # Patch the instance's methods directly
+                    module.role_registry._init_arangodb = lambda self: setattr(self, 'db', None)
+                    module.role_registry.get_role = lambda self, name, version=None: (brain_role if name == "The Brain" else default_role)
+                    module.role_registry.db = None  # Ensure db is None
+            except Exception:
+                pass  # If patching fails, the class-level patches should still work
+    
+    yield default_role
+
+
+@pytest.fixture(autouse=True)
 def mock_project_context_firewall(monkeypatch):
     """Automatically mock ProjectService for all unit tests.
     
@@ -409,6 +526,9 @@ def mock_project_context_firewall(monkeypatch):
     mock_service.add_seed_file = Mock()
     
     # Patch at the source - both for nodes and server
+    # IMPORTANT: We patch the function itself, which should prevent any real connections.
+    # However, we also need to ensure that if the module is already loaded, the global
+    # _project_service variable is set to prevent lazy initialization attempts.
     monkeypatch.setattr(
         "src.orchestrator.nodes.nodes._get_project_service",
         lambda: mock_service
@@ -418,6 +538,18 @@ def mock_project_context_firewall(monkeypatch):
         "src.orchestrator.server.get_project_service",
         lambda: mock_service
     )
+    # Pre-emptively set the global _project_service if the module is already loaded
+    # This prevents _get_project_service() from trying to create a real ArangoClient
+    # if it's called before our patch is fully applied
+    import sys
+    if "src.orchestrator.nodes.nodes" in sys.modules:
+        try:
+            nodes_module = sys.modules["src.orchestrator.nodes.nodes"]
+            # Set the global variable directly to prevent lazy initialization
+            setattr(nodes_module, "_project_service", mock_service)
+        except Exception:
+            # If setting fails, the function patch should still work
+            pass
     
     yield mock_service
 

@@ -273,17 +273,18 @@ export function NavFooter() {
                     >
                       <Icon className="h-4 w-4" />
                     </div>
-                    {isActive && (
+                    {/* Pulsing status badge for active/blocked states */}
+                    {(isActive || isBlocked) && (
                       <div
                         className={cn(
                           "absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full",
-                          agent.color,
+                          isBlocked ? "bg-amber-500" : agent.color,
                           "animate-pulse"
                         )}
+                        style={{
+                          animation: "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+                        }}
                       />
-                    )}
-                    {isBlocked && (
-                      <div className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" />
                     )}
                   </div>
                 </TooltipTrigger>

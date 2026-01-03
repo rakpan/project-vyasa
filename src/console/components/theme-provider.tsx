@@ -17,89 +17,30 @@
 "use client"
 
 import type React from "react"
-
-import { createContext, useContext, useEffect, useState } from "react"
-
-type Theme = "dark" | "light" | "system"
+import { useEffect } from "react"
 
 type ThemeProviderProps = {
   children: React.ReactNode
-  defaultTheme?: Theme
-  forcedTheme?: Theme
-  storageKey?: string
 }
 
-type ThemeProviderState = {
-  theme: Theme
-  setTheme: (theme: Theme) => void
-}
-
-const initialState: ThemeProviderState = {
-  theme: "system",
-  setTheme: () => null,
-}
-
-const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
-
+/**
+ * Light theme only - Project Vyasa design system
+ * Enforces light theme and removes any dark mode classes
+ */
 export function ThemeProvider({
   children,
-  defaultTheme = "light",
-  forcedTheme,
-  storageKey = "project-vyasa-theme",
   ...props
 }: ThemeProviderProps) {
-  const [theme, setTheme] = useState<Theme>(forcedTheme || defaultTheme)
-
-  useEffect(() => {
-    if (forcedTheme) {
-      setTheme(forcedTheme)
-      return
-    }
-    const savedTheme = localStorage.getItem(storageKey)
-    if (savedTheme) {
-      setTheme(savedTheme as Theme)
-    }
-  }, [forcedTheme, storageKey])
-
+  // Enforce light theme on mount and ensure it stays light
   useEffect(() => {
     const root = window.document.documentElement
+    root.classList.remove("dark")
+    root.classList.add("light")
+    
+    // Clear any theme preference from localStorage
+    localStorage.removeItem("project-vyasa-theme")
+  }, [])
 
-    root.classList.remove("light", "dark")
-
-    if (forcedTheme) {
-      root.classList.add(forcedTheme)
-      return
-    }
-
-    if (theme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
-      root.classList.add(systemTheme)
-      return
-    }
-
-    root.classList.add(theme)
-  }, [theme, forcedTheme])
-
-  const value = {
-    theme,
-    setTheme: (theme: Theme) => {
-      localStorage.setItem(storageKey, theme)
-      setTheme(theme)
-    },
-  }
-
-  return (
-    <ThemeProviderContext.Provider {...props} value={value}>
-      {children}
-    </ThemeProviderContext.Provider>
-  )
-}
-
-export const useTheme = () => {
-  const context = useContext(ThemeProviderContext)
-
-  if (context === undefined) throw new Error("useTheme must be used within a ThemeProvider")
-
-  return context
+  return <>{children}</>
 }
 

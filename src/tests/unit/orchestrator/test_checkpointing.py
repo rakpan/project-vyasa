@@ -123,25 +123,42 @@ async def test_checkpoint_and_resume_reframer_interrupt(monkeypatch, base_node_s
 
     # Resume with user approval
     resume_state = thread_store["checkpoint"]["state"].copy()  # Make a copy to avoid modifying the checkpoint
+    
+    # Merge base_node_state to ensure all required fields are present
+    # This ensures raw_text, url, and other required fields are always available
+    resume_state = {
+        **base_node_state,  # Start with base_node_state to get all required fields
+        **resume_state,  # Then overlay the checkpointed state (preserves workflow state)
+    }
+    
+    # Override specific fields for resume
     resume_state["needs_signoff"] = False
     resume_state["reframing_proposal_id"] = "approved"
-    # Ensure raw_text is preserved for cartographer node - it's required
-    # Set it explicitly before the graph is invoked
-    if "raw_text" not in resume_state or not resume_state.get("raw_text"):
-        resume_state["raw_text"] = "Sample research text for extraction"
+    
+    # Ensure raw_text is explicitly set (required by cartographer_node)
+    # Use a non-empty value from base_node_state or fallback to a default
+    if not resume_state.get("raw_text"):
+        resume_state["raw_text"] = base_node_state.get("raw_text", "Sample research text for extraction")
+    
     # Ensure url is present (required by cartographer)
-    if "url" not in resume_state:
-        resume_state["url"] = "http://test-source.example.com"
-    # Also ensure jobId and threadId are present (required by validate_state_schema)
+    if not resume_state.get("url"):
+        resume_state["url"] = base_node_state.get("url", "http://test-source.example.com")
+    
+    # Ensure jobId and threadId are present (required by validate_state_schema)
     if "jobId" not in resume_state:
         resume_state["jobId"] = resume_state.get("job_id", job_id)
     if "threadId" not in resume_state:
         resume_state["threadId"] = resume_state.get("thread_id", job_id)
+    
     # Ensure manifest and triples are present (may be required by nodes)
-    if "manifest" not in resume_state:
-        resume_state["manifest"] = {"project_id": resume_state.get("project_id", ""), "triples": []}
+    if "manifest" not in resume_state or not resume_state.get("manifest"):
+        resume_state["manifest"] = base_node_state.get("manifest", {"project_id": resume_state.get("project_id", "p1"), "triples": []})
     if "triples" not in resume_state:
-        resume_state["triples"] = []
+        resume_state["triples"] = base_node_state.get("triples", [])
+    
+    # Validate that raw_text is present and non-empty before resuming
+    assert resume_state.get("raw_text"), f"raw_text must be present and non-empty in resume_state. Got: {resume_state.get('raw_text')}"
+    assert resume_state.get("url"), f"url must be present in resume_state. Got: {resume_state.get('url')}"
 
     final = await graph.ainvoke(resume_state, config={"configurable": {"thread_id": job_id}})
     assert final.get("manifest"), "Manifest missing after resume"

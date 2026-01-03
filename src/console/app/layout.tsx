@@ -24,10 +24,9 @@ import { DocumentProvider } from "@/contexts/document-context"
 import { ClientInitializer } from "@/components/client-init"
 import { Toaster } from "@/components/ui/toaster"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
-import { NavMain } from "@/components/nav-main"
-import { NavProject } from "@/components/nav-project"
-import { TopBar } from "@/components/topbar"
-import { MainContentArea } from "@/components/main-content-area"
+import { AuthGuard } from "@/components/auth-guard"
+import { SessionProvider } from "@/components/session-provider"
+import { ConditionalLayout } from "@/components/conditional-layout"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -38,7 +37,26 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Project Vyasa Console",
   description: "Project Vyasa research factory console for knowledge graph management",
-    generator: 'v0.dev'
+  generator: 'v0.dev',
+  icons: {
+    icon: [
+      {
+        url: "/project_vyasa-logo-16.ico",
+        sizes: "16x16",
+        type: "image/x-icon",
+      },
+      {
+        url: "/project_vyasa-logo-32.ico",
+        sizes: "32x32",
+        type: "image/x-icon",
+      },
+      {
+        url: "/project_vyasa-logo-48.ico",
+        sizes: "48x48",
+        type: "image/x-icon",
+      },
+    ],
+  },
 }
 
 export default function RootLayout({
@@ -49,32 +67,21 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className={`${inter.variable} light`}>
       <body className={`${inter.className} blueprint-grid`}>
-        <ThemeProvider defaultTheme="light" forcedTheme="light">
-          <ErrorBoundary>
-            <DocumentProvider>
-              <ClientInitializer />
-              {/* Dual-Sidebar Navigation System */}
-              <div className="flex h-screen">
-                {/* Global Navigation Rail */}
-                <NavMain />
-                
-                {/* Project Sub-Navigation (conditional) */}
-                <Suspense fallback={null}>
-                  <NavProject />
-                </Suspense>
-
-                {/* Main Content Area - Dynamic margin based on nav visibility */}
-                <MainContentArea>
-                  <TopBar />
-                  <main className="flex-1 overflow-auto">
-                    {children}
-                  </main>
-                </MainContentArea>
-              </div>
-              <Toaster />
-            </DocumentProvider>
-          </ErrorBoundary>
-        </ThemeProvider>
+        <SessionProvider>
+          <ThemeProvider>
+            <ErrorBoundary>
+              <DocumentProvider>
+                <ClientInitializer />
+                    <AuthGuard excludePaths={["/login", "/projects/new"]}>
+                      <ConditionalLayout excludePaths={["/login", "/projects/new"]}>
+                        {children}
+                      </ConditionalLayout>
+                    </AuthGuard>
+                <Toaster />
+              </DocumentProvider>
+            </ErrorBoundary>
+          </ThemeProvider>
+        </SessionProvider>
       </body>
     </html>
   )

@@ -4,6 +4,7 @@ Job management API endpoints for reprocessing and versioning.
 Provides endpoints for:
 - Reprocessing jobs with new knowledge references
 - Comparing job versions (diff endpoint)
+- Getting conflict reports
 """
 
 import threading
@@ -11,7 +12,7 @@ from typing import Dict, Any, List, Optional, Set
 from flask import Blueprint, request, jsonify
 
 from ..job_manager import create_job, get_job
-from ..job_store import get_job_record, update_job_record
+from ..job_store import get_job_record, update_job_record, get_conflict_report
 from ..state import JobStatus
 from ..telemetry import TelemetryEmitter
 from ...shared.logger import get_logger
@@ -98,181 +99,148 @@ def reprocess_job(job_id: str):
     Request body (JSON):
         {
             "reference_ids": List[str],  # List of external reference IDs to include
-            "reprocess_reason": Optional[str]  # Optional reason for reprocessing
+            "reprocess_reason": str (optional)
         }
-    
-    This endpoint:
-    1. Clones the original job's initial_state
-    2. Sets parent_job_id, job_version=parent.version+1
-    3. Sets force_refresh_context=true
-    4. Stores applied_reference_ids from request
-    5. Enqueues the new job and returns new_job_id
     
     Response:
         {
             "job_id": "new-job-uuid",
-            "parent_job_id": "original-job-uuid",
-            "job_version": 2,
             "status": "QUEUED"
         }
     
     Errors:
-        404: Original job not found
-        400: Invalid reference_ids or job not in a reprocessable state
+        404: Job not found
+        400: Invalid request
+        503: Database unavailable
     """
     job = get_job(job_id)
     if not job:
         return jsonify({"error": "Job not found"}), 404
     
-    status = job.get("status")
-    status_value = status.value if isinstance(status, JobStatus) else str(status)
+    data = request.json or {}
+    reference_ids = data.get("reference_ids", [])
+    reprocess_reason = data.get("reprocess_reason")
     
-    # Only allow reprocessing of jobs in certain states
-    if status_value not in (JobStatus.SUCCEEDED.value, JobStatus.FINALIZED.value, "completed", "low_confidence", "conflicts_present"):
-        return jsonify({"error": f"Job status {status_value} does not allow reprocessing"}), 400
+    if not isinstance(reference_ids, list):
+        return jsonify({"error": "reference_ids must be a list"}), 400
     
-    payload = request.json or {}
-    reference_ids = payload.get("reference_ids", [])
-    reprocess_reason = payload.get("reprocess_reason")
-    
-    if not reference_ids:
-        return jsonify({"error": "reference_ids list is required"}), 400
-    
-    # Get original job's initial_state and record
+    # Get initial state from job record
     record = get_job_record(job_id) or {}
-    initial_state = job.get("initial_state") or {}
+    initial_state = record.get("initial_state") or {}
+    
     if not initial_state:
-        # Try to get from record
-        initial_state = record.get("initial_state") or {}
+        return jsonify({"error": "Job initial state not found"}), 404
     
-    project_id = initial_state.get("project_id")
+    # Create new job with updated reference IDs
+    from ..job_manager import create_job
+    parent_job_id = job_id
+    job_version = _get_job_version(job_id) + 1
     
-    if not project_id:
-        return jsonify({"error": "Original job missing project_id"}), 400
+    new_job_id = create_job(
+        initial_state,
+        parent_job_id=parent_job_id,
+        job_version=job_version,
+        reprocess_reason=reprocess_reason,
+        applied_reference_ids=reference_ids,
+    )
     
-    try:
-        # Get parent job version
-        parent_version = _get_job_version(job_id)
-        new_version = parent_version + 1
-        
-        # Clone job config with reprocessing flags
-        new_initial_state = {
-            **initial_state,
-            "reference_ids": reference_ids,
-            "force_refresh_context": True,  # Prioritize candidate facts
-            "context_sources": {},  # Will be populated during context assembly
+    # Start workflow (import here to avoid circular dependency)
+    from ..server import _run_workflow_async
+    import threading
+    
+    thread = threading.Thread(
+        target=_run_workflow_async,
+        args=(new_job_id, initial_state),
+        daemon=True
+    )
+    thread.start()
+    
+    telemetry_emitter.emit_event("job_reprocessed", {
+        "parent_job_id": parent_job_id,
+        "new_job_id": new_job_id,
+        "reference_ids": reference_ids,
+    })
+    
+    return jsonify({
+        "job_id": new_job_id,
+        "status": JobStatus.QUEUED.value
+    }), 202
+
+
+@jobs_bp.route("/<job_id>/conflict-report", methods=["GET"])
+def get_conflict_report(job_id: str):
+    """Get conflict report for a job.
+    
+    Response:
+        {
+            "report_id": str,
+            "conflict_items": [
+                {
+                    "conflict_id": str,
+                    "summary": str,
+                    "details": str,
+                    "evidence_anchors": [SourcePointer, ...],
+                    ...
+                }
+            ],
+            ...
         }
-        
-        # Create new job with versioning metadata
-        new_job_id = create_job(
-            new_initial_state,
-            parent_job_id=job_id,
-            job_version=new_version,
-            reprocess_reason=reprocess_reason,
-            applied_reference_ids=reference_ids,
-        )
-        
-        # Emit reprocess requested telemetry
-        telemetry_emitter.emit_event(
-            "job_reprocess_requested",
-            {
-                "parent_job_id": job_id,
-                "new_job_id": new_job_id,
-                "applied_reference_ids": reference_ids,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "job_version": new_version,
-                "reprocess_reason": reprocess_reason,
-            },
-        )
-        
-        # Start the workflow (lazy import to avoid circular dependency)
-        from ..server import _run_workflow_async
-        thread = threading.Thread(
-            target=_run_workflow_async,
-            args=(new_job_id, new_initial_state),
-            daemon=True
-        )
-        thread.start()
-        
-        return jsonify({
-            "job_id": new_job_id,
-            "parent_job_id": job_id,
-            "job_version": new_version,
-            "status": JobStatus.QUEUED.value
-        }), 202
-        
-    except Exception as exc:
-        logger.error(f"Reprocess failed for job {job_id}: {exc}", exc_info=True)
-        return jsonify({"error": "Reprocess failed"}), 500
+    
+    Errors:
+        404: Job or conflict report not found
+    """
+    record = get_job_record(job_id)
+    if not record:
+        return jsonify({"error": "Job not found"}), 404
+    
+    conflict_report_id = record.get("conflict_report_id")
+    if not conflict_report_id:
+        return jsonify({"error": "No conflict report found for this job"}), 404
+    
+    conflict_report = get_conflict_report(conflict_report_id)
+    if not conflict_report:
+        return jsonify({"error": "Conflict report not found"}), 404
+    
+    # Remove ArangoDB internal fields
+    conflict_report.pop("_id", None)
+    conflict_report.pop("_key", None)
+    conflict_report.pop("_rev", None)
+    
+    return jsonify(conflict_report), 200
 
 
 def _calculate_triple_delta(triples1: List[Dict[str, Any]], triples2: List[Dict[str, Any]]) -> tuple[int, int, List[Dict], List[Dict]]:
-    """Calculate triple deltas between two job results.
-    
-    Args:
-        triples1: Triples from first job (typically parent/older)
-        triples2: Triples from second job (typically child/newer)
+    """Calculate delta between two triple lists.
     
     Returns:
-        Tuple of (triples_added_count, triples_removed_count, added_triples, removed_triples)
+        (added_count, removed_count, added_triples, removed_triples)
     """
-    # Create a hash-based comparison (subject + predicate + object as key)
-    def triple_key(t: Dict[str, Any]) -> str:
+    # Create normalized keys for comparison
+    def make_key(t: Dict[str, Any]) -> str:
         return f"{t.get('subject', '')}|{t.get('predicate', '')}|{t.get('object', '')}"
     
-    set1 = {triple_key(t): t for t in triples1 if isinstance(t, dict)}
-    set2 = {triple_key(t): t for t in triples2 if isinstance(t, dict)}
+    keys1 = {make_key(t) for t in triples1 if isinstance(t, dict)}
+    keys2 = {make_key(t) for t in triples2 if isinstance(t, dict)}
     
-    added_keys = set2.keys() - set1.keys()
-    removed_keys = set1.keys() - set2.keys()
+    added_keys = keys2 - keys1
+    removed_keys = keys1 - keys2
     
-    added_triples = [set2[k] for k in added_keys]
-    removed_triples = [set1[k] for k in removed_keys]
+    added_triples = [t for t in triples2 if isinstance(t, dict) and make_key(t) in added_keys]
+    removed_triples = [t for t in triples1 if isinstance(t, dict) and make_key(t) in removed_keys]
     
     return len(added_keys), len(removed_keys), added_triples, removed_triples
 
 
 def _count_conflicts(result: Dict[str, Any]) -> int:
     """Count conflicts in a job result."""
-    conflict_flags = result.get("conflict_flags") or []
+    conflict_flags = result.get("conflict_flags", [])
     if isinstance(conflict_flags, list):
         return len(conflict_flags)
-    
-    # Check extracted_json for conflict flags
-    extracted_json = result.get("extracted_json", {})
-    if isinstance(extracted_json, dict):
-        # Check for conflict-related metadata
-        metadata = extracted_json.get("metadata", {})
-        if isinstance(metadata, dict):
-            conflicts = metadata.get("conflicts") or []
-            if isinstance(conflicts, list):
-                return len(conflicts)
-    
     return 0
 
 
-def _calculate_unsupported_claim_rate(result: Dict[str, Any]) -> float:
-    """Calculate unsupported claim rate (0.0-1.0).
-    
-    Args:
-        result: Job result dictionary
-    
-    Returns:
-        Rate as float between 0.0 and 1.0
-    """
-    unsupported_count = _count_unsupported_claims(result)
-    extracted_json = result.get("extracted_json", {})
-    triples = extracted_json.get("triples", []) if isinstance(extracted_json, dict) else []
-    total = len(triples) if isinstance(triples, list) else 0
-    
-    if total == 0:
-        return 0.0
-    
-    return unsupported_count / total
-
-
 def _count_unsupported_claims(result: Dict[str, Any]) -> int:
-    """Count unsupported claims in a job result."""
+    """Count unsupported claims (triples without evidence)."""
     extracted_json = result.get("extracted_json", {})
     if not isinstance(extracted_json, dict):
         return 0
@@ -281,22 +249,21 @@ def _count_unsupported_claims(result: Dict[str, Any]) -> int:
     if not isinstance(triples, list):
         return 0
     
-    # Count triples with low confidence or missing evidence
-    unsupported = 0
+    unsupported_count = 0
     for triple in triples:
         if not isinstance(triple, dict):
             continue
-        confidence = triple.get("confidence", 1.0)
-        has_evidence = bool(triple.get("source_pointer") or triple.get("evidence"))
-        
-        if confidence < 0.5 or not has_evidence:
-            unsupported += 1
+        source_pointer = triple.get("source_pointer") or {}
+        evidence = triple.get("evidence", "")
+        # Consider unsupported if no source_pointer and no evidence
+        if not source_pointer.get("doc_hash") and not evidence:
+            unsupported_count += 1
     
-    return unsupported
+    return unsupported_count
 
 
 def _count_missing_fields(result: Dict[str, Any]) -> int:
-    """Count triples with missing required fields."""
+    """Count triples missing required fields (subject, predicate, object)."""
     extracted_json = result.get("extracted_json", {})
     if not isinstance(extracted_json, dict):
         return 0
@@ -305,18 +272,17 @@ def _count_missing_fields(result: Dict[str, Any]) -> int:
     if not isinstance(triples, list):
         return 0
     
-    required_fields = {"subject", "predicate", "object"}
     missing_count = 0
-    
     for triple in triples:
         if not isinstance(triple, dict):
-            missing_count += 1
             continue
+        subject = triple.get("subject", "").strip()
+        predicate = triple.get("predicate", "").strip()
+        obj = triple.get("object", "").strip()
         
-        for field in required_fields:
-            if not triple.get(field):
-                missing_count += 1
-                break  # Count each triple only once
+        if not subject or not predicate or not obj:
+            missing_count += 1
+            break  # Count each triple only once
     
     return missing_count
 
@@ -418,3 +384,76 @@ def get_job_diff(job_id: str):
         },
         "details": details,
     }), 200
+
+
+@jobs_bp.route("/<job_id>/events", methods=["GET"])
+def get_job_events(job_id: str):
+    """Get node execution events for a job.
+    
+    Response:
+        {
+            "events": [
+                {
+                    "node_name": str,
+                    "duration_ms": float,
+                    "status": "success" | "error" | "pending",
+                    "timestamp": str (ISO),
+                    "job_id": str,
+                    "project_id": str (optional),
+                    "metadata": dict (optional)
+                }
+            ]
+        }
+    
+    Errors:
+        404: Job not found
+    """
+    from ..telemetry import TelemetryEmitter, DEFAULT_SINK
+    from pathlib import Path
+    import json
+    
+    # Verify job exists
+    job = get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    
+    # Read telemetry events from JSONL file
+    telemetry_path = Path(DEFAULT_SINK)
+    events: List[Dict[str, Any]] = []
+    
+    if telemetry_path.exists():
+        try:
+            # Read last 1000 lines to find events for this job
+            with telemetry_path.open("rb") as fh:
+                fh.seek(0, 2)
+                file_size = fh.tell()
+                fh.seek(max(file_size - 200_000, 0))  # ~200KB tail
+                data = fh.read().decode("utf-8", errors="ignore")
+            
+            lines = data.strip().splitlines()[-1000:]
+            for line in lines:
+                try:
+                    evt = json.loads(line)
+                    # Filter for node_execution events for this job
+                    if (
+                        evt.get("event_type") == "node_execution"
+                        and evt.get("job_id") == job_id
+                    ):
+                        events.append({
+                            "node_name": evt.get("node_name", "unknown"),
+                            "duration_ms": evt.get("duration_ms", 0),
+                            "status": "error" if evt.get("metadata", {}).get("error") else "success",
+                            "timestamp": evt.get("timestamp", ""),
+                            "job_id": evt.get("job_id"),
+                            "project_id": evt.get("project_id"),
+                            "metadata": evt.get("metadata", {}),
+                        })
+                except Exception:
+                    continue
+            
+            # Sort by timestamp (newest first)
+            events.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        except Exception as exc:
+            logger.warning(f"Failed to read telemetry events: {exc}", exc_info=True)
+    
+    return jsonify({"events": events}), 200

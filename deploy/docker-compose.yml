@@ -20,7 +20,7 @@ services:
       - /raid/vyasa/hf_cache:/raid/vyasa/hf_cache
       - /raid/vyasa/model_cache:/root/.cache/huggingface
     networks:
-      - ${NETWORK_NAME}
+      - vyasa-net
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/30000"]
       interval: 30s
@@ -50,7 +50,7 @@ services:
       - /raid/vyasa/hf_cache:/raid/vyasa/hf_cache
       - /raid/vyasa/model_cache:/root/.cache/huggingface
     networks:
-      - ${NETWORK_NAME}
+      - vyasa-net
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/30001"]
       interval: 30s
@@ -78,7 +78,7 @@ services:
       - /raid/vyasa/hf_cache:/raid/vyasa/hf_cache
       - /raid/vyasa/model_cache:/root/.cache/huggingface
     networks:
-      - ${NETWORK_NAME}
+      - vyasa-net
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/30002"]
       interval: 30s
@@ -100,7 +100,7 @@ services:
       - /raid/vyasa/ollama:/root/.ollama
     restart: unless-stopped
     networks:
-      - ${NETWORK_NAME}
+      - vyasa-net
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/11435"]
       interval: 30s
@@ -120,7 +120,7 @@ services:
       - /raid/vyasa/arangodb:/var/lib/arangodb3
       - ./scripts/arango-init.js:/docker-entrypoint-initdb.d/arango-init.js:ro
     networks:
-      - ${NETWORK_NAME}
+      - vyasa-net
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/${PORT_MEMORY}"]
       interval: 30s
@@ -147,7 +147,7 @@ services:
       /bin/sh /scripts/qdrant-init.sh
       wait $$PID
     networks:
-      - ${NETWORK_NAME}
+      - vyasa-net
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/${PORT_VECTOR}"]
       interval: 30s
@@ -159,12 +159,15 @@ services:
   console:
     build:
       context: ../src/console
-      dockerfile: Dockerfile
+      dockerfile: ${CONSOLE_DOCKERFILE:-Dockerfile}
     cpuset: "0-9"
     ports:
       - "${PORT_CONSOLE}:${PORT_CONSOLE}"
+    volumes:
+      # Mount deploy directory for accessing configuration files (forbidden_vocab.yaml, etc.)
+      - ./deploy:/app/deploy:ro
     environment:
-      - NODE_ENV=${NODE_ENV:-production}
+      - NODE_ENV=${CONSOLE_NODE_ENV:-${NODE_ENV:-production}}
       - NEXT_PUBLIC_API_URL=http://localhost:${PORT_BRAIN}/v1
       - CORTEX_SERVICE_URL=http://cortex-brain:30000
       - MEMORY_SERVICE_URL=http://graph:${PORT_MEMORY}
@@ -177,12 +180,13 @@ services:
       - CONSOLE_PASSWORD=${CONSOLE_PASSWORD}
       - NEXTAUTH_SECRET=${CONSOLE_SECRET}
       - NEXTAUTH_URL=http://localhost:${PORT_CONSOLE}
+      - AUTH_TRUST_HOST=true
     depends_on:
       - cortex-brain
       - graph
       - vector
     networks:
-      - ${NETWORK_NAME}
+      - vyasa-net
 
   # Embedder
   # Pinned to efficiency cores for management tasks
@@ -204,7 +208,7 @@ services:
       - /raid/vyasa/model_cache:/root/.cache/huggingface
     restart: unless-stopped
     networks:
-      - ${NETWORK_NAME}
+      - vyasa-net
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/30010"]
       interval: 30s
@@ -217,8 +221,10 @@ services:
     image: ${ORCHESTRATOR_IMAGE}
     working_dir: /app
     # Install system dependencies and Python packages, then run uvicorn
-    # Note: Install build tools first, then install requirements (torch_memory_saver will build if needed)
-    command: ["sh", "-c", "apt-get update && apt-get install -y build-essential g++ && rm -rf /var/lib/apt/lists/* && pip install --no-cache-dir -r requirements.txt && uvicorn src.orchestrator.main:app --host 0.0.0.0 --port 8000"]
+    # Note: torch_memory_saver requires CUDA headers to build, but orchestrator only uses SGLang as HTTP client
+    # Solution: Use setup script to create minimal CUDA header stubs to satisfy build requirements
+    # The orchestrator doesn't actually use CUDA at runtime - it just makes HTTP requests to cortex services
+    command: ["/app/deploy/scripts/orchestrator-setup.sh"]
     cpuset: "0-9"
     ports:
       - "8000:8000"
@@ -226,6 +232,7 @@ services:
       - ../src:/app
       - ../requirements.txt:/app/requirements.txt:ro
       - ./scripts:/app/deploy/scripts:ro
+      - ./scripts/orchestrator-setup.sh:/app/deploy/scripts/orchestrator-setup.sh:ro
       - /raid/vyasa/telemetry:/raid/telemetry
       - /raid/vyasa/scratch:/raid/scratch
     environment:
@@ -248,7 +255,7 @@ services:
       - graph
       - vector
     networks:
-      - ${NETWORK_NAME}
+      - vyasa-net
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('localhost',8000)); s.close()"]
       interval: 30s
@@ -257,8 +264,9 @@ services:
       start_period: 15s
 
 networks:
-  ${NETWORK_NAME}:
-    driver: bridge
+  vyasa-net:
+    name: vyasa-net
+    external: true
 
 volumes:
   memory_data:

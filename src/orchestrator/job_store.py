@@ -147,6 +147,27 @@ def store_conflict_report(report: Dict[str, Any]) -> str:
     return report_id
 
 
+def get_conflict_report(report_id: str) -> Optional[Dict[str, Any]]:
+    """Get conflict report by ID.
+    
+    Args:
+        report_id: Conflict report ID
+    
+    Returns:
+        Conflict report dictionary or None if not found
+    """
+    try:
+        db = _get_db()
+        _ensure_collection(db)
+        coll = db.collection("conflict_reports")
+        doc = coll.get(report_id)
+        if doc:
+            return doc
+    except Exception:
+        pass
+    return _conflict_store.get(report_id)
+
+
 def store_reframing_proposal(proposal: Dict[str, Any]) -> str:
     """Persist a reframing proposal with in-memory fallback."""
     proposal_id = proposal.get("proposal_id") or str(uuid.uuid4())

@@ -6,9 +6,9 @@
 
 ## Executive Summary
 
-Project Vyasa is a **research execution framework** designed to democratize high-fidelity scholarly output. While anyone possesses the latent ability to author a journal-grade manuscript, the primary barrier is time-consumption—the sheer weight of administrative overhead, citation management, and evidence validation.
+Project Vyasa is a **research execution platform** designed to democratize high-fidelity scholarly output. I believe anyone can eventually a journal-grade manuscript, the primary barrier in my experience has been time-consumption—the sheer weight of administrative overhead, citation management, and evidence validation.
 
-Vyasa operationalizes these mundane interactions, allowing the researcher to move from raw data to defensible strategy at unprecedented speeds. By treating research as a factory-line process rather than a linear writing task, Vyasa enables **rapid iteration**, freeing the human mind to focus on high-level learning and strategic inquiry.
+Vyasa operationalizes these mundane interactions, allowing a researcher to move from raw data to defensible strategy at unprecedented speeds. By treating research as a factory-line process rather than a linear writing task, Vyasa enables **rapid iteration**, freeing the human mind to focus on high-level learning and strategic inquiry.
 
 **Core Value Proposition:**
 - Keeps humans in control of learning and judgment
@@ -102,6 +102,20 @@ The project is named after the legendary sage **Veda Vyasa**, whose name literal
 4. **Governance Kernel (Quality)**  
    Guards for drift, citation, evidence, and contract compliance  
    Roles and prompts are versioned in DB, not hardcoded.
+
+### Observability (Opik) — Debugging the Committee
+
+Vyasa has multiple nodes, strict contracts, retries, and human gates. When a job fails, drifts, or produces a surprising outcome, the hard part is not “seeing logs” — it’s reconstructing *what happened across the graph*.
+
+Opik adds that missing layer:
+
+- **Trace every job end-to-end**: See each node execution, inputs/outputs, timing, and failure points across the LangGraph run.
+- **Explain disagreements**: When committee nodes diverge (Brain vs Worker vs Vision), Opik makes it visible where the path split and why.
+- **Governance verification**: Track when contract checks triggered (tone guard, precision validator, manifest enforcement) and what was changed.
+- **Regression safety**: Compare runs across prompt/model changes to see if quality improved or drift increased.
+
+Opik is optional and runs locally as part of the stack. It does not change Vyasa’s “graph as system of record” principle — it makes execution diagnosable.
+
 
 ### System Architecture: Committee of Experts
 

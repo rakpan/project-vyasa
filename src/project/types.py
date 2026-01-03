@@ -24,7 +24,8 @@ class ProjectCreate(BaseModel):
                 ],
                 "anti_scope": ["Mobile applications", "Hardware security"],
                 "target_journal": "IEEE Security & Privacy",
-                "seed_files": ["paper1.pdf"]
+                "seed_files": ["paper1.pdf"],
+                "rigor_level": "exploratory"
             }
         }
     )
@@ -35,6 +36,7 @@ class ProjectCreate(BaseModel):
     anti_scope: Optional[List[str]] = Field(None, description="Explicitly out-of-scope topics")
     target_journal: Optional[str] = Field(None, description="Target journal or venue for publication")
     seed_files: Optional[List[str]] = Field(default_factory=list, description="List of seed document filenames")
+    rigor_level: Optional[str] = Field(default="exploratory", description="Rigor level: 'exploratory' or 'conservative'")
 
 
 class ProjectConfig(BaseModel):
@@ -68,6 +70,9 @@ class ProjectConfig(BaseModel):
     seed_files: List[str] = Field(default_factory=list, description="List of seed document filenames")
     rigor_level: str = Field(default="exploratory", description="Rigor level for tone/precision policies")
     created_at: str = Field(..., description="Project creation timestamp (ISO format)")
+    tags: Optional[List[str]] = Field(None, description="Project tags for categorization and filtering")
+    last_updated: Optional[str] = Field(None, description="Last update timestamp (ISO format), derived from jobs if not set")
+    archived: Optional[bool] = Field(None, description="Manual archive flag (if None, derived from grouping logic)")
 
 
 class ProjectSummary(BaseModel):

@@ -41,9 +41,15 @@ export async function GET(request: NextRequest) {
             return { word: item, alternative: "" }
           }
           if (typeof item === "object" && item !== null) {
+            // Handle both string and array alternatives
+            const alternative = item.alternative
+            const alternativeStr = Array.isArray(alternative)
+              ? alternative.join(" or ")
+              : (alternative || "")
+            
             return {
               word: item.word || "",
-              alternative: item.alternative || "",
+              alternative: alternativeStr,
             }
           }
           return { word: "", alternative: "" }
@@ -102,11 +108,20 @@ export async function POST(request: NextRequest) {
       .filter((item: any) => item && item.word) // Remove empty/null entries
 
     // Convert to YAML format
+    // If alternative contains " or ", split it back into an array for YAML
     const yamlData = {
-      forbidden_words: normalizedWords.map((item: any) => ({
-        word: item.word,
-        alternative: item.alternative,
-      })),
+      forbidden_words: normalizedWords.map((item: any) => {
+        const alternative = item.alternative || ""
+        // If alternative contains " or ", split it into an array
+        const alternativeArray = alternative.includes(" or ")
+          ? alternative.split(" or ").map((a: string) => a.trim()).filter((a: string) => a)
+          : (alternative ? [alternative] : [])
+        
+        return {
+          word: item.word,
+          alternative: alternativeArray.length > 1 ? alternativeArray : (alternativeArray[0] || ""),
+        }
+      }),
     }
 
     // Write to file

@@ -9,7 +9,6 @@ import { usePathname, useSearchParams } from "next/navigation"
 import { useEffect, useMemo } from "react"
 import { ChevronRight, Home } from "lucide-react"
 import { useProjectStore } from "@/state/useProjectStore"
-import { ThemeToggle } from "@/components/theme-toggle"
 import { LogoutButton } from "@/components/logout-button"
 import { cn } from "@/lib/utils"
 
@@ -74,7 +73,7 @@ export function TopBar() {
 
   return (
     <header className="sticky top-0 z-50 h-12 border-b border-slate-200 bg-white flex items-center justify-between px-4">
-      {/* Breadcrumbs */}
+      {/* Breadcrumbs - Logo removed (only in sidebar) */}
       <nav className="flex items-center gap-1.5 text-sm text-foreground" aria-label="Breadcrumb">
         <Link
           href="/projects"
@@ -103,7 +102,6 @@ export function TopBar() {
       {/* Global Actions - Right-aligned */}
       <div className="flex items-center gap-2">
         <LogoutButton />
-        <ThemeToggle />
       </div>
     </header>
   )

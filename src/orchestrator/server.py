@@ -57,6 +57,7 @@ from .api.observatory import router as observatory_router, metrics_service as ob
 from .api.knowledge import knowledge_bp
 from .api.jobs import _get_job_version
 from .api.jobs import jobs_bp
+from .api.manuscript import manuscript_bp
 from ..shared.logger import get_logger
 from ..shared.config import (
     ARANGODB_DB,
@@ -67,6 +68,7 @@ from ..shared.config import (
 from ..shared.utils import get_utc_now
 from ..project.service import ProjectService
 from ..project.types import ProjectCreate, ProjectConfig, ProjectSummary
+from ..project.hub_types import ProjectGrouping
 
 logger = get_logger("orchestrator", __name__)
 app = Flask(__name__)
@@ -74,6 +76,9 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100MB
 app.register_blueprint(knowledge_bp)
 app.register_blueprint(jobs_bp)
+app.register_blueprint(manuscript_bp)
+from .api.ingestion import ingestion_bp
+app.register_blueprint(ingestion_bp)
 workflow_app = build_workflow()
 
 # Global telemetry emitter
@@ -581,18 +586,77 @@ def create_project():
 
 @app.route("/api/projects", methods=["GET"])
 def list_projects():
-    """List all projects as summaries.
+    """List all projects as summaries or hub view.
     
-    Response:
+    Query parameters:
+        view: "hub" for hub view with grouping, "summary" (default) for simple list
+        query: Search query (matches title and tags) - hub view only
+        tags: Comma-separated tags to filter by (all must match) - hub view only
+        rigor: Filter by rigor_level (exploratory or conservative) - hub view only
+        status: Filter by status (Idle, Processing, AttentionNeeded) - hub view only
+        from: Filter by last_updated >= from (ISO date) - hub view only
+        to: Filter by last_updated <= to (ISO date) - hub view only
+        include_manifest: If "true", include manifest_summary in hub view
+    
+    Response (view=summary or default):
         List[ProjectSummary] sorted by created_at (newest first).
+    
+    Response (view=hub):
+        {
+            "active_research": [ProjectHubSummary],
+            "archived_insights": [ProjectHubSummary]
+        }
     
     Errors:
         503: Database unavailable
+        400: Invalid filter parameters
     """
     project_service = get_project_service()
     if project_service is None:
         return jsonify({"error": "Database unavailable"}), 503
     
+    view = request.args.get("view", "summary").lower()
+    
+    # Hub view with filtering and grouping
+    if view == "hub":
+        try:
+            query = request.args.get("query", "").strip() or None
+            tags_str = request.args.get("tags", "").strip()
+            tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else None
+            rigor = request.args.get("rigor", "").strip() or None
+            status = request.args.get("status", "").strip() or None
+            from_date = request.args.get("from", "").strip() or None
+            to_date = request.args.get("to", "").strip() or None
+            include_manifest = request.args.get("include_manifest", "false").lower() == "true"
+            
+            # Validate status filter
+            if status and status not in ("Idle", "Processing", "AttentionNeeded"):
+                return jsonify({"error": f"Invalid status filter: {status}. Must be Idle, Processing, or AttentionNeeded"}), 400
+            
+            # Validate rigor filter
+            if rigor and rigor not in ("exploratory", "conservative"):
+                return jsonify({"error": f"Invalid rigor filter: {rigor}. Must be exploratory or conservative"}), 400
+            
+            grouping = project_service.list_projects_hub(
+                query=query,
+                tags=tags,
+                rigor=rigor,
+                status=status,
+                from_date=from_date,
+                to_date=to_date,
+                include_manifest=include_manifest,
+            )
+            
+            return jsonify(grouping.model_dump()), 200
+            
+        except RuntimeError as e:
+            logger.error(f"Failed to list projects for hub: {e}", exc_info=True)
+            return jsonify({"error": "Failed to list projects for hub"}), 503
+        except Exception as e:
+            logger.error(f"Unexpected error listing projects for hub: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+    
+    # Default summary view
     try:
         summaries = project_service.list_projects()
         return jsonify([s.model_dump() for s in summaries]), 200
@@ -607,7 +671,28 @@ def list_projects():
 
 @app.route("/api/projects/<project_id>/rigor", methods=["GET", "PATCH"])
 def project_rigor(project_id: str):
-    """Get or update rigor_level for a project (minimal API)."""
+    """Get or update rigor_level for a project.
+    
+    GET: Returns current rigor_level
+    PATCH: Updates rigor_level (affects future jobs only)
+    
+    Request body (PATCH):
+        {
+            "rigor_level": "exploratory" | "conservative"
+        }
+    
+    Response:
+        {
+            "project_id": str,
+            "rigor_level": str
+        }
+    
+    Errors:
+        404: Project not found
+        400: Invalid rigor_level value
+        503: Database unavailable
+        500: Update failed
+    """
     project_service = get_project_service()
     if project_service is None:
         return jsonify({"error": "Database unavailable"}), 503
@@ -629,8 +714,14 @@ def project_rigor(project_id: str):
         return jsonify({"error": "rigor_level must be 'conservative' or 'exploratory'"}), 400
     
     try:
+        from datetime import datetime, timezone
         collection = project_service.db.collection(project_service.COLLECTION_NAME)
-        collection.update({"_key": project_id, "rigor_level": new_level})
+        collection.update({
+            "_key": project_id,
+            "rigor_level": new_level,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        })
+        logger.info(f"Updated rigor_level for project {project_id} to {new_level}")
         return jsonify({"project_id": project_id, "rigor_level": new_level}), 200
     except Exception as exc:
         logger.error(f"Failed to update rigor_level for {project_id}: {exc}", exc_info=True)
@@ -669,6 +760,39 @@ def list_project_jobs(project_id: str):
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Failed to list jobs for project {project_id}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
+
+
+@app.route("/api/projects/templates", methods=["GET"])
+def list_project_templates():
+    """List all available project templates.
+    
+    Response:
+        List of ProjectTemplate objects:
+        [
+            {
+                "id": str,
+                "name": str,
+                "description": str,
+                "suggested_rqs": List[str],
+                "suggested_anti_scope": List[str],
+                "suggested_rigor": str,
+                "example_thesis": str (optional)
+            },
+            ...
+        ]
+    
+    Errors:
+        500: Internal server error (should not occur for static templates)
+    """
+    try:
+        from ..project.templates import get_all_templates
+        
+        templates = get_all_templates()
+        # Convert Pydantic models to dicts for JSON serialization
+        return jsonify([t.model_dump() for t in templates]), 200
+    except Exception as e:
+        logger.error(f"Failed to list project templates: {e}", exc_info=True)
+        return jsonify({"error": "Failed to retrieve project templates"}), 500
 
 
 @app.route("/api/projects/<project_id>", methods=["GET"])
@@ -977,6 +1101,12 @@ def submit_workflow():
                     pdf_path = str(Path(tmpdir) / safe_name)
                     uploaded.save(pdf_path)
                     
+                    # Calculate file hash before processing (for duplicate detection)
+                    import hashlib
+                    with open(pdf_path, "rb") as f:
+                        file_content = f.read()
+                        doc_hash = hashlib.sha256(file_content).hexdigest()
+                    
                     try:
                         # Extract markdown from PDF (keep images around)
                         markdown, images_dir, image_paths = process_pdf(pdf_path)
@@ -984,11 +1114,6 @@ def submit_workflow():
                     except Exception as e:
                         logger.error("Failed to process PDF", exc_info=True)
                         return jsonify({"error": "Invalid or unreadable PDF file"}), 400
-                    
-                    # Calculate doc_hash and cache PDF text layers
-                    import hashlib
-                    with open(pdf_path, "rb") as f:
-                        doc_hash = hashlib.sha256(f.read()).hexdigest()
                     
                     # Cache PDF text layers for evidence verification
                     try:
@@ -1035,13 +1160,30 @@ def submit_workflow():
                 logger.error(f"Failed to fetch project {project_id}: {e}", exc_info=True)
                 return jsonify({"error": "Database unavailable"}), 503
 
-        # Seed corpus update when file is uploaded
-        if uploaded_filename:
+        # Create ingestion record and seed corpus update when file is uploaded
+        ingestion_id = None
+        if uploaded_filename and is_multipart:
+            # Require file_hash for ingestion record (atomic creation)
+            if 'doc_hash' not in locals() or not doc_hash:
+                return jsonify({"error": "File hash is required for ingestion. Upload failed."}), 400
+            
             try:
+                from .ingestion_store import IngestionStore
+                ingestion_store = IngestionStore(project_service.db)
+                
+                # Create ingestion record (atomic - fails if file_hash missing)
+                ingestion_record = ingestion_store.create_ingestion(
+                    project_id=project_id,
+                    filename=uploaded_filename,
+                    file_hash=doc_hash,
+                )
+                ingestion_id = ingestion_record.ingestion_id
+                
+                # Add to seed files
                 project_service.add_seed_file(project_id, uploaded_filename)
             except Exception as e:
-                logger.error(f"Failed to add seed file for {project_id}: {e}", exc_info=True)
-                return jsonify({"error": "Failed to record seed file"}), 503
+                logger.error(f"Failed to create ingestion record for {project_id}: {e}", exc_info=True)
+                return jsonify({"error": f"Failed to create ingestion record: {str(e)}"}), 500
 
         # Prepare initial state
         initial_state: ResearchState = {
@@ -1078,10 +1220,43 @@ def submit_workflow():
         if isinstance(_run_workflow_async, um.Mock) and isinstance(threading.Thread, um.Mock):
             _run_workflow_async(job_id, initial_state)  # type: ignore
         
-        return jsonify({
+        # Update ingestion record with job_id (required for status tracking)
+        if ingestion_id:
+            try:
+                from .ingestion_store import IngestionStore
+                ingestion_store = IngestionStore(project_service.db)
+                ingestion_store.update_ingestion(ingestion_id, job_id=job_id)
+            except Exception as e:
+                logger.warning(f"Failed to update ingestion {ingestion_id} with job_id: {e}", exc_info=True)
+        else:
+            # For non-file uploads (JSON requests), create a minimal ingestion record
+            # This ensures ingestion_id is always present (required contract)
+            try:
+                from .ingestion_store import IngestionStore
+                ingestion_store = IngestionStore(project_service.db)
+                # Create ingestion with empty hash for non-file workflows
+                ingestion_record = ingestion_store.create_ingestion(
+                    project_id=project_id,
+                    filename=pdf_path or "text_input",
+                    file_hash="",  # Empty hash for non-file workflows (allowed for text-only)
+                    allow_empty_hash=True,  # Allow empty hash for non-file workflows
+                )
+                ingestion_id = ingestion_record.ingestion_id
+                # Update with job_id
+                ingestion_store.update_ingestion(ingestion_id, job_id=job_id)
+            except Exception as e:
+                logger.error(f"Failed to create ingestion record for non-file workflow: {e}", exc_info=True)
+                # Still return response but log error
+        
+        # Response contract: always include ingestion_id (non-optional)
+        response = {
+            "project_id": project_id,
             "job_id": job_id,
-            "status": JobStatus.QUEUED.value
-        }), 202  # 202 Accepted
+            "ingestion_id": ingestion_id,  # Required, non-optional
+            "status": JobStatus.QUEUED.value,
+        }
+        
+        return jsonify(response), 202  # 202 Accepted
         
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to submit workflow job", exc_info=True)
@@ -1231,7 +1406,17 @@ def get_job_status(job_id: str):
 
 @app.route("/workflow/result/<job_id>", methods=["GET"])
 def get_workflow_result(job_id: str):
-    """Return final result if available, otherwise status."""
+    """Return final result if available, otherwise status.
+    
+    For flagged claims (triples with conflict_flags), includes conflict payload:
+    {
+        "conflict": {
+            "source_a": {"doc_id": str, "page": int, "excerpt": str},
+            "source_b": {"doc_id": str, "page": int, "excerpt": str},
+            "explanation": str  # Deterministic explanation
+        }
+    }
+    """
     job = get_job(job_id)
     if not job:
         return jsonify({"error": "Job not found"}), 404
@@ -1253,6 +1438,58 @@ def get_workflow_result(job_id: str):
     # Normalize extracted_json to guarantee triples
     extracted = result.get("extracted_json", {})
     result["extracted_json"] = normalize_extracted_json(extracted)
+    
+    # Add conflict payloads to flagged claims
+    from .conflict_utils import extract_conflict_payload
+    from .job_store import get_job_record, get_conflict_report
+    
+    triples = result.get("extracted_json", {}).get("triples", [])
+    if triples:
+        # Try to get conflict report
+        conflict_report = None
+        try:
+            record = get_job_record(job_id)
+            if record:
+                conflict_report_id = record.get("conflict_report_id")
+                if conflict_report_id:
+                    conflict_report = get_conflict_report(conflict_report_id)
+        except Exception:
+            # Ignore errors - conflict report is optional
+            pass
+        
+        # Build conflict map from conflict report
+        conflict_map = {}
+        if conflict_report and conflict_report.get("conflict_items"):
+            for item in conflict_report["conflict_items"]:
+                # Map by evidence_anchors doc_hash
+                evidence_anchors = item.get("evidence_anchors", [])
+                if evidence_anchors:
+                    key = evidence_anchors[0].get("doc_hash") if isinstance(evidence_anchors[0], dict) else None
+                    if key:
+                        conflict_map[key] = item
+        
+        # Add conflict payloads to flagged triples
+        for triple in triples:
+            if not isinstance(triple, dict):
+                continue
+            
+            conflict_flags = triple.get("conflict_flags", [])
+            if conflict_flags:
+                # Find matching conflict item
+                source_pointer = triple.get("source_pointer") or {}
+                doc_hash = source_pointer.get("doc_hash") if isinstance(source_pointer, dict) else None
+                conflict_item = conflict_map.get(doc_hash) if doc_hash else None
+                
+                # Extract conflict payload
+                conflict_payload = extract_conflict_payload(
+                    triple=triple,
+                    conflict_item=conflict_item,
+                    all_triples=triples,
+                )
+                
+                if conflict_payload:
+                    triple["conflict"] = conflict_payload
+    
     return jsonify({
         "job_id": job_id,
         "status": status.value if isinstance(status, JobStatus) else str(status),

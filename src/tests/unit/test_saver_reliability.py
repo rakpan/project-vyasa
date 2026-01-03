@@ -11,7 +11,7 @@ All external dependencies are mocked (workflow, job_manager).
 """
 
 import json
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, AsyncMock, patch
 import pytest
 
 from src.orchestrator.server import app
@@ -51,6 +51,8 @@ def test_saver_failure_propagates_to_job_status(mock_project_service):
     
     job_id = "job-fail-123"
     initial_state = {
+        "jobId": job_id,
+        "threadId": job_id,
         "raw_text": "Test text",
         "project_id": "550e8400-e29b-41d4-a716-446655440000",
     }
@@ -64,7 +66,7 @@ def test_saver_failure_propagates_to_job_status(mock_project_service):
         yield {"event": "on_chain_start", "name": "vision"}  # First event
         raise db_error  # Raise exception during iteration
     
-    mock_workflow.astream_events = failing_astream_events
+    mock_workflow.astream_events = AsyncMock(side_effect=failing_astream_events)
     
     with patch('src.orchestrator.server.get_project_service', return_value=mock_project_service):
         with patch('src.orchestrator.server.workflow_app', mock_workflow):
@@ -92,6 +94,8 @@ def test_saver_failure_includes_error_message(mock_project_service):
     
     job_id = "job-fail-456"
     initial_state = {
+        "jobId": job_id,
+        "threadId": job_id,
         "raw_text": "Test text",
         "project_id": "550e8400-e29b-41d4-a716-446655440000",
     }
@@ -105,7 +109,7 @@ def test_saver_failure_includes_error_message(mock_project_service):
         yield {"event": "on_chain_start", "name": "cartographer"}
         raise Exception(error_msg)
     
-    mock_workflow.astream_events = failing_astream_events
+    mock_workflow.astream_events = AsyncMock(side_effect=failing_astream_events)
     
     # Mock job registry to track status updates
     from src.orchestrator.job_manager import _job_registry, _registry_lock
@@ -141,6 +145,8 @@ def test_saver_failure_does_not_silently_succeed(mock_project_service):
     
     job_id = "job-fail-789"
     initial_state = {
+        "jobId": job_id,
+        "threadId": job_id,
         "raw_text": "Test text",
         "project_id": "550e8400-e29b-41d4-a716-446655440000",
     }
@@ -152,7 +158,7 @@ def test_saver_failure_does_not_silently_succeed(mock_project_service):
         yield {"event": "on_node_start", "name": "saver"}
         raise Exception("DB write failed")
     
-    mock_workflow.astream_events = failing_astream_events
+    mock_workflow.astream_events = AsyncMock(side_effect=failing_astream_events)
     
     with patch('src.orchestrator.server.get_project_service', return_value=mock_project_service):
         with patch('src.orchestrator.server.workflow_app', mock_workflow):
@@ -172,6 +178,8 @@ def test_saver_success_sets_result(mock_project_service):
     
     job_id = "job-success-123"
     initial_state = {
+        "jobId": job_id,
+        "threadId": job_id,
         "raw_text": "Test text",
         "project_id": "550e8400-e29b-41d4-a716-446655440000",
     }
@@ -202,7 +210,7 @@ def test_saver_success_sets_result(mock_project_service):
             "state": workflow_result,
         }
     
-    mock_workflow.astream_events = successful_astream_events
+    mock_workflow.astream_events = AsyncMock(side_effect=successful_astream_events)
     
     with patch('src.orchestrator.server.get_project_service', return_value=mock_project_service):
         with patch('src.orchestrator.server.workflow_app', mock_workflow):

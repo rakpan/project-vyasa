@@ -182,9 +182,8 @@ def test_critic_increments_revision_on_fail(monkeypatch, base_node_state, mock_l
   assert "missing triple" in result["critiques"][0]
 
 
-def test_saver_persists_to_arango(monkeypatch, base_node_state):
+def test_saver_persists_to_arango(mock_arango_firewall, base_node_state):
   """Saver should attempt to write extraction results to Arango without raising."""
-  # ArangoClient is already mocked by mock_network_calls autouse fixture
   # Track insertions via a list
   inserted: List[Dict[str, Any]] = []
   
@@ -203,13 +202,19 @@ def test_saver_persists_to_arango(monkeypatch, base_node_state):
     def add_index(self, *_args, **_kwargs):
       return None
   
-  # Override the mock to use our tracking collection
-  from arango import ArangoClient
-  mock_client = ArangoClient("http://fake:8529")
-  mock_db = mock_client.db()
+  # Configure the firewall's mock to use our tracking collection
+  # The firewall fixture yields a function that returns mock clients
+  # All clients share the same mock_db, so we configure it through any client
   tracking_collection = TrackingCollection()
-  mock_db.collection = lambda name: tracking_collection
-  mock_db.create_collection = lambda name, **kwargs: tracking_collection
+  
+  # Get the mock client from the firewall (this is the same function that ArangoClient is patched to)
+  mock_client = mock_arango_firewall("http://fake:8529")
+  mock_db = mock_client.db()
+  
+  # Configure the mock DB explicitly - this affects all ArangoClient instances
+  mock_db.collection.return_value = tracking_collection
+  mock_db.create_collection.return_value = tracking_collection
+  mock_db.has_collection.return_value = True
 
   state: ResearchState = {**base_node_state, "extracted_json": {"triples": [{"subject": "A", "predicate": "p", "object": "B"}]}}
   new_state = saver_node(state)
@@ -220,7 +225,7 @@ def test_saver_persists_to_arango(monkeypatch, base_node_state):
   assert new_state["save_receipt"]["status"] == "SAVED"
 
 
-def test_saver_failure_propagates(monkeypatch, base_node_state):
+def test_saver_failure_propagates(mock_arango_firewall, base_node_state):
   """Saver node should re-raise exceptions (not swallow them)."""
   # Create a mock collection that raises on insert
   class FailingCollection:
@@ -233,13 +238,19 @@ def test_saver_failure_propagates(monkeypatch, base_node_state):
     def add_index(self, *_args, **_kwargs):
       return None
   
-  # Override the mock to use our failing collection
-  from arango import ArangoClient
-  mock_client = ArangoClient("http://fake:8529")
-  mock_db = mock_client.db()
+  # Configure the firewall's mock to use our failing collection
+  # The firewall fixture yields a function that returns mock clients
+  # All clients share the same mock_db, so we configure it through any client
   failing_collection = FailingCollection()
-  mock_db.collection = lambda name: failing_collection
-  mock_db.create_collection = lambda name, **kwargs: failing_collection
+  
+  # Get the mock client from the firewall (this is the same function that ArangoClient is patched to)
+  mock_client = mock_arango_firewall("http://fake:8529")
+  mock_db = mock_client.db()
+  
+  # Configure the mock DB explicitly - this affects all ArangoClient instances
+  mock_db.collection.return_value = failing_collection
+  mock_db.create_collection.return_value = failing_collection
+  mock_db.has_collection.return_value = True
 
   state: ResearchState = {**base_node_state, "extracted_json": {"triples": []}}
   with pytest.raises(RuntimeError, match="db down"):

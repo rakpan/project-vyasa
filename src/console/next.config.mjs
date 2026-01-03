@@ -9,6 +9,10 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Reposition dev indicator to avoid sidebar overlap
+  devIndicators: {
+    position: 'top-right',
+  },
   // Configure external packages for server components
   serverExternalPackages: ['@langchain/community'],
   experimental: {

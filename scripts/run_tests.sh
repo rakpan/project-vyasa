@@ -2,13 +2,17 @@
 #
 # Test runner script for Project Vyasa
 #
-# Purpose: Executes pytest test suite with proper Python path configuration.
-# Supports split test strategy: Unit Tests (mocked) vs Integration Tests (real).
+# Purpose: Executes test suites with proper configuration.
+# Supports split test strategy:
+#   - Unit Tests (Python, mocked, fast)
+#   - Integration Tests (Python, real Docker stack)
+#   - E2E Tests (Playwright, requires Node.js/npm)
 #
 # Usage:
 #   ./scripts/run_tests.sh                    # Run only unit tests (default)
 #   ./scripts/run_tests.sh --integration      # Run only integration tests
-#   ./scripts/run_tests.sh --all              # Run both unit and integration tests
+#   ./scripts/run_tests.sh --e2e             # Run only E2E tests
+#   ./scripts/run_tests.sh --all             # Run all tests (unit + integration + e2e)
 #
 
 set -euo pipefail
@@ -55,6 +59,9 @@ if [ $# -gt 0 ]; then
         --integration)
             MODE="integration"
             ;;
+        --e2e)
+            MODE="e2e"
+            ;;
         --all)
             MODE="all"
             ;;
@@ -62,13 +69,14 @@ if [ $# -gt 0 ]; then
             MODE="unit"
             ;;
         --help|-h)
-            echo "Usage: $0 [--unit|--integration|--all]"
+            echo "Usage: $0 [--unit|--integration|--e2e|--all]"
             echo ""
             echo "Options:"
             echo "  (no args)     Run only unit tests (mocked, fast)"
             echo "  --unit        Run only unit tests (mocked, fast)"
             echo "  --integration Run only integration tests (requires Docker)"
-            echo "  --all         Run both unit and integration tests"
+            echo "  --e2e         Run only E2E tests (requires Node.js/npm)"
+            echo "  --all         Run all tests (unit + integration + e2e)"
             echo "  --help, -h    Show this help message"
             exit 0
             ;;
@@ -118,6 +126,69 @@ run_integration_tests() {
     fi
 }
 
+# Function to run E2E tests
+run_e2e_tests() {
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}Running E2E Tests (Playwright - Requires Node.js/npm)${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    
+    # Check if Node.js is available
+    if ! command -v node &> /dev/null; then
+        echo -e "${RED}✗ Node.js is not installed or not in PATH${NC}"
+        echo -e "${YELLOW}   Please install Node.js to run E2E tests${NC}"
+        return 1
+    fi
+    
+    # Check if npm is available
+    if ! command -v npm &> /dev/null; then
+        echo -e "${RED}✗ npm is not installed or not in PATH${NC}"
+        echo -e "${YELLOW}   Please install npm to run E2E tests${NC}"
+        return 1
+    fi
+    
+    # Navigate to console directory
+    CONSOLE_DIR="$PROJECT_ROOT/src/console"
+    if [ ! -d "$CONSOLE_DIR" ]; then
+        echo -e "${RED}✗ Console directory not found: $CONSOLE_DIR${NC}"
+        return 1
+    fi
+    
+    cd "$CONSOLE_DIR"
+    
+    # Check if node_modules exists, if not, try to install
+    if [ ! -d "node_modules" ]; then
+        echo -e "${YELLOW}⚠  node_modules not found, attempting to install dependencies...${NC}"
+        npm install
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}✗ Failed to install npm dependencies${NC}"
+            return 1
+        fi
+    fi
+    
+    # Check if Playwright is installed
+    if [ ! -f "node_modules/.bin/playwright" ]; then
+        echo -e "${YELLOW}⚠  Playwright not found, installing...${NC}"
+        npx playwright install --with-deps
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}✗ Failed to install Playwright${NC}"
+            return 1
+        fi
+    fi
+    
+    # Run E2E tests
+    npm run test:e2e
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ E2E tests passed${NC}"
+        cd "$PROJECT_ROOT"
+        return 0
+    else
+        echo -e "${RED}✗ E2E tests failed${NC}"
+        cd "$PROJECT_ROOT"
+        return 1
+    fi
+}
+
 # Execute based on mode
 EXIT_CODE=0
 
@@ -130,9 +201,13 @@ case "$MODE" in
         run_integration_tests
         EXIT_CODE=$?
         ;;
+    e2e)
+        run_e2e_tests
+        EXIT_CODE=$?
+        ;;
     all)
         echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${BLUE}Running All Tests (Unit + Integration)${NC}"
+        echo -e "${BLUE}Running All Tests (Unit + Integration + E2E)${NC}"
         echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
         
@@ -144,9 +219,14 @@ case "$MODE" in
         # Run integration tests
         run_integration_tests
         INT_EXIT=$?
+        echo ""
+        
+        # Run E2E tests
+        run_e2e_tests
+        E2E_EXIT=$?
         
         # Determine overall exit code
-        if [ $UNIT_EXIT -eq 0 ] && [ $INT_EXIT -eq 0 ]; then
+        if [ $UNIT_EXIT -eq 0 ] && [ $INT_EXIT -eq 0 ] && [ $E2E_EXIT -eq 0 ]; then
             echo ""
             echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
             echo -e "${GREEN}✓ All tests passed${NC}"

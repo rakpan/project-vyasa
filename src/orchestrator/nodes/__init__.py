@@ -50,10 +50,12 @@ _tone_guard_cache = None
 def __getattr__(name):
     """Lazy import pattern for tone_guard and other dynamic exports."""
     global _tone_guard_cache
+    # Explicitly use global importlib to avoid scoping ambiguity
+    import importlib as _importlib
     
     if name == "tone_guard":
         if _tone_guard_cache is None:
-            _tone_guard_cache = importlib.import_module("src.orchestrator.tone_guard")
+            _tone_guard_cache = _importlib.import_module("src.orchestrator.tone_guard")
         return _tone_guard_cache
     
     raise AttributeError(f"module {__name__} has no attribute {name}")

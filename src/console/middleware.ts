@@ -18,6 +18,18 @@ export default auth((req) => {
   if (!isLoggedIn) {
     const loginUrl = new URL("/login", req.url)
     loginUrl.searchParams.set("callbackUrl", pathname)
+    
+    // Preserve research context parameters (threadId, jobId, projectId, pdfUrl)
+    const threadId = req.nextUrl.searchParams.get("threadId")
+    const jobId = req.nextUrl.searchParams.get("jobId")
+    const projectId = req.nextUrl.searchParams.get("projectId")
+    const pdfUrl = req.nextUrl.searchParams.get("pdfUrl")
+    
+    if (threadId) loginUrl.searchParams.set("threadId", threadId)
+    if (jobId) loginUrl.searchParams.set("jobId", jobId)
+    if (projectId) loginUrl.searchParams.set("projectId", projectId)
+    if (pdfUrl) loginUrl.searchParams.set("pdfUrl", pdfUrl)
+    
     return NextResponse.redirect(loginUrl)
   }
 

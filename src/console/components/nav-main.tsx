@@ -8,6 +8,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { FolderKanban, BookText, Activity, Settings } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { ProjectLogo } from "@/components/project-logo"
 import { cn } from "@/lib/utils"
 import { NavFooter } from "./nav-footer"
 import { StatusStrip } from "./status-strip"
@@ -51,11 +52,11 @@ export function NavMain() {
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-[72px] bg-muted border-r border-border flex flex-col z-40">
-      {/* Logo/Mark */}
-      <div className="p-2 border-b border-border">
-        <div className="h-10 w-10 rounded-md bg-primary text-primary-foreground flex items-center justify-center">
-          <span className="text-xs font-bold">V</span>
-        </div>
+      {/* Logo */}
+      <div className="p-2 border-b border-border overflow-hidden">
+        <Link href="/projects" className="block">
+          <ProjectLogo align="left" />
+        </Link>
       </div>
 
       {/* Core Actions */}

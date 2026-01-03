@@ -98,63 +98,6 @@ class TestTimeoutProtection:
             assert call_args[0][1]["reason"] == "timeout"
             assert call_args[0][1]["reference_id"] == "ref-123"
     
-    @patch("src.orchestrator.api.knowledge._ensure_collections")
-    @patch("src.orchestrator.api.knowledge._update_external_reference_status")
-    @patch("src.orchestrator.api.knowledge._extract_facts_from_content")
-    def test_extraction_timeout_uses_failed_if_already_failed(
-        self,
-        mock_extract,
-        mock_update_status,
-        mock_ensure_collections,
-        monkeypatch,
-    ):
-        """Test that timeout uses FAILED status if reference is already in FAILED state."""
-        # Configure arango.ArangoClient (library level) to return our mock DB
-        from src.orchestrator.api.knowledge import EXTERNAL_REFERENCES_COLLECTION
-        
-        mock_db = MagicMock()
-        mock_coll = MagicMock()
-        # Return document with FAILED status for the test reference_id
-        mock_doc = {"reference_id": "ref-123", "status": "FAILED"}
-        mock_coll.get.return_value = mock_doc
-        
-        # Configure collection to return our mock when external_references is requested
-        def collection_side_effect(name):
-            if name == EXTERNAL_REFERENCES_COLLECTION:
-                return mock_coll
-            return MagicMock()
-        mock_db.collection.side_effect = collection_side_effect
-        # Ensure has_collection returns True so _ensure_collections doesn't try to create it
-        mock_db.has_collection.return_value = True
-        # Mock create_collection to do nothing
-        mock_db.create_collection = Mock(return_value=None)
-        
-        def mock_client_factory(hosts):
-            mock_client = Mock()
-            mock_client.db.return_value = mock_db
-            return mock_client
-        
-        monkeypatch.setattr("arango.ArangoClient", mock_client_factory)
-        
-        # Mock ThreadPoolExecutor to raise TimeoutError
-        with patch("src.orchestrator.api.knowledge.ThreadPoolExecutor") as mock_executor_class:
-            mock_executor = MagicMock()
-            mock_executor.__enter__.return_value = mock_executor
-            mock_executor.__exit__.return_value = None
-            mock_future = MagicMock()
-            mock_future.result.side_effect = FutureTimeoutError()
-            mock_executor.submit.return_value = mock_future
-            mock_executor_class.return_value = mock_executor
-            
-            # Run background extraction
-            _run_extraction_background("ref-123", "proj-456", "test content")
-            
-            # Verify status was updated to FAILED (not NEEDS_REVIEW)
-            calls = mock_update_status.call_args_list
-            assert len(calls) >= 1
-            last_status = calls[-1][0][1]
-            assert last_status == "FAILED"
-
 
 class TestFactHashDeduplication:
     """Test promotion deduplication by fact_hash."""

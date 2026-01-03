@@ -22,9 +22,10 @@ body {
 /* Blueprint aesthetic - subtle dotted grid background */
 .blueprint-grid {
   background-image: 
-    radial-gradient(circle, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
-  background-size: 24px 24px;
+    radial-gradient(circle, rgba(15, 23, 42, 0.06) 1px, transparent 1px);
+  background-size: 20px 20px;
   background-position: 0 0;
+  background-color: #FFFFFF;
 }
 
 /* Selection color - subtle navy */
@@ -124,9 +125,9 @@ body {
 
 @layer base {
   :root {
-    /* High-density Light Palette */
-    --background: 255 255 255;
-    --foreground: 15 23 42;
+    /* Modern Factory Light Palette - Project Vyasa */
+    --background: 255 255 255; /* #FFFFFF - Pure White */
+    --foreground: 15 23 42; /* #0F172A - Deep Navy */
 
     --card: 255 255 255;
     --card-foreground: 15 23 42;
@@ -137,10 +138,10 @@ body {
     --primary: 17 24 39; /* #111827 */
     --primary-foreground: 255 255 255;
 
-    --secondary: 248 250 252;
+    --secondary: 248 250 252; /* #F8FAFC - Soft Slate */
     --secondary-foreground: 15 23 42;
 
-    --muted: 248 250 252;
+    --muted: 248 250 252; /* #F8FAFC - Soft Slate */
     --muted-foreground: 100 116 139;
 
     --accent: 248 250 252;
