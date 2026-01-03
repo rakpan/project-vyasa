@@ -43,6 +43,7 @@ from ..guards.tone_rewrite import rewrite_to_neutral
 from ..job_store import store_reframing_proposal
 from ..job_manager import update_job_status
 from .nodes import hydrate_project_context
+from .base import wrap_prompt_with_context
 
 # Cache for tone_guard module (lazy loading)
 _tone_guard_cache = None
@@ -95,4 +96,5 @@ __all__ = [
     "update_job_status",
     "telemetry_emitter",
     "hydrate_project_context",
+    "wrap_prompt_with_context",
 ]

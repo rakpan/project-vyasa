@@ -11,8 +11,7 @@ import os
 import json as json_lib
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, Set, List
-from collections import defaultdict
+from typing import Optional, Dict, Any, List
 import tempfile
 from flask import Flask, request, jsonify, Response, stream_with_context
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -58,6 +57,11 @@ from .api.knowledge import knowledge_bp
 from .api.jobs import _get_job_version
 from .api.jobs import jobs_bp
 from .api.manuscript import manuscript_bp
+from .api.claims import claims_bp
+from .services.events import notify_sse_clients, publish_event, get_event_queue, remove_event_queue
+from .services.metrics import calculate_quality_metrics, store_quality_metrics, emit_reprocess_completion_telemetry
+from .services.triples import extract_nodes_from_triples, extract_edges_from_triples
+from .services.telemetry import emit_reframe_event
 from ..shared.logger import get_logger
 from ..shared.config import (
     ARANGODB_DB,
@@ -94,19 +98,18 @@ def handle_file_too_large(e):
     }), 413
 
 # Start metrics engine early; if it fails we degrade to 503 on the observatory endpoint.
-try:
-    observatory_metrics_service.start()
-except Exception as exc:  # pragma: no cover - defensive
-    logger.warning("Failed to start metrics service", extra={"payload": {"error": str(exc)}})
+# Skip during tests or when explicitly disabled to avoid background threads in unit runs.
+_disable_metrics = os.getenv("DISABLE_METRICS_SERVICE", "").lower() == "true" or os.getenv("PYTEST_CURRENT_TEST")
+if not _disable_metrics:
+    try:
+        observatory_metrics_service.start()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to start metrics service", extra={"payload": {"error": str(exc)}})
+else:
+    logger.info("Metrics service start skipped (tests or DISABLE_METRICS_SERVICE=true)")
 
 # Initialize ArangoDB connection and ProjectService
 _project_service: Optional[ProjectService] = None
-
-# SSE event streams: job_id -> set of active connections
-_sse_connections: Dict[str, Set[threading.Event]] = defaultdict(set)
-_sse_lock = threading.Lock()
-_event_queues: Dict[str, "asyncio.Queue"] = {}
-_event_queues_lock = threading.Lock()
 
 # ASGI gateway (FastAPI) with observatory router; mounts Flask app for legacy routes.
 # The bridge keeps a unified surface for both FastAPI (observability) and Flask (ingestion).
@@ -126,11 +129,7 @@ else:
 @api_app.get("/events/{job_id}")
 async def stream_job_events(job_id: str):
     """Stream LangGraph events (v2) for heartbeat/status."""
-    with _event_queues_lock:
-        queue = _event_queues.get(job_id)
-        if queue is None:
-            queue = asyncio.Queue(maxsize=100)
-            _event_queues[job_id] = queue
+    queue = get_event_queue(job_id)
 
     async def event_generator():
         try:
@@ -143,8 +142,7 @@ async def stream_job_events(job_id: str):
         except asyncio.CancelledError:
             return
         finally:
-            with _event_queues_lock:
-                _event_queues.pop(job_id, None)
+            remove_event_queue(job_id)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -194,106 +192,18 @@ def post_job_signoff(job_id: str):
             config = {"configurable": {"thread_id": thread_id}}
             resumed = workflow_app.invoke(None, config=config)
             update_job_status(job_id, JobStatus.SUCCEEDED, message="Reframe accepted")
-            telemetry_emitter.emit_event(
-                "reframe_accepted",
-                {"proposal_id": proposal_id, "job_id": job_id, "thread_id": thread_id},
-            )
+            emit_reframe_event("reframe_accepted", proposal_id, job_id, thread_id=thread_id)
             return jsonify({"status": "resumed", "job_id": job_id, "result": resumed}), 200
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to resume after reframing signoff", exc_info=True)
             update_job_status(job_id, JobStatus.FAILED, error=str(exc), message="Reframe resume failed")
             return jsonify({"error": "Failed to resume workflow"}), 500
 
-    telemetry_emitter.emit_event("reframe_rejected", {"proposal_id": proposal_id, "job_id": job_id})
+    emit_reframe_event("reframe_rejected", proposal_id, job_id)
     update_job_status(job_id, JobStatus.FAILED, error="Reframe rejected", message="Reframe rejected")
     return jsonify({"status": "rejected"}), 200
 
 
-def _extract_nodes_from_triples(triples: list) -> list:
-    """Extract unique nodes from triples.
-    
-    Args:
-        triples: List of triple dictionaries.
-    
-    Returns:
-        List of node dictionaries with id, label, type.
-    """
-    nodes_map: Dict[str, Dict[str, Any]] = {}
-    
-    for triple in triples:
-        subject = triple.get("subject", "")
-        obj = triple.get("object", "")
-        
-        if subject and subject not in nodes_map:
-            nodes_map[subject] = {
-                "id": subject,
-                "label": subject,
-                "type": "entity",
-            }
-        
-        if obj and obj not in nodes_map:
-            nodes_map[obj] = {
-                "id": obj,
-                "label": obj,
-                "type": "entity",
-            }
-    
-    return list(nodes_map.values())
-
-
-def _extract_edges_from_triples(triples: list) -> list:
-    """Extract edges from triples.
-    
-    Args:
-        triples: List of triple dictionaries.
-    
-    Returns:
-        List of edge dictionaries with source, target, label, evidence, confidence.
-    """
-    edges = []
-    
-    for triple in triples:
-        subject = triple.get("subject", "")
-        obj = triple.get("object", "")
-        
-        if subject and obj:
-            edges.append({
-                "source": subject,
-                "target": obj,
-                "label": triple.get("predicate", ""),
-                "evidence": triple.get("evidence", ""),
-                "confidence": triple.get("confidence", 0.0),
-            })
-    
-    return edges
-
-
-def _notify_sse_clients(job_id: str, data: Dict[str, Any]) -> None:
-    """Notify all SSE clients for a job about new data.
-    
-    Args:
-        job_id: Job identifier.
-        data: Event data to send.
-    """
-    with _sse_lock:
-        events = _sse_connections.get(job_id, set()).copy()
-    
-    # Set event to notify waiting SSE streams
-    for event in events:
-        event.set()
-
-
-def _publish_event(job_id: str, payload: Dict[str, Any]) -> None:
-    """Publish an event to async subscribers (event stream) without blocking."""
-    with _event_queues_lock:
-        queue = _event_queues.get(job_id)
-    if queue:
-        try:
-            queue.put_nowait(payload)
-        except asyncio.QueueFull:
-            logger.debug(f"Event queue full for {job_id}, dropping event")
-        except Exception:
-            logger.debug("Unexpected error publishing event", exc_info=True)
 
 # Progress mapping for researcher-facing job status
 STEP_PROGRESS = {
@@ -851,7 +761,7 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
                 ev_type = event.get("event")
                 node_name = event.get("name") or event.get("node")
                 if ev_type == "on_node_start" and node_name in {"vision", "logician", "brain", "cortex-brain"}:
-                    _publish_event(job_id, {"type": "node_start", "node": node_name, "timestamp": get_utc_now().isoformat()})
+                    publish_event(job_id, {"type": "node_start", "node": node_name, "timestamp": get_utc_now().isoformat()})
                 # Capture latest state if present
                 if "state" in event and isinstance(event["state"], dict):
                     final_state = event["state"]
@@ -860,7 +770,7 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
                     payload = {"type": "event", "event": ev_type, "node": node_name, "timestamp": get_utc_now().isoformat()}
                     if "value" in event:
                         payload["value"] = event.get("value")
-                    _publish_event(job_id, payload)
+                    publish_event(job_id, payload)
                 except Exception:
                     pass
 
@@ -870,12 +780,12 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
             if isinstance(extracted_json, dict):
                 triples = extracted_json.get("triples", [])
                 if triples:
-                    _notify_sse_clients(job_id, {
+                    notify_sse_clients(job_id, {
                         "type": "graph_update",
                         "timestamp": get_utc_now().isoformat(),
                         "step": "cartographer",
-                        "nodes": _extract_nodes_from_triples(triples),
-                        "edges": _extract_edges_from_triples(triples),
+                        "nodes": extract_nodes_from_triples(triples),
+                        "edges": extract_edges_from_triples(triples),
                     })
 
             update_job_status(job_id, JobStatus.RUNNING, current_step="Saver", progress=0.9, message="Persisting results")
@@ -895,9 +805,9 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
                     extra={"payload": {"conflicts": conflict_flags}}
                 )
 
-            _store_quality_metrics(job_id, result)
+            store_quality_metrics(job_id, result)
             set_job_result(job_id, result)
-            _emit_reprocess_completion_telemetry(job_id, result)
+            emit_reprocess_completion_telemetry(job_id, result)
 
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Workflow execution failed for job {job_id}", exc_info=True)
@@ -911,119 +821,6 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
         update_job_status(job_id, JobStatus.FAILED, error=str(exc), message="Failed")
 
 
-def _calculate_quality_metrics(result: Dict[str, Any]) -> Dict[str, Any]:
-    """Calculate quality metrics from a job result.
-    
-    Args:
-        result: Job result dictionary
-    
-    Returns:
-        Dictionary with quality metrics:
-        - unsupported_claim_rate: float (0.0-1.0)
-        - conflict_count: int
-        - missing_fields_count: int
-        - total_triples: int
-    """
-    from .api.jobs import _count_conflicts, _count_unsupported_claims, _count_missing_fields
-    
-    extracted_json = result.get("extracted_json", {})
-    triples = extracted_json.get("triples", []) if isinstance(extracted_json, dict) else []
-    total_triples = len(triples) if isinstance(triples, list) else 0
-    
-    conflict_count = _count_conflicts(result)
-    missing_fields_count = _count_missing_fields(result)
-    unsupported_count = _count_unsupported_claims(result)
-    
-    unsupported_claim_rate = (unsupported_count / total_triples) if total_triples > 0 else 0.0
-    
-    return {
-        "unsupported_claim_rate": round(unsupported_claim_rate, 4),
-        "conflict_count": conflict_count,
-        "missing_fields_count": missing_fields_count,
-        "total_triples": total_triples,
-        "unsupported_count": unsupported_count,
-    }
-
-
-def _store_quality_metrics(job_id: str, result: Dict[str, Any]) -> None:
-    """Store quality metrics in job metadata, including comparison with parent if reprocessed.
-    
-    Args:
-        job_id: Job identifier
-        result: Job result dictionary
-    """
-    from .job_store import get_job_record, update_job_record
-    
-    quality_metrics_after = _calculate_quality_metrics(result)
-    
-    # Get job record to check if this is a reprocessed job
-    record = get_job_record(job_id) or {}
-    parent_job_id = record.get("parent_job_id")
-    
-    quality_metrics_before = None
-    if parent_job_id:
-        # Get parent job result to calculate metrics_before
-        parent_job = get_job(parent_job_id)
-        if parent_job and parent_job.get("result"):
-            quality_metrics_before = _calculate_quality_metrics(parent_job["result"])
-    
-    # Store metrics in job record
-    update_job_record(job_id, {
-        "quality_metrics_after": quality_metrics_after,
-        "quality_metrics_before": quality_metrics_before,
-    })
-    
-    logger.debug(
-        f"Stored quality metrics for job {job_id}",
-        extra={
-            "payload": {
-                "job_id": job_id,
-                "quality_metrics_after": quality_metrics_after,
-                "has_parent_metrics": quality_metrics_before is not None,
-            }
-        }
-    )
-
-
-def _emit_reprocess_completion_telemetry(job_id: str, result: Dict[str, Any]) -> None:
-    """Emit telemetry event when a reprocessed job completes.
-    
-    Args:
-        job_id: Job identifier
-        result: Job result dictionary
-    """
-    from .job_store import get_job_record
-    
-    record = get_job_record(job_id) or {}
-    parent_job_id = record.get("parent_job_id")
-    
-    if not parent_job_id:
-        # Not a reprocessed job, skip telemetry
-        return
-    
-    # Calculate quality deltas if parent metrics available
-    quality_metrics_after = record.get("quality_metrics_after") or {}
-    quality_metrics_before = record.get("quality_metrics_before")
-    
-    quality_deltas = None
-    if quality_metrics_before:
-        quality_deltas = {
-            "unsupported_claim_rate_delta": quality_metrics_after.get("unsupported_claim_rate", 0.0) - quality_metrics_before.get("unsupported_claim_rate", 0.0),
-            "conflict_count_delta": quality_metrics_after.get("conflict_count", 0) - quality_metrics_before.get("conflict_count", 0),
-            "missing_fields_count_delta": quality_metrics_after.get("missing_fields_count", 0) - quality_metrics_before.get("missing_fields_count", 0),
-            "triples_count_delta": quality_metrics_after.get("total_triples", 0) - quality_metrics_before.get("total_triples", 0),
-        }
-    
-    telemetry_emitter.emit_event(
-        "job_reprocess_completed",
-        {
-            "parent_job_id": parent_job_id,
-            "new_job_id": job_id,
-            "timestamp": get_utc_now().isoformat(),
-            "quality_deltas": quality_deltas,
-            "quality_metrics_after": quality_metrics_after,
-        },
-    )
 
 
 @app.route("/workflow/submit", methods=["POST"])
@@ -1171,11 +968,23 @@ def submit_workflow():
                 from .ingestion_store import IngestionStore
                 ingestion_store = IngestionStore(project_service.db)
                 
+                # Compute first glance deterministically from PDF structure (if PDF path available)
+                first_glance = None
+                if pdf_path:
+                    try:
+                        from .first_glance import compute_first_glance_from_path
+                        first_glance = compute_first_glance_from_path(pdf_path)
+                        logger.info(f"Computed first glance for {uploaded_filename}", extra={"payload": {"pages": first_glance.get("pages"), "tables": first_glance.get("tables_detected"), "figures": first_glance.get("figures_detected")}})
+                    except Exception as e:
+                        logger.warning(f"Failed to compute first glance for {uploaded_filename}: {e}", exc_info=True)
+                        # Continue without first_glance (will be computed later from job result)
+                
                 # Create ingestion record (atomic - fails if file_hash missing)
                 ingestion_record = ingestion_store.create_ingestion(
                     project_id=project_id,
                     filename=uploaded_filename,
                     file_hash=doc_hash,
+                    first_glance=first_glance,  # Include if computed
                 )
                 ingestion_id = ingestion_record.ingestion_id
                 

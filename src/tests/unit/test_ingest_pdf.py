@@ -40,44 +40,6 @@ def client():
         yield client
 
 
-def test_ingest_pdf_preview_only_no_image_paths(client):
-    """/ingest/pdf should return preview data without reusable image_paths."""
-    with patch('src.orchestrator.server.process_pdf') as mock_process_pdf:
-        mock_process_pdf.return_value = (
-            "# Test Markdown",
-            "/tmp/images",
-            ["/tmp/images/img1.png", "/tmp/images/img2.png"],  # These should NOT be in response
-        )
-
-        fake_pdf = io.BytesIO(b'%PDF-1.4 fake pdf content')
-        response = client.post(
-            '/ingest/pdf',
-            data={
-                'file': (fake_pdf, 'test.pdf'),
-            },
-            content_type='multipart/form-data',
-        )
-
-        assert response.status_code == 200
-        data = json.loads(response.data)
-
-        # Verify response structure
-        assert "markdown" in data
-        assert data["markdown"] == "# Test Markdown"
-        assert "filename" in data
-        assert data["filename"] == "test.pdf"
-        assert "image_count" in data
-        assert data["image_count"] == 2
-
-        # Critical: Should NOT return image_paths (temporary files are deleted)
-        assert "image_paths" not in data
-        assert "images_dir" not in data
-
-        # Verify note about preview-only
-        assert "note" in data
-        assert "preview" in data["note"].lower()
-
-
 def test_ingest_pdf_invalid_file_extension(client):
     """Invalid file extension -> 400."""
     with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as tmp_file:

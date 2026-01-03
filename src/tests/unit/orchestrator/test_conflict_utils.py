@@ -1,10 +1,20 @@
 """
 Tests for conflict_utils module.
 Tests deterministic explanation generation and conflict payload extraction.
+
+Verifies:
+1. Explanations use enum-based conflict types
+2. Explanations use template-based formatting (no LLM variance)
+3. Same inputs produce identical outputs
 """
 
 import pytest
-from src.orchestrator.conflict_utils import generate_conflict_explanation, extract_conflict_payload
+from src.orchestrator.conflict_utils import (
+    generate_conflict_explanation,
+    extract_conflict_payload,
+    DeterministicConflictType,
+    _map_conflict_type_to_deterministic,
+)
 from src.shared.schema import ConflictItem, ConflictType, ConflictSeverity, ConflictProducer, SourcePointer
 
 
@@ -25,30 +35,36 @@ def test_generate_conflict_explanation_with_pages():
 
 
 def test_generate_conflict_explanation_without_pages():
-    """Test explanation generation without page numbers."""
+    """Test explanation generation without page numbers (uses 'unknown')."""
     source_a = {"doc_hash": "abc123def456"}
     source_b = {"doc_hash": "xyz789ghi012"}
     claim_text = "X relates Y"
     
     explanation = generate_conflict_explanation(claim_text, source_a, source_b)
     
-    assert "X relates Y" in explanation
-    assert "doc abc123de" in explanation or "abc123" in explanation
+    # Should use template with 'unknown' for missing pages
+    assert "X relates Y" in explanation or "X relates..." in explanation
+    assert "page unknown" in explanation
     assert "Source A" in explanation
     assert "Source B" in explanation
+    assert explanation.endswith(".")
 
 
 def test_generate_conflict_explanation_with_conflict_type():
-    """Test explanation generation with conflict type."""
+    """Test explanation generation with conflict type enum."""
     source_a = {"doc_hash": "abc123", "page": 1}
     source_b = {"doc_hash": "xyz789", "page": 2}
     claim_text = "Test claim"
     
     explanation = generate_conflict_explanation(
-        claim_text, source_a, source_b, conflict_type="STRUCTURAL_CONFLICT"
+        claim_text, source_a, source_b, conflict_type=ConflictType.STRUCTURAL_CONFLICT
     )
     
-    assert "Structural Conflict" in explanation or "STRUCTURAL_CONFLICT" in explanation
+    # Should use template format (not LLM-generated)
+    assert "page 1" in explanation or "page unknown" in explanation
+    assert "page 2" in explanation or "page unknown" in explanation
+    assert "Test claim" in explanation or "Test claim..." in explanation
+    assert explanation.endswith(".")
 
 
 def test_extract_conflict_payload_no_flags():
@@ -176,4 +192,72 @@ def test_deterministic_explanation_same_inputs():
     explanation2 = generate_conflict_explanation(claim_text, source_a, source_b)
     
     assert explanation1 == explanation2
+
+
+def test_conflict_type_mapping():
+    """Test that ConflictType enum values map to deterministic types."""
+    # Test mapping of ConflictType enum values
+    assert _map_conflict_type_to_deterministic(ConflictType.STRUCTURAL_CONFLICT) == DeterministicConflictType.CONTRADICTION
+    assert _map_conflict_type_to_deterministic(ConflictType.EVIDENCE_BINDING_FAILURE) == DeterministicConflictType.MISSING_EVIDENCE
+    assert _map_conflict_type_to_deterministic(ConflictType.SCOPE_MISMATCH) == DeterministicConflictType.AMBIGUOUS
+    assert _map_conflict_type_to_deterministic(None) == DeterministicConflictType.CONTRADICTION
+
+
+def test_explanation_uses_templates():
+    """Test that explanations use template-based formatting."""
+    source_a = {"doc_hash": "abc123", "page": 5}
+    source_b = {"doc_hash": "xyz789", "page": 12}
+    claim_text = "Subject predicate Object"
+    
+    # Test with different conflict types
+    explanation_contradiction = generate_conflict_explanation(
+        claim_text, source_a, source_b, ConflictType.STRUCTURAL_CONFLICT
+    )
+    explanation_missing = generate_conflict_explanation(
+        claim_text, source_a, source_b, ConflictType.EVIDENCE_BINDING_FAILURE
+    )
+    explanation_ambiguous = generate_conflict_explanation(
+        claim_text, source_a, source_b, ConflictType.SCOPE_MISMATCH
+    )
+    
+    # All should be different (different templates)
+    assert explanation_contradiction != explanation_missing
+    assert explanation_contradiction != explanation_ambiguous
+    assert explanation_missing != explanation_ambiguous
+    
+    # All should contain claim text and page numbers
+    assert "Subject predicate Object" in explanation_contradiction or "Subject predicate..." in explanation_contradiction
+    assert "5" in explanation_contradiction
+    assert "12" in explanation_contradiction
+
+
+def test_explanation_template_format():
+    """Test that explanations follow template format (no LLM-generated strings)."""
+    source_a = {"doc_hash": "abc123", "page": 5}
+    source_b = {"doc_hash": "xyz789", "page": 12}
+    claim_text = "Test claim text"
+    
+    explanation = generate_conflict_explanation(claim_text, source_a, source_b)
+    
+    # Should contain template markers (page numbers, claim text)
+    assert "page 5" in explanation or "page unknown" in explanation
+    assert "page 12" in explanation or "page unknown" in explanation
+    assert "Test claim text" in explanation or "Test claim..." in explanation
+    
+    # Should end with period (template format)
+    assert explanation.endswith(".")
+
+
+def test_explanation_without_pages():
+    """Test that explanations work when page numbers are missing."""
+    source_a = {"doc_hash": "abc123"}
+    source_b = {"doc_hash": "xyz789"}
+    claim_text = "Test claim"
+    
+    explanation = generate_conflict_explanation(claim_text, source_a, source_b)
+    
+    # Should still generate explanation (uses "unknown" for missing pages)
+    assert len(explanation) > 0
+    assert explanation.endswith(".")
+
 

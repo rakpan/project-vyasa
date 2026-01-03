@@ -139,6 +139,7 @@ class IngestionStore:
         file_hash: str,
         job_id: Optional[str] = None,
         allow_empty_hash: bool = False,
+        first_glance: Optional[Dict[str, Any]] = None,
     ) -> IngestionRecord:
         """Create a new ingestion record (atomic).
         
@@ -148,6 +149,7 @@ class IngestionStore:
             file_hash: SHA256 hash of file content.
             job_id: Optional job ID if workflow already started.
             allow_empty_hash: If True, allows empty hash (for non-file workflows).
+            first_glance: Optional first glance summary (computed deterministically from PDF).
         
         Returns:
             IngestionRecord with generated ingestion_id.
@@ -167,6 +169,7 @@ class IngestionStore:
             file_hash=file_hash,
             status=IngestionStatus.QUEUED,
             job_id=job_id,
+            first_glance=first_glance,
         )
         
         try:

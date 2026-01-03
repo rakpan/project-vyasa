@@ -3,81 +3,127 @@ Utilities for generating deterministic conflict explanations and payloads.
 
 This module provides functions to extract conflict information from claims
 and generate deterministic explanations without LLM calls.
+
+All explanations use enum-based conflict types and template-based formatting
+to ensure determinism and repeatability.
 """
 
+from enum import Enum
 from typing import Dict, Any, Optional, List
-from ..shared.schema import ConflictItem, SourcePointer
+from ..shared.schema import ConflictItem, SourcePointer, ConflictType
+
+
+# Conflict type enum for deterministic explanations
+class DeterministicConflictType(str, Enum):
+    """Deterministic conflict types for template-based explanations."""
+    CONTRADICTION = "CONTRADICTION"
+    MISSING_EVIDENCE = "MISSING_EVIDENCE"
+    AMBIGUOUS = "AMBIGUOUS"
+
+
+# Template-based explanation generators
+_CONFLICT_TEMPLATES = {
+    DeterministicConflictType.CONTRADICTION: (
+        "Source A asserts '{claim}' on page {page_a}, "
+        "while Source B contradicts this on page {page_b}."
+    ),
+    DeterministicConflictType.MISSING_EVIDENCE: (
+        "Claim '{claim}' lacks sufficient evidence. "
+        "Source A (page {page_a}) provides partial support, "
+        "but Source B (page {page_b}) does not confirm this claim."
+    ),
+    DeterministicConflictType.AMBIGUOUS: (
+        "Claim '{claim}' is ambiguous. "
+        "Source A (page {page_a}) and Source B (page {page_b}) "
+        "provide conflicting interpretations."
+    ),
+}
+
+
+def _map_conflict_type_to_deterministic(conflict_type: Optional[Any]) -> DeterministicConflictType:
+    """Map ConflictType enum to deterministic conflict type.
+    
+    Args:
+        conflict_type: ConflictType enum value or string.
+    
+    Returns:
+        DeterministicConflictType enum value.
+    """
+    if conflict_type is None:
+        return DeterministicConflictType.CONTRADICTION
+    
+    # Handle enum
+    if hasattr(conflict_type, "value"):
+        conflict_type = conflict_type.value
+    elif not isinstance(conflict_type, str):
+        conflict_type = str(conflict_type)
+    
+    conflict_type_upper = conflict_type.upper()
+    
+    # Map ConflictType enum values to deterministic types
+    if conflict_type_upper in (
+        "STRUCTURAL_CONFLICT",
+        "INCOMPATIBLE_ASSUMPTIONS",
+        "NUMERICAL_INCONSISTENCY",
+        "ONTOLOGY_COLLISION",
+    ):
+        return DeterministicConflictType.CONTRADICTION
+    elif conflict_type_upper in (
+        "EVIDENCE_BINDING_FAILURE",
+        "UNSUPPORTED_CORE_CLAIM",
+    ):
+        return DeterministicConflictType.MISSING_EVIDENCE
+    elif conflict_type_upper == "SCOPE_MISMATCH":
+        return DeterministicConflictType.AMBIGUOUS
+    else:
+        # Default to CONTRADICTION
+        return DeterministicConflictType.CONTRADICTION
 
 
 def generate_conflict_explanation(
     claim_text: str,
     source_a: SourcePointer,
     source_b: SourcePointer,
-    conflict_type: Optional[str] = None,
+    conflict_type: Optional[Any] = None,
 ) -> str:
-    """Generate a deterministic conflict explanation from claim and source metadata.
+    """Generate a deterministic conflict explanation using templates.
     
     This function creates explanations based on extracted claim text and citation
-    metadata, without any LLM calls. The explanation is deterministic and reproducible.
+    metadata, using enum-based conflict types and template-based formatting.
+    No LLM calls are made. The explanation is deterministic and reproducible.
     
     Args:
         claim_text: The claim text (e.g., "Subject predicate Object")
         source_a: Source pointer for the first source
         source_b: Source pointer for the second source
-        conflict_type: Optional conflict type (e.g., "STRUCTURAL_CONFLICT")
+        conflict_type: Optional ConflictType enum or string (mapped to deterministic type)
     
     Returns:
-        Deterministic explanation string
+        Deterministic explanation string using templates
     """
+    # Map conflict type to deterministic enum
+    det_type = _map_conflict_type_to_deterministic(conflict_type)
+    
     # Extract page numbers
     page_a = source_a.get("page") if isinstance(source_a, dict) else getattr(source_a, "page", None)
     page_b = source_b.get("page") if isinstance(source_b, dict) else getattr(source_b, "page", None)
     
-    # Extract doc hashes (shortened for readability)
-    doc_hash_a = source_a.get("doc_hash") if isinstance(source_a, dict) else getattr(source_a, "doc_hash", None)
-    doc_hash_b = source_b.get("doc_hash") if isinstance(source_b, dict) else getattr(source_b, "doc_hash", None)
+    # Truncate claim if too long
+    claim_short = claim_text[:60] + "..." if len(claim_text) > 60 else claim_text
     
-    # Build explanation based on available metadata
-    parts = []
+    # Get template for this conflict type
+    template = _CONFLICT_TEMPLATES[det_type]
     
-    # Start with claim context
-    if claim_text:
-        # Truncate claim if too long
-        claim_short = claim_text[:60] + "..." if len(claim_text) > 60 else claim_text
-        parts.append(f"Claim '{claim_short}'")
+    # Format template with available data
+    # Use defaults if page numbers are missing
+    page_a_str = str(page_a) if page_a is not None else "unknown"
+    page_b_str = str(page_b) if page_b is not None else "unknown"
     
-    # Add source A information
-    source_a_desc = []
-    if page_a:
-        source_a_desc.append(f"page {page_a}")
-    if doc_hash_a:
-        short_hash = doc_hash_a[:8] + "..." if len(doc_hash_a) > 8 else doc_hash_a
-        source_a_desc.append(f"doc {short_hash}")
-    
-    if source_a_desc:
-        parts.append(f"asserted by Source A ({', '.join(source_a_desc)})")
-    else:
-        parts.append("asserted by Source A")
-    
-    # Add source B information
-    source_b_desc = []
-    if page_b:
-        source_b_desc.append(f"page {page_b}")
-    if doc_hash_b:
-        short_hash = doc_hash_b[:8] + "..." if len(doc_hash_b) > 8 else doc_hash_b
-        source_b_desc.append(f"doc {short_hash}")
-    
-    if source_b_desc:
-        parts.append(f"contradicted by Source B ({', '.join(source_b_desc)})")
-    else:
-        parts.append("contradicted by Source B")
-    
-    # Add conflict type if provided
-    if conflict_type:
-        conflict_type_readable = conflict_type.replace("_", " ").title()
-        parts.append(f"({conflict_type_readable})")
-    
-    explanation = ", ".join(parts) + "."
+    explanation = template.format(
+        claim=claim_short,
+        page_a=page_a_str,
+        page_b=page_b_str,
+    )
     
     return explanation
 
@@ -107,7 +153,7 @@ def extract_conflict_payload(
                 "page": int,
                 "excerpt": str
             },
-            "explanation": str
+            "explanation": str (template-based, deterministic)
         }
     """
     # Check if claim is flagged
@@ -128,7 +174,7 @@ def extract_conflict_payload(
     
     # Try to get conflict data from conflict_item
     source_pointer_b: Dict[str, Any] = {}
-    conflict_type: Optional[str] = None
+    conflict_type: Optional[Any] = None
     
     if conflict_item:
         # Use evidence_anchors from conflict_item
@@ -166,9 +212,9 @@ def extract_conflict_payload(
             if anchor_b:
                 source_pointer_b = anchor_b
         
-        # Get conflict type
+        # Get conflict type (must use enum, not LLM-generated string)
         if hasattr(conflict_item, "conflict_type"):
-            conflict_type = conflict_item.conflict_type.value if hasattr(conflict_item.conflict_type, "value") else str(conflict_item.conflict_type)
+            conflict_type = conflict_item.conflict_type  # Use enum directly
         elif isinstance(conflict_item, dict):
             conflict_type = conflict_item.get("conflict_type")
             if isinstance(conflict_type, dict):
@@ -200,7 +246,7 @@ def extract_conflict_payload(
     if not source_pointer_b:
         source_pointer_b = {}
     
-    # Generate deterministic explanation
+    # Generate deterministic explanation using templates (NO LLM CALLS)
     explanation = generate_conflict_explanation(
         claim_text=claim_text,
         source_a=source_pointer_a,
@@ -220,7 +266,7 @@ def extract_conflict_payload(
             "page": source_pointer_b.get("page") if source_pointer_b else None,
             "excerpt": source_pointer_b.get("snippet", source_pointer_b.get("evidence", "")) if source_pointer_b else "",
         },
-        "explanation": explanation,
+        "explanation": explanation,  # Template-based, deterministic
     }
     
     # Remove None values
@@ -228,4 +274,3 @@ def extract_conflict_payload(
     payload["source_b"] = {k: v for k, v in payload["source_b"].items() if v is not None and v != ""}
     
     return payload
-

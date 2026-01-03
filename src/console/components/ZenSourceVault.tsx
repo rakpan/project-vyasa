@@ -14,6 +14,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Scan } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ResearchSideloader } from "@/components/ResearchSideloader"
+import { useEvidence } from "@/contexts/evidence-context"
 
 type EvidenceCoordinates = {
   page: number
@@ -25,6 +26,7 @@ type EvidenceCoordinates = {
   }
   doc_hash?: string
   snippet?: string
+  claim_id?: string
 }
 
 type ZenSourceVaultProps = {
@@ -59,7 +61,13 @@ function toHighlightArea(coords: EvidenceCoordinates | null | undefined) {
  * Source Vault with auto-hide toolbars and floating selection tool.
  * Zen-First: Controls appear only when needed.
  */
-export function ZenSourceVault({ fileUrl, highlight, workerUrl, onRescan, projectId }: ZenSourceVaultProps) {
+export function ZenSourceVault({ fileUrl, highlight: propHighlight, workerUrl, onRescan, projectId }: ZenSourceVaultProps) {
+  // Subscribe to evidence context for anchor updates
+  const { highlight: contextHighlight } = useEvidence()
+  
+  // Prefer context highlight (from claim clicks) over prop highlight
+  const highlight = contextHighlight || propHighlight
+  
   const [areas, setAreas] = React.useState(() => toHighlightArea(highlight))
   const [showToolbar, setShowToolbar] = useState(false)
   const [selectionCoords, setSelectionCoords] = useState<EvidenceCoordinates | null>(null)

@@ -17,6 +17,22 @@ export interface SourcePointer {
   snippet?: string
 }
 
+export interface SourceAnchor {
+  doc_id: string
+  page_number: number
+  span?: {
+    start: number
+    end: number
+  }
+  bbox?: {
+    x: number
+    y: number
+    w: number
+    h: number
+  }
+  snippet?: string
+}
+
 export interface ConflictData {
   conflictId: string
   summary: string // Backend-provided explanation
@@ -39,6 +55,7 @@ export interface Claim {
   provenance: ClaimProvenance
   linkedRQ: string | null // Linked research question
   sourcePointer: SourcePointer
+  source_anchor?: SourceAnchor // UI-friendly anchor for context navigation
   evidence: string
   flags: string[] // Conflict flags
   citations: string[] // Citation keys

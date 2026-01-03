@@ -52,10 +52,13 @@ def _map_job_status_to_ingestion_status(job_status: str, current_step: Optional[
 
 
 def _generate_first_glance_summary(job_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Generate first glance summary from job result.
+    """Generate first glance summary from job result using deterministic PDF parsing.
+    
+    This function uses PDF structure parsing (not LLM outputs) to compute
+    deterministic, repeatable metrics.
     
     Args:
-        job_result: Job result dictionary with extracted_json, etc.
+        job_result: Job result dictionary with pdf_path or raw_text.
     
     Returns:
         Dictionary with pages, tables_detected, figures_detected, text_density.
@@ -63,34 +66,41 @@ def _generate_first_glance_summary(job_result: Optional[Dict[str, Any]]) -> Dict
     if not job_result:
         return {}
     
-    summary: Dict[str, Any] = {}
+    # Try to get PDF path first (preferred for deterministic parsing)
+    pdf_path = job_result.get("pdf_path")
+    if pdf_path:
+        try:
+            from ..first_glance import compute_first_glance_from_path
+            return compute_first_glance_from_path(pdf_path)
+        except Exception as e:
+            logger.warning(f"Failed to compute first glance from PDF path: {e}", exc_info=True)
+            # Fall back to text-based estimation
     
-    # Extract pages from raw_text or pdf_path
+    # Fallback: Estimate from raw_text (less accurate but deterministic)
     raw_text = job_result.get("raw_text", "")
     if raw_text:
-        # Estimate pages (rough: ~3000 chars per page)
+        # Estimate pages (deterministic: ~3000 chars per page)
         estimated_pages = max(1, len(raw_text) // 3000)
-        summary["pages"] = estimated_pages
+        # Estimate text density (chars per page)
+        text_density = len(raw_text) / estimated_pages if estimated_pages > 0 else len(raw_text)
+        
+        # Heuristic: Count table/figure mentions in text (deterministic pattern matching)
+        # Look for common patterns like "Table 1", "Figure 2", etc.
+        import re
+        table_pattern = re.compile(r'\b[Tt]able\s+\d+', re.IGNORECASE)
+        figure_pattern = re.compile(r'\b[Ff]igure\s+\d+', re.IGNORECASE)
+        
+        tables_detected = len(table_pattern.findall(raw_text))
+        figures_detected = len(figure_pattern.findall(raw_text))
+        
+        return {
+            "pages": estimated_pages,
+            "text_density": round(text_density, 2),
+            "tables_detected": tables_detected,
+            "figures_detected": figures_detected,
+        }
     
-    # Extract tables and figures from extracted_json
-    extracted_json = job_result.get("extracted_json", {})
-    if isinstance(extracted_json, dict):
-        triples = extracted_json.get("triples", [])
-        if isinstance(triples, list):
-            # Count tables and figures from triples
-            tables_count = sum(1 for t in triples if "table" in str(t.get("object", "")).lower() or "table" in str(t.get("subject", "")).lower())
-            figures_count = sum(1 for t in triples if "figure" in str(t.get("object", "")).lower() or "figure" in str(t.get("subject", "")).lower())
-            
-            summary["tables_detected"] = tables_count
-            summary["figures_detected"] = figures_count
-            
-            # Calculate text density (triples per page)
-            if summary.get("pages", 0) > 0:
-                summary["text_density"] = round(len(triples) / summary["pages"], 2)
-            else:
-                summary["text_density"] = len(triples)
-    
-    return summary
+    return {}
 
 
 def _calculate_confidence_badge(job_result: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -219,7 +229,7 @@ def get_ingestion_status(project_id: str, ingestion_id: str):
                 "figures_detected": int,
                 "text_density": float
             } (if available),
-            "confidence_badge": "High" | "Medium" | "Low" (if available)
+            "confidence": "High" | "Medium" | "Low" (if available)
         }
     """
     try:
@@ -278,7 +288,7 @@ def get_ingestion_status(project_id: str, ingestion_id: str):
         
         response: Dict[str, Any] = {
             "ingestion_id": ingestion_id,
-            "state": status,  # Use 'state' as per contract
+            "status": status,  # Use 'status' for consistency with IngestionStatus enum
             "progress_pct": progress_pct if progress_pct is not None else None,
         }
         
@@ -315,7 +325,7 @@ def retry_ingestion(project_id: str, ingestion_id: str):
     Response:
         {
             "ingestion_id": str,
-            "state": "Queued",
+            "status": "Queued",
             "job_id": str (new job ID, or same if requeued)
         }
     """
@@ -345,10 +355,10 @@ def retry_ingestion(project_id: str, ingestion_id: str):
         )
         
         # Note: New job_id will be set when client calls /workflow/submit with ingestion_id
-        # For now, return the ingestion_id with Queued state
+        # For now, return the ingestion_id with Queued status
         return jsonify({
             "ingestion_id": ingestion_id,
-            "state": IngestionStatus.QUEUED,
+            "status": IngestionStatus.QUEUED,
             "job_id": None,  # Will be set after re-upload
         }), 200
         

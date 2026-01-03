@@ -627,6 +627,35 @@ def cartographer_node(state: ResearchState) -> ResearchState:
         }
         layered_section = build_extraction_layers(corpus_memory, evidence_chunks, working_state)
 
+    # Enhanced schema instruction for structured claims
+    schema_instruction = """
+IMPORTANT: Return structured JSON with the following schema for each claim/triple:
+{
+  "triples": [
+    {
+      "subject": "string",
+      "predicate": "string",
+      "object": "string",
+      "confidence": 0.0-1.0,
+      "claim_text": "string (human-readable claim)",
+      "relevance_score": 0.0-1.0 (relevance to thesis/RQs),
+      "rq_hits": ["rq_id1", "rq_id2"] (which research questions this addresses),
+      "source_pointer": {
+        "doc_hash": "string",
+        "page": integer,
+        "bbox": [x1, y1, x2, y2],
+        "snippet": "string"
+      }
+    }
+  ]
+}
+"""
+    
+    # Add schema instruction in conservative mode or if explicitly requested
+    rigor_level = state.get("rigor_level") or (project_context or {}).get("rigor_level", "exploratory")
+    if rigor_level == "conservative":
+        system_prompt = f"{system_prompt}\n\n{schema_instruction}"
+    
     user_sections = [f"Document:\n{raw_text}"]
     if layered_section:
         user_sections.append(f"Layered context:\n{layered_section}")
@@ -701,7 +730,52 @@ def cartographer_node(state: ResearchState) -> ResearchState:
             )
             normalized["triples"] = []
         
-        triples_count = len(normalized.get("triples", []))
+        # Add source_anchor to triples for UI context anchors
+        triples = normalized.get("triples", [])
+        if isinstance(triples, list):
+            from ..utils.source_anchor import add_source_anchor_to_triples
+            triples = add_source_anchor_to_triples(triples)
+            normalized["triples"] = triples
+        
+        # Validate schema in conservative mode: ensure metadata-rich structure
+        rigor_level = state.get("rigor_level") or (project_context or {}).get("rigor_level", "exploratory")
+        if rigor_level == "conservative" and isinstance(triples, list):
+            validated_triples = []
+            for triple in triples:
+                if not isinstance(triple, dict):
+                    continue
+                # Require claim_text, relevance_score, rq_hits, source_anchor
+                if not triple.get("claim_text"):
+                    logger.warning(
+                        "Cartographer: Triple missing claim_text in conservative mode",
+                        extra={"payload": {"triple_keys": list(triple.keys())}}
+                    )
+                    # Generate claim_text from subject/predicate/object if missing
+                    subj = triple.get("subject", "")
+                    pred = triple.get("predicate", "")
+                    obj = triple.get("object", "")
+                    if subj and pred and obj:
+                        triple["claim_text"] = f"{subj} {pred} {obj}"
+                
+                # Ensure relevance_score exists (default to 0.5 if missing)
+                if "relevance_score" not in triple:
+                    triple["relevance_score"] = 0.5
+                
+                # Ensure rq_hits exists (default to empty list)
+                if "rq_hits" not in triple:
+                    triple["rq_hits"] = []
+                
+                # Ensure source_anchor exists (already added above, but verify)
+                if not triple.get("source_anchor") and triple.get("source_pointer"):
+                    # Should have been added by add_source_anchor_to_triples
+                    logger.warning("Cartographer: Triple missing source_anchor despite having source_pointer")
+                
+                validated_triples.append(triple)
+            
+            normalized["triples"] = validated_triples
+            triples = validated_triples
+        
+        triples_count = len(triples)
         # Determine actual model used (may be Brain if fallback was used)
         actual_model = meta.get("model_id") or expert_model
         actual_expert_name = meta.get("expert_name", expert_name)
@@ -802,6 +876,7 @@ def critic_node(state: ResearchState) -> ResearchState:
     Includes vocabulary guardrail check for forbidden words in synthesizer output.
     """
     state = validate_state_schema(state)
+    state = hydrate_project_context(state)
     extracted = state.get("extracted_json") or {}
     raw_text = state.get("raw_text", "")
     synthesis = state.get("synthesis", "")
@@ -1484,12 +1559,18 @@ def saver_node(state: ResearchState) -> ResearchState:
 
 @trace_node
 def synthesizer_node(state: ResearchState) -> ResearchState:
-    """Synthesizer node to integrate narrative or math outputs with vocabulary guardrail.
+    """Synthesize verified claims into manuscript blocks with citation integrity guard.
     
-    Uses vocab_guard to inject forbidden word constraints into prompts before LLM calls.
+    Enforces that each paragraph includes at least one claim binding reference.
+    Rejects blocks without bindings in conservative mode, warns in exploratory.
     """
     state = validate_state_schema(state)
+    state = hydrate_project_context(state)
+    
     job_id = state.get("jobId") or state.get("job_id")
+    project_context = state.get("project_context")
+    rigor_level = state.get("rigor_level") or (project_context or {}).get("rigor_level", "exploratory")
+    
     logger.info("Synthesizer node executed", extra={"payload": {"job_id": job_id}})
     
     # Get vocabulary guard for applying constraints
@@ -1504,6 +1585,27 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
     triples = extracted.get("triples") if isinstance(extracted, dict) else []
     synthesis_text = state.get("synthesis")
     
+    # Get role and wrap prompt with context
+    role = role_registry.get_role("The Synthesizer")
+    from .base import wrap_prompt_with_context
+    system_prompt = wrap_prompt_with_context(state, role.system_prompt)
+    
+    # Add citation integrity instruction
+    citation_instruction = """
+CRITICAL: Every paragraph you generate MUST include at least one claim binding reference.
+Use one of these formats:
+1. Inline references: [[claim_id_123]] or [[claim_id_456]]
+2. Explicit claim_ids array in the block metadata: {"claim_ids": ["claim_id_123", "claim_id_456"]}
+
+Blocks without claim bindings will be rejected in conservative mode.
+"""
+    
+    if rigor_level == "conservative":
+        system_prompt = f"{system_prompt}\n\n{citation_instruction}"
+    else:
+        # In exploratory mode, warn but don't reject
+        system_prompt = f"{system_prompt}\n\nNote: {citation_instruction.strip()}"
+    
     # If synthesis_text exists, it means it was generated by a previous step
     # Otherwise, generate it using LLM with vocab guard constraints
     if not synthesis_text:
@@ -1512,16 +1614,37 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
         synthesis_text = f"Synthesized summary: processed {len(triples) if isinstance(triples, list) else 0} triples."
         
         # Example of how vocab_guard would be applied before LLM call:
-        # system_prompt = role.system_prompt if role else "You are a Synthesizer..."
         # if vocab_guard:
         #     system_prompt = vocab_guard.apply_constraints(system_prompt)
         # Then use the modified system_prompt in the llm_client.chat() call
+    
+    # Citation integrity guard: validate that synthesis includes claim bindings
+    import re
+    # Check for inline claim references: [[claim_id_...]]
+    inline_claim_refs = re.findall(r'\[\[([^\]]+)\]\]', synthesis_text)
+    # Check for explicit claim_ids in block metadata (if synthesis is structured)
+    has_claim_bindings = len(inline_claim_refs) > 0
+    
+    # In conservative mode, reject blocks without bindings
+    if rigor_level == "conservative" and not has_claim_bindings:
+        logger.error(
+            "Synthesizer: Block rejected - no claim bindings in conservative mode",
+            extra={"payload": {"synthesis_preview": synthesis_text[:200]}}
+        )
+        # Return empty synthesis to signal rejection
+        return {"synthesis": "", "synthesis_error": "Block rejected: no claim bindings found"}
+    
+    # In exploratory mode, warn but allow
+    if rigor_level == "exploratory" and not has_claim_bindings:
+        logger.warning(
+            "Synthesizer: Block generated without claim bindings (exploratory mode allows)",
+            extra={"payload": {"synthesis_preview": synthesis_text[:200]}}
+        )
     
     # Optional tone rewrite based on rigor policy
     try:
         policy = load_rigor_policy_yaml()
         tone_enforcement = policy.get("tone_enforcement", "flag_only")
-        rigor_level = state.get("rigor_level", "exploratory")
         if rigor_level == "conservative" and tone_enforcement == "rewrite":
             flags = scan_text(synthesis_text or "")
             hard_flags = [f for f in flags if f.severity == "hard"]

@@ -68,7 +68,7 @@ def test_check_duplicate_success(client, mock_ingestion_store, mock_project_serv
     assert response.status_code == 200
     data = response.get_json()
     assert data["is_duplicate"] is True
-    assert len(data["duplicate_projects"]) == 2
+    assert len(data["matches"]) == 2
     mock_ingestion_store.find_duplicates.assert_called_once_with(file_hash, exclude_project_id=project_id)
 
 
@@ -88,7 +88,7 @@ def test_check_duplicate_no_matches(client, mock_ingestion_store):
     assert response.status_code == 200
     data = response.get_json()
     assert data["is_duplicate"] is False
-    assert len(data["duplicate_projects"]) == 0
+    assert len(data["matches"]) == 0
 
 
 def test_check_duplicate_invalid_hash(client):
@@ -121,7 +121,7 @@ def test_get_ingestion_status_queued(client, mock_ingestion_store):
     mock_ingestion_store.get_ingestion.return_value = record
     
     with patch('src.orchestrator.api.ingestion._get_ingestion_store', return_value=mock_ingestion_store):
-        with patch('src.orchestrator.api.ingestion.get_job', return_value=None):
+        with patch('src.orchestrator.job_manager.get_job', return_value=None):
             response = client.get(
                 f'/api/projects/{project_id}/ingest/{ingestion_id}/status'
             )
@@ -158,7 +158,7 @@ def test_get_ingestion_status_with_job(client, mock_ingestion_store):
     }
     
     with patch('src.orchestrator.api.ingestion._get_ingestion_store', return_value=mock_ingestion_store):
-        with patch('src.orchestrator.api.ingestion.get_job', return_value=job):
+        with patch('src.orchestrator.job_manager.get_job', return_value=job):
             response = client.get(
                 f'/api/projects/{project_id}/ingest/{ingestion_id}/status'
             )
@@ -202,7 +202,7 @@ def test_get_ingestion_status_completed_with_first_glance(client, mock_ingestion
     }
     
     with patch('src.orchestrator.api.ingestion._get_ingestion_store', return_value=mock_ingestion_store):
-        with patch('src.orchestrator.api.ingestion.get_job', return_value=job):
+        with patch('src.orchestrator.job_manager.get_job', return_value=job):
             response = client.get(
                 f'/api/projects/{project_id}/ingest/{ingestion_id}/status'
             )
@@ -212,7 +212,7 @@ def test_get_ingestion_status_completed_with_first_glance(client, mock_ingestion
     assert data["status"] == IngestionStatus.COMPLETED
     assert "first_glance" in data
     assert data["first_glance"]["pages"] >= 1
-    assert "confidence_badge" in data
+    assert "confidence" in data
 
 
 def test_retry_ingestion(client, mock_ingestion_store):

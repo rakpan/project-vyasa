@@ -11,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { ChevronRight, HelpCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { Claim } from "@/types/claim"
+import { useAnchor } from "@/hooks/use-anchor"
 
 interface ClaimItemProps {
   claim: Claim
@@ -42,6 +43,7 @@ const STATUS_CONFIG: Record<Claim["status"], { label: string; color: string; var
 
 export function ClaimItem({ claim, onClick }: ClaimItemProps) {
   const statusConfig = STATUS_CONFIG[claim.status]
+  const { scrollToAnchor } = useAnchor()
 
   // Build breadcrumb text
   const breadcrumbParts: string[] = []
@@ -55,6 +57,16 @@ export function ClaimItem({ claim, onClick }: ClaimItemProps) {
     breadcrumbParts.push(`Flagged by: ${claim.provenance.flagged_by}`)
   }
   const breadcrumbText = breadcrumbParts.join(" → ")
+
+  // Handle click: scroll to anchor if available, then call onClick
+  const handleClick = () => {
+    // If claim has source_anchor, scroll to it
+    if (claim.source_anchor) {
+      scrollToAnchor(claim.source_anchor)
+    }
+    // Call original onClick handler
+    onClick()
+  }
 
   // Confidence badge
   const confidenceBadge = claim.confidence !== undefined ? (
@@ -75,7 +87,7 @@ export function ClaimItem({ claim, onClick }: ClaimItemProps) {
         claim.status === "Flagged" && "border-red-300 bg-red-50/30",
         claim.status === "Accepted" && "border-emerald-300 bg-emerald-50/30"
       )}
-      onClick={onClick}
+      onClick={handleClick}
     >
       <div className="space-y-2">
         {/* Header: Status and Confidence */}
