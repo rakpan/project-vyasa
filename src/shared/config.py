@@ -155,6 +155,11 @@ OPIK_API_KEY: Optional[str] = os.getenv("OPIK_API_KEY")
 OPIK_PROJECT_NAME: str = _env("OPIK_PROJECT_NAME", "vyasa")
 OPIK_TIMEOUT_SECONDS: int = int(_env("OPIK_TIMEOUT_SECONDS", "2"))
 
+# Prompt Registry Configuration
+PROMPT_REGISTRY_ENABLED: bool = _env("PROMPT_REGISTRY_ENABLED", "").lower() in ("true", "1", "yes") or OPIK_ENABLED
+PROMPT_CACHE_SECONDS: int = int(_env("PROMPT_CACHE_SECONDS", "300"))  # Default 5 minutes
+PROMPT_TAG: str = _env("PROMPT_TAG", "production")  # Default tag for prompt versions
+
 # ============================================
 # Timeout Matrix (seconds)
 # ============================================

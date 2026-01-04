@@ -17,6 +17,7 @@ from ..shared.logger import get_logger
 from ..shared.utils import get_utc_now
 from ..shared.config import TELEMETRY_PATH as TELEMETRY_PATH_ENV
 from ..shared import opik_client
+from .telemetry.opik_emitter import get_opik_emitter
 
 logger = get_logger("telemetry", __name__)
 
@@ -118,6 +119,7 @@ class TelemetryEmitter:
 def trace_node(func: Callable) -> Callable:
     """Decorator to emit node_execution breadcrumbs around LangGraph nodes."""
     emitter = TelemetryEmitter()
+    opik_emitter = get_opik_emitter()
 
     @wraps(func)
     def wrapper(state: Dict[str, Any], *args: Any, **kwargs: Any):
@@ -125,6 +127,28 @@ def trace_node(func: Callable) -> Callable:
         start_ts = get_utc_now().isoformat()
         result: Optional[Dict[str, Any]] = None
         error: Optional[str] = None
+        
+        # Extract job_id and project_id for Opik tracing
+        job_id = state.get("job_id") or state.get("jobId")
+        project_id = state.get("project_id")
+        node_name = func.__name__
+        
+        # Emit node start to Opik
+        try:
+            rigor_level = state.get("rigor_level") or (state.get("project_context") or {}).get("rigor_level", "exploratory")
+            prompt_manifest = state.get("prompt_manifest", {})
+            opik_emitter.emit_node_start(
+                job_id=job_id or "",
+                project_id=project_id,
+                node_name=node_name,
+                meta={
+                    "rigor_level": rigor_level,
+                    "prompt_manifest": prompt_manifest,
+                },
+            )
+        except Exception:  # pragma: no cover - Opik must be non-blocking
+            pass
+        
         try:
             result = func(state, *args, **kwargs)
             return result
@@ -140,7 +164,6 @@ def trace_node(func: Callable) -> Callable:
             if tokens:
                 metadata["tokens"] = tokens
 
-            node_name = func.__name__
             if any(key in node_name.lower() for key in ("cartographer", "worker", "critic")):
                 doc_hash, page = _extract_doc_pointer(payload)
                 if doc_hash:
@@ -162,8 +185,8 @@ def trace_node(func: Callable) -> Callable:
             emitter.emit_event(
                 "node_execution",
                 {
-                    "job_id": payload.get("job_id"),
-                    "project_id": payload.get("project_id"),
+                    "job_id": job_id,
+                    "project_id": project_id,
                     "node_name": node_name,
                     "timestamp": start_ts,
                     "duration_ms": duration_ms,
@@ -171,40 +194,55 @@ def trace_node(func: Callable) -> Callable:
                 },
             )
 
+            # Emit node end to Opik with comprehensive metadata
             try:
-                opik_cfg = opik_client.get_opik_client()
-            except Exception:  # pragma: no cover - Opik must be non-blocking
-                logger.warning("Opik client unavailable; continuing without tracing", exc_info=True)
-                opik_cfg = None
-
-            if opik_cfg:
-                try:
-                    summary = {
-                        "revision_count": payload.get("revision_count"),
-                        "triples_count": len(payload.get("extracted_json", {}).get("triples", []))
-                        if isinstance(payload.get("extracted_json"), dict)
-                        else 0,
-                        "critiques_count": len(payload.get("critiques", []))
-                        if isinstance(payload.get("critiques"), list)
-                        else 0,
-                        "blocks_count": len(payload.get("manuscript_blocks", []))
-                        if isinstance(payload.get("manuscript_blocks"), list)
-                        else 0,
-                        "critic_status": payload.get("critic_status"),
-                        "deadlock": payload.get("deadlock"),
-                        "needs_signoff": payload.get("status") == "NEEDS_SIGNOFF",
-                    }
-                    opik_meta = {
-                        "project_id": payload.get("project_id"),
-                        "job_id": payload.get("job_id"),
-                        "node_name": node_name,
-                        "expert_type": payload.get("_expert_name"),
+                # Extract counts
+                extracted = payload.get("extracted_json") or {}
+                triples_count = len(extracted.get("triples", [])) if isinstance(extracted, dict) else 0
+                critiques_count = len(payload.get("critiques", [])) if isinstance(payload.get("critiques"), list) else 0
+                blocks_count = len(payload.get("manuscript_blocks", [])) if isinstance(payload.get("manuscript_blocks"), list) else 0
+                conflicts_count = len(payload.get("conflicts", [])) if isinstance(payload.get("conflicts"), list) else 0
+                
+                # Extract validation results
+                validation_results = {}
+                tone_findings = payload.get("tone_findings", [])
+                if isinstance(tone_findings, list):
+                    validation_results["tone_findings_count"] = len(tone_findings)
+                
+                # Citation integrity validation (from synthesizer)
+                synthesis_error = payload.get("synthesis_error")
+                if synthesis_error and "citation integrity" in synthesis_error.lower():
+                    validation_results["citation_integrity"] = "fail"
+                elif node_name == "synthesizer" and not synthesis_error:
+                    validation_results["citation_integrity"] = "pass"
+                
+                rigor_level = payload.get("rigor_level") or (payload.get("project_context") or {}).get("rigor_level", "exploratory")
+                prompt_manifest = payload.get("prompt_manifest", {})
+                
+                opik_emitter.emit_node_end(
+                    job_id=job_id or "",
+                    project_id=project_id,
+                    node_name=node_name,
+                    meta={
                         "duration_ms": duration_ms,
                         "success": error is None,
-                        "summary": summary,
-                    }
-                    opik_client.track_llm_call(opik_meta, lambda: None)
-                except Exception:  # pragma: no cover - opik is best-effort
-                    logger.debug("Opik span failed (ignored)", exc_info=True)
+                        "rigor_level": rigor_level,
+                        "prompt_manifest": prompt_manifest,
+                        "extracted_json": extracted,
+                        "conflicts": payload.get("conflicts", []),
+                        "manuscript_blocks": payload.get("manuscript_blocks", []),
+                        "revision_count": payload.get("revision_count", 0),
+                        "critic_status": payload.get("critic_status"),
+                        "counts": {
+                            "claims_count": triples_count,
+                            "conflicts_count": conflicts_count,
+                            "blocks_count": blocks_count,
+                            "critiques_count": critiques_count,
+                        },
+                        "validation_results": validation_results,
+                    },
+                )
+            except Exception:  # pragma: no cover - opik is best-effort
+                logger.debug("Opik node_end emission failed (ignored)", exc_info=True)
 
     return wrapper

@@ -19,13 +19,15 @@ class DeterministicConflictType(str, Enum):
     CONTRADICTION = "CONTRADICTION"
     MISSING_EVIDENCE = "MISSING_EVIDENCE"
     AMBIGUOUS = "AMBIGUOUS"
+    OUTDATED = "OUTDATED"
 
 
 # Template-based explanation generators
 _CONFLICT_TEMPLATES = {
     DeterministicConflictType.CONTRADICTION: (
-        "Source A asserts '{claim}' on page {page_a}, "
-        "while Source B contradicts this on page {page_b}."
+        "Source A (page {page_a}) asserts '{claim_a}', "
+        "while Source B (page {page_b}) asserts '{claim_b}'. "
+        "These statements contradict each other."
     ),
     DeterministicConflictType.MISSING_EVIDENCE: (
         "Claim '{claim}' lacks sufficient evidence. "
@@ -37,6 +39,11 @@ _CONFLICT_TEMPLATES = {
         "Source A (page {page_a}) and Source B (page {page_b}) "
         "provide conflicting interpretations."
     ),
+    DeterministicConflictType.OUTDATED: (
+        "Claim '{claim}' may be outdated. "
+        "Source A (page {page_a}) provides an earlier assertion, "
+        "while Source B (page {page_b}) provides a more recent one."
+    ),
 }
 
 
@@ -44,13 +51,17 @@ def _map_conflict_type_to_deterministic(conflict_type: Optional[Any]) -> Determi
     """Map ConflictType enum to deterministic conflict type.
     
     Args:
-        conflict_type: ConflictType enum value or string.
+        conflict_type: ConflictType enum value, DeterministicConflictType enum, or string.
     
     Returns:
         DeterministicConflictType enum value.
     """
     if conflict_type is None:
         return DeterministicConflictType.CONTRADICTION
+    
+    # If already a DeterministicConflictType, return it directly
+    if isinstance(conflict_type, DeterministicConflictType):
+        return conflict_type
     
     # Handle enum
     if hasattr(conflict_type, "value"):
@@ -59,6 +70,12 @@ def _map_conflict_type_to_deterministic(conflict_type: Optional[Any]) -> Determi
         conflict_type = str(conflict_type)
     
     conflict_type_upper = conflict_type.upper()
+    
+    # Check if it's already a DeterministicConflictType value
+    try:
+        return DeterministicConflictType(conflict_type_upper)
+    except ValueError:
+        pass
     
     # Map ConflictType enum values to deterministic types
     if conflict_type_upper in (
@@ -85,6 +102,8 @@ def generate_conflict_explanation(
     source_a: SourcePointer,
     source_b: SourcePointer,
     conflict_type: Optional[Any] = None,
+    claim_a_text: Optional[str] = None,
+    claim_b_text: Optional[str] = None,
 ) -> str:
     """Generate a deterministic conflict explanation using templates.
     
@@ -93,10 +112,12 @@ def generate_conflict_explanation(
     No LLM calls are made. The explanation is deterministic and reproducible.
     
     Args:
-        claim_text: The claim text (e.g., "Subject predicate Object")
+        claim_text: The claim text (e.g., "Subject predicate Object") - used as fallback
         source_a: Source pointer for the first source
         source_b: Source pointer for the second source
         conflict_type: Optional ConflictType enum or string (mapped to deterministic type)
+        claim_a_text: Optional claim text from source A (for CONTRADICTION)
+        claim_b_text: Optional claim text from source B (for CONTRADICTION)
     
     Returns:
         Deterministic explanation string using templates
@@ -110,6 +131,8 @@ def generate_conflict_explanation(
     
     # Truncate claim if too long
     claim_short = claim_text[:60] + "..." if len(claim_text) > 60 else claim_text
+    claim_a_short = (claim_a_text[:60] + "..." if claim_a_text and len(claim_a_text) > 60 else claim_a_text) or claim_short
+    claim_b_short = (claim_b_text[:60] + "..." if claim_b_text and len(claim_b_text) > 60 else claim_b_text) or claim_short
     
     # Get template for this conflict type
     template = _CONFLICT_TEMPLATES[det_type]
@@ -119,11 +142,20 @@ def generate_conflict_explanation(
     page_a_str = str(page_a) if page_a is not None else "unknown"
     page_b_str = str(page_b) if page_b is not None else "unknown"
     
-    explanation = template.format(
-        claim=claim_short,
-        page_a=page_a_str,
-        page_b=page_b_str,
-    )
+    # Format based on template requirements
+    if det_type == DeterministicConflictType.CONTRADICTION:
+        explanation = template.format(
+            claim_a=claim_a_short,
+            claim_b=claim_b_short,
+            page_a=page_a_str,
+            page_b=page_b_str,
+        )
+    else:
+        explanation = template.format(
+            claim=claim_short,
+            page_a=page_a_str,
+            page_b=page_b_str,
+        )
     
     return explanation
 

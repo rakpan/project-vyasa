@@ -32,7 +32,7 @@ export function ClaimIdLink({
   className,
   variant = "outline",
 }: ClaimIdLinkProps) {
-  const { scrollToAnchor } = useAnchor()
+  const { activateClaim, scrollToAnchor } = useAnchor()
   const [anchor, setAnchor] = useState<SourceAnchor | null>(sourceAnchor || null)
 
   // Fetch anchor if not provided
@@ -56,7 +56,7 @@ export function ClaimIdLink({
     e.preventDefault()
     e.stopPropagation()
 
-    // Prefer source_anchor, fallback to sourcePointer
+    // Prefer source_anchor, fallback to sourcePointer, then fetch from API
     if (anchor) {
       scrollToAnchor(anchor)
     } else if (sourcePointer && sourcePointer.page && sourcePointer.bbox) {
@@ -74,7 +74,8 @@ export function ClaimIdLink({
       }
       scrollToAnchor(convertedAnchor)
     } else {
-      console.warn(`No source anchor or pointer available for claim ${claimId}`)
+      // Fetch anchor from API
+      activateClaim(claimId)
     }
   }
 

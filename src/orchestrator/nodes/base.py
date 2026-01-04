@@ -58,7 +58,8 @@ def wrap_prompt_with_context(
             context_sections.append(
                 "STRICT CONSTRAINT: Do not extract, synthesize, or reference any information "
                 "related to the anti-scope topics listed above. If you encounter content "
-                "related to anti-scope, ignore it completely."
+                "related to anti-scope, ignore it completely. This is a hard requirement "
+                "in conservative mode - violations will cause validation failures."
             )
     
     if not context_sections:

@@ -17,6 +17,7 @@ import requests
 from requests import Timeout as RequestsTimeout
 
 from .logger import get_logger
+# Import from telemetry package (which re-exports from telemetry.py)
 from ..orchestrator.telemetry import extract_usage_from_response  # type: ignore
 from .utils import get_utc_now
 from .config import TIMEOUT_MATRIX

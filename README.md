@@ -6,61 +6,67 @@
 
 ## Executive Summary
 
-Project Vyasa is a **research execution platform** designed to democratize high-fidelity scholarly output. I believe anyone can eventually a journal-grade manuscript, the primary barrier in my experience has been time-consumption—the sheer weight of administrative overhead, citation management, and evidence validation.
+Vyasa is a **research workspace** optimized for NVIDIA DGX Spark. It helps researchers turn unstructured documents into rigorously sourced, evidence-backed manuscripts that can stand up to peer review. 
 
-Vyasa operationalizes these mundane interactions, allowing a researcher to move from raw data to defensible strategy at unprecedented speeds. By treating research as a factory-line process rather than a linear writing task, Vyasa enables **rapid iteration**, freeing the human mind to focus on high-level learning and strategic inquiry.
+Vyasa is not a chatbot. It is a platform for building and governing research artifacts.
 
-**Core Value Proposition:**
-- Keeps humans in control of learning and judgment
-- AI quietly manages complexity that would otherwise slow research down
-- Treats research as a governed workflow, not a writing task
-- Preserves evidence provenance automatically
-- Enforces evidence-binding before narrative creation
+## What Vyasa does
 
----
+Vyasa helps you:
 
-## The Problem
+- Collect source documents into a single project (papers, PDFs, reports, notes).
+- Extract claims, facts, and relationships from those sources.
+- Track exactly where each claim came from.
+- Highlight conflicts, gaps, and uncertainty instead of hiding them.
+- Assemble manuscripts from small, evidence-bound blocks instead of raw text.
 
-High-quality research often fails not because humans lack insight, but because **managing information becomes a full-time job**. The cognitive load required to maintain accuracy across hundreds of claims creates a "research friction" that slows down the eventual manuscript creation.
-
-In practice, most time is spent:
-- **Manual Provenance:** Manually tracking where every claim originated.
-- **Context Switching:** Jumping between reading, citing, and drafting.
-- **Alignment Debt:** Verifying that a change in one claim doesn't break three subsequent conclusions.
-
-**Traditional AI tools accelerate text generation but leave this burden untouched—or make it worse by hiding uncertainty.**
-
-Project Vyasa addresses a different problem: **The lack of a system that treats research itself as a first-class, governed workflow.**
+If a claim is not tied to evidence in the graph, it does not belong in the final manuscript.
 
 ---
 
-## Core Philosophy
+## How it works (simple view)
 
-Vyasa is guided by five foundational principles:
+Every Vyasa project follows the same method:
 
-1. **Humans remain the learners**  AI assists, but never replaces judgment.
-2. **Evidence precedes narrative**  Claims exist before prose, not the other way around.
-3. **Nothing is implicit**  If a conclusion cannot be traced to evidence, it is incomplete.
-4. **Memory is a system concern**  The system remembers so humans don't have to. If it is not persisted, it did not happen.
-5. **Uncertainty is surfaced, not hidden**  Disagreement is treated as a signal, not a failure.
+1. Define your thesis and research questions.
+2. Ingest and normalize your sources into the project.
+3. Let models propose candidate claims and links between them.
+4. Review conflicts, gaps, and weak evidence as a human decision-maker.
+5. Build manuscript sections from blocks that each carry claim IDs and citations.
+
+The models help you see and structure the evidence. You remain in charge of what is true and what is publishable.
 
 ---
 
-## What Vyasa Does (In Practice)
+## The core idea: graph-backed research
 
-Rather than generating free-form text, Vyasa enforces a **factory model** where:
-- Claims must bind to evidence
-- Citations must resolve
-- Manuscripts are assembled from governed blocks
-- Humans remain the final authority
+Under the hood, Vyasa treats your research as a graph:
 
-In concrete terms, Vyasa:
-- Extracts candidate claims and relationships from source material
-- Preserves provenance automatically
-- Surfaces conflicts, gaps, and uncertainty instead of collapsing them
-- Assembles research outputs from evidence-bound building blocks
+- Nodes represent claims, sources, entities, methods, and assumptions.
+- Edges capture relationships like “supports,” “contradicts,” “derived from,” or “uses method.”
+- Every model interaction writes to this graph under a specific project.
 
-**Vyasa does not decide what is true. It makes it easier for humans to decide with confidence.**
+ArangoDB is the system of record. If a step is not in the graph, it did not occur.
+
+This gives you:
+
+- A complete audit trail from manuscript paragraph → claim → source.
+- Versioned evolution of your thinking over time.
+- A machine-readable structure that other tools can inspect, validate, or export.
+
+---
+
+## Why this matters
+
+Most AI tools give you fluent answers with weak or invisible evidence. This is not acceptable for high-stakes work.
+
+Vyasa takes the opposite approach:
+
+- Evidence first, prose second.
+- Conflicts and uncertainty are surfaced, not smoothed over.
+- Manuscripts are compiled from governed blocks, not ad-hoc generations.
+
+The result is a workflow where AI accelerates the grunt work of extraction and organization, while humans maintain control over judgment and truth.
 
 ---
 

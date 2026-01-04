@@ -308,6 +308,14 @@ def get_ingestion_status(project_id: str, ingestion_id: str):
         if confidence_badge:
             response["confidence"] = confidence_badge
         
+        # Include Qdrant indexing status and chunk count
+        qdrant_indexed = getattr(record, "qdrant_indexed", False)
+        chunk_count = getattr(record, "chunk_count", None)
+        
+        response["qdrant_indexed"] = qdrant_indexed
+        if chunk_count is not None:
+            response["chunk_count"] = chunk_count
+        
         return jsonify(response), 200
         
     except Exception as e:

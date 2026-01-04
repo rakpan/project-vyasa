@@ -8,8 +8,10 @@
 
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { FileText, AlertTriangle } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { FileText, AlertTriangle, ExternalLink } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useAnchor } from "@/hooks/use-anchor"
 import type { SourcePointer } from "@/types/claim"
 
 interface ConflictSource {
@@ -31,6 +33,8 @@ export function ConflictCompareView({
   conflictExplanation,
   className,
 }: ConflictCompareViewProps) {
+  const { activateAnchor } = useAnchor()
+  
   const formatPageRef = (pointer: SourcePointer) => {
     if (pointer.page) {
       return `Page ${pointer.page}`
@@ -68,9 +72,37 @@ export function ConflictCompareView({
                   {sourceA.label || "Source A"}
                 </h3>
               </div>
-              <Badge variant="outline" className="text-xs">
-                {formatPageRef(sourceA.sourcePointer)}
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="text-xs">
+                  {formatPageRef(sourceA.sourcePointer)}
+                </Badge>
+                {sourceA.sourcePointer.page && sourceA.sourcePointer.doc_hash && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => {
+                      // Convert sourcePointer to anchor format
+                      activateAnchor({
+                        doc_id: sourceA.sourcePointer.doc_hash || "",
+                        page_number: sourceA.sourcePointer.page || 1,
+                        bbox: sourceA.sourcePointer.bbox
+                          ? {
+                              x: sourceA.sourcePointer.bbox[0],
+                              y: sourceA.sourcePointer.bbox[1],
+                              w: sourceA.sourcePointer.bbox[2] - sourceA.sourcePointer.bbox[0],
+                              h: sourceA.sourcePointer.bbox[3] - sourceA.sourcePointer.bbox[1],
+                            }
+                          : undefined,
+                        snippet: sourceA.sourcePointer.snippet,
+                      })
+                    }}
+                    title="Jump to source in Evidence pane"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
             </div>
 
             {sourceA.claimText && (
@@ -119,9 +151,37 @@ export function ConflictCompareView({
                   {sourceB.label || "Source B"}
                 </h3>
               </div>
-              <Badge variant="outline" className="text-xs">
-                {formatPageRef(sourceB.sourcePointer)}
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="text-xs">
+                  {formatPageRef(sourceB.sourcePointer)}
+                </Badge>
+                {sourceB.sourcePointer.page && sourceB.sourcePointer.doc_hash && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => {
+                      // Convert sourcePointer to anchor format
+                      activateAnchor({
+                        doc_id: sourceB.sourcePointer.doc_hash || "",
+                        page_number: sourceB.sourcePointer.page || 1,
+                        bbox: sourceB.sourcePointer.bbox
+                          ? {
+                              x: sourceB.sourcePointer.bbox[0],
+                              y: sourceB.sourcePointer.bbox[1],
+                              w: sourceB.sourcePointer.bbox[2] - sourceB.sourcePointer.bbox[0],
+                              h: sourceB.sourcePointer.bbox[3] - sourceB.sourcePointer.bbox[1],
+                            }
+                          : undefined,
+                        snippet: sourceB.sourcePointer.snippet,
+                      })
+                    }}
+                    title="Jump to source in Evidence pane"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
             </div>
 
             {sourceB.claimText && (

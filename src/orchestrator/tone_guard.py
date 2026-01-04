@@ -108,22 +108,94 @@ def _rewrite_sentences(text: str, sentences: List[str], replacements: Dict[str, 
 
 
 def tone_linter_node(state: ResearchState) -> ResearchState:
-    """Deterministic tone linter with rigor-aware enforcement and optional rewrite."""
+    """Deterministic tone linter with rigor-aware enforcement and optional rewrite.
+    
+    Operates on manuscript_blocks (if present) or synthesis text.
+    Citation integrity validation must run BEFORE this node.
+    """
     rigor = state.get("rigor_level") or (state.get("project_context") or {}).get("rigor_level") or "exploratory"
+    
+    # Prefer manuscript_blocks over synthesis (citation integrity validated blocks)
+    manuscript_blocks = state.get("manuscript_blocks", [])
     synthesis = state.get("synthesis") or state.get("final_text") or ""
+    
+    # If we have manuscript_blocks, process them; otherwise fall back to synthesis
+    if manuscript_blocks and isinstance(manuscript_blocks, list):
+        # Process each block for tone violations
+        updated_blocks = []
+        all_findings = []
+        all_flags = []
+        
+        for block in manuscript_blocks:
+            if not isinstance(block, dict):
+                continue
+            
+            block_text = block.get("text") or block.get("content", "")
+            if not block_text:
+                updated_blocks.append(block)
+                continue
+            
+            findings = lint_tone(block_text)
+            if not findings:
+                updated_blocks.append(block)
+                continue
+            
+            all_findings.extend(findings)
+            fail_findings = [f for f in findings if f.get("severity") == "fail"]
+            warn_findings = [f for f in findings if f.get("severity") == "warn"]
+            all_flags.extend([f"{f['word']}@{f['location']['start']}" for f in warn_findings])
+            
+            if rigor == "exploratory":
+                # In exploratory, just flag but don't rewrite
+                updated_blocks.append(block)
+                continue
+            
+            # Conservative path: rewrite and re-lint
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", block_text) if s.strip()]
+            flagged_sentences = []
+            replacements = {}
+            for sent in sentences:
+                for f in fail_findings:
+                    start = f["location"]["start"]
+                    end = f["location"]["end"]
+                    if block_text.find(sent) <= start < block_text.find(sent) + len(sent):
+                        flagged_sentences.append(sent)
+                        replacements[sent] = f.get("suggestion") or "balanced"
+                        break
+            
+            rewritten_text = _rewrite_sentences(block_text, flagged_sentences, replacements, state)
+            final_findings = lint_tone(rewritten_text)
+            
+            if any(f.get("severity") == "fail" for f in final_findings):
+                raise ValueError(f"Tone linter failed to neutralize forbidden terms in block {block.get('block_id', 'unknown')} (conservative mode)")
+            
+            # Update block with rewritten text (preserve claim_ids and citation_keys)
+            updated_block = {**block}
+            updated_block["text"] = rewritten_text
+            updated_block["content"] = rewritten_text
+            updated_blocks.append(updated_block)
+        
+        return {
+            "manuscript_blocks": updated_blocks,
+            "tone_findings": all_findings,
+            "tone_flags": all_flags,
+            "tone_rewrite_at": get_utc_now().isoformat() if all_findings else None,
+        }
+    
+    # Fallback: process synthesis text (legacy path)
     if not synthesis:
         return {}
-
+    
     findings = lint_tone(synthesis)
     if not findings:
         return {"tone_findings": []}
-
+    
     fail_findings = [f for f in findings if f.get("severity") == "fail"]
     warn_findings = [f for f in findings if f.get("severity") == "warn"]
-
+    
     if rigor == "exploratory":
         return {"tone_findings": findings, "tone_flags": [f"{f['word']}@{f['location']['start']}" for f in warn_findings]}
-
+    
     # conservative path: rewrite and re-lint; if still failing, raise
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", synthesis) if s.strip()]
     flagged_sentences = []

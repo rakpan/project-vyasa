@@ -27,6 +27,7 @@ class IngestionStatus:
     EXTRACTING = "Extracting"
     MAPPING = "Mapping"
     VERIFYING = "Verifying"
+    INDEXED = "Indexed"  # Qdrant indexing completed
     COMPLETED = "Completed"
     FAILED = "Failed"
 
@@ -76,6 +77,9 @@ class IngestionRecord:
             "progress_pct": self.progress_pct,
             "first_glance": self.first_glance,
             "confidence_badge": self.confidence_badge,
+            "qdrant_indexed": getattr(self, "qdrant_indexed", False),
+            "chunk_count": getattr(self, "chunk_count", None),
+            "indexed_at": getattr(self, "indexed_at", None),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -97,6 +101,11 @@ class IngestionRecord:
             created_at=doc.get("created_at"),
             updated_at=doc.get("updated_at"),
         )
+        # Set optional fields
+        record.qdrant_indexed = doc.get("qdrant_indexed", False)
+        record.chunk_count = doc.get("chunk_count")
+        record.indexed_at = doc.get("indexed_at")
+        return record
 
 
 class IngestionStore:
@@ -209,6 +218,8 @@ class IngestionStore:
         progress_pct: Optional[float] = None,
         first_glance: Optional[Dict[str, Any]] = None,
         confidence_badge: Optional[str] = None,
+        chunk_count: Optional[int] = None,
+        indexed_at: Optional[str] = None,
     ) -> bool:
         """Update ingestion record.
         
@@ -246,6 +257,10 @@ class IngestionStore:
                 updates["first_glance"] = first_glance
             if confidence_badge is not None:
                 updates["confidence_badge"] = confidence_badge
+            if chunk_count is not None:
+                updates["chunk_count"] = chunk_count
+            if indexed_at is not None:
+                updates["indexed_at"] = indexed_at
             
             collection.update(ingestion_id, updates)
             logger.debug(f"Updated ingestion {ingestion_id}")

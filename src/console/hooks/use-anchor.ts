@@ -4,7 +4,7 @@
  * Provides scrollToAnchor functionality for evidence pane navigation
  */
 
-import { useCallback } from "react"
+import { useCallback, useState } from "react"
 import { useEvidence } from "@/contexts/evidence-context"
 import type { EvidenceCoordinates } from "@/contexts/evidence-context"
 
@@ -26,9 +26,11 @@ export interface SourceAnchor {
 
 export function useAnchor() {
   const { setHighlight } = useEvidence()
+  const [activeAnchor, setActiveAnchor] = useState<SourceAnchor | null>(null)
 
-  const scrollToAnchor = useCallback(
+  const activateAnchor = useCallback(
     (anchor: SourceAnchor | null) => {
+      setActiveAnchor(anchor)
       if (!anchor) {
         return
       }
@@ -58,7 +60,42 @@ export function useAnchor() {
     [setHighlight]
   )
 
+  const activateClaim = useCallback(
+    async (claimId: string) => {
+      try {
+        const response = await fetch(`/api/proxy/orchestrator/api/claims/${claimId}/anchor`)
+        if (!response.ok) {
+          if (response.status === 404) {
+            console.warn(`Claim ${claimId} not found`)
+            return
+          }
+          throw new Error(`Failed to fetch anchor: ${response.statusText}`)
+        }
+        
+        const data = await response.json()
+        if (data.source_anchor) {
+          activateAnchor(data.source_anchor)
+        } else {
+          console.warn(`No source_anchor found for claim ${claimId}`)
+        }
+      } catch (error) {
+        console.error(`Failed to activate claim ${claimId}:`, error)
+      }
+    },
+    [activateAnchor]
+  )
+
+  const scrollToAnchor = useCallback(
+    (anchor: SourceAnchor | null) => {
+      activateAnchor(anchor)
+    },
+    [activateAnchor]
+  )
+
   return {
+    activeAnchor,
+    activateAnchor,
+    activateClaim,
     scrollToAnchor,
   }
 }

@@ -31,7 +31,7 @@ from ...shared.logger import get_logger
 from ...shared.llm_client import chat
 from ...shared.role_manager import RoleRegistry
 from ...shared.utils import get_utc_now
-from ..state import JobStatus
+from ..state import JobStatus, PhaseEnum
 from ..normalize import normalize_extracted_json
 from ..telemetry import TelemetryEmitter, trace_node
 from ..artifacts.manifest_builder import build_manifest, persist_manifest
@@ -548,29 +548,64 @@ def cartographer_node(state: ResearchState) -> ResearchState:
     
     raw_text = state.get("raw_text", "")
     critiques = state.get("critiques", []) or []
-    role = role_registry.get_role("The Cartographer")
+    
+    # Fetch prompt from Prompt Registry (with fallback to factory default)
+    from ..prompts import get_active_prompt_with_meta, DEFAULT_CARTOGRAPHER_PROMPT
+    system_template, prompt_meta = get_active_prompt_with_meta("vyasa-cartographer", DEFAULT_CARTOGRAPHER_PROMPT)
+    
+    # Record prompt usage in state
+    prompt_manifest = state.get("prompt_manifest", {})
+    prompt_manifest["cartographer"] = prompt_meta.model_dump(mode="python")
+    state["prompt_manifest"] = prompt_manifest
+    
     force_refresh_context = state.get("force_refresh_context", False)
+    ingestion_id = state.get("ingestion_id")
+    rigor_level = state.get("rigor_level") or (project_context or {}).get("rigor_level", "exploratory")
 
     if not raw_text:
         raise ValueError("raw_text is required for cartographer node")
 
-    context_hints: List[str] = []
-    if project_context:
-        thesis = project_context.get("thesis", "")
+    # RQ-scoped retrieval: Retrieve chunks from Qdrant for each Research Question
+    rq_scoped_chunks: Dict[str, List[Dict[str, Any]]] = {}
+    all_chunks_with_anchors: List[Dict[str, Any]] = []
+    
+    if project_id and project_context:
         research_questions = project_context.get("research_questions", [])
-        if thesis:
-            context_hints.append(f'Thesis: "{thesis}"')
-        if research_questions:
-            context_hints.append(
-                "Research Questions:\n" + "\n".join([f"- {rq}" for rq in research_questions])
-            )
-    system_prompt = role.system_prompt
-    if context_hints:
-        system_prompt = f"{system_prompt}\n\nContext:\n" + "\n".join(context_hints)
-        logger.debug(
-            "Cartographer: Injected project context into prompt",
-            extra={"payload": {"has_thesis": bool(project_context.get('thesis')), "rq_count": len(project_context.get('research_questions', []))}}
-        )
+        if research_questions and ingestion_id:
+            try:
+                from ..storage.qdrant import QdrantStorage
+                qdrant_storage = QdrantStorage()
+                
+                # Retrieve top-k chunks per RQ (default: 5, configurable)
+                chunks_per_rq = int(_env("CARTOGRAPHER_CHUNKS_PER_RQ", "5"))
+                
+                for rq_idx, rq_text in enumerate(research_questions):
+                    rq_id = f"RQ{rq_idx + 1}"
+                    chunks = qdrant_storage.retrieve_chunks_by_query(
+                        query_text=rq_text,
+                        project_id=project_id,
+                        ingestion_id=ingestion_id,
+                        limit=chunks_per_rq,
+                    )
+                    rq_scoped_chunks[rq_id] = chunks
+                    all_chunks_with_anchors.extend(chunks)
+                    
+                    logger.debug(
+                        f"Retrieved {len(chunks)} chunks for {rq_id}",
+                        extra={"payload": {"rq_id": rq_id, "chunk_count": len(chunks)}}
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to retrieve chunks from Qdrant for RQ-scoped extraction: {e}",
+                    exc_info=True
+                )
+                # Continue without Qdrant chunks (graceful degradation)
+    
+    # Use wrap_prompt_with_context for consistent context injection
+    # Apply context injection AFTER fetching prompt from Opik
+    # This ensures all LLM calls are governed by ProjectConfig (thesis, RQs, anti-scope, rigor)
+    from .base import wrap_prompt_with_context
+    system_prompt = wrap_prompt_with_context(state, system_template)
     
     # Evidence-Aware RAG: Pre-extraction lookup with prioritized retrieval
     established_knowledge, context_sources, selected_ref_ids = _query_established_knowledge(raw_text, state)
@@ -627,36 +662,70 @@ def cartographer_node(state: ResearchState) -> ResearchState:
         }
         layered_section = build_extraction_layers(corpus_memory, evidence_chunks, working_state)
 
-    # Enhanced schema instruction for structured claims
+    # Enhanced schema instruction for structured claims (strict JSON mapping to Claim schema)
     schema_instruction = """
-IMPORTANT: Return structured JSON with the following schema for each claim/triple:
+CRITICAL: You MUST return valid JSON ONLY (no prose, no markdown code blocks). The output MUST strictly conform to this schema:
+
 {
   "triples": [
     {
-      "subject": "string",
-      "predicate": "string",
-      "object": "string",
-      "confidence": 0.0-1.0,
-      "claim_text": "string (human-readable claim)",
-      "relevance_score": 0.0-1.0 (relevance to thesis/RQs),
-      "rq_hits": ["rq_id1", "rq_id2"] (which research questions this addresses),
+      "subject": "string (required)",
+      "predicate": "string (required)",
+      "object": "string (required)",
+      "confidence": 0.0-1.0 (required, float),
+      "claim_text": "string (human-readable claim, required)",
+      "relevance_score": 0.0-1.0 (relevance to thesis/RQs, optional but recommended),
+      "rq_hits": ["RQ1", "RQ2"] (array of research question IDs this claim addresses, required),
       "source_pointer": {
-        "doc_hash": "string",
-        "page": integer,
-        "bbox": [x1, y1, x2, y2],
-        "snippet": "string"
+        "doc_hash": "string (file hash/SHA256, required)",
+        "page": integer (1-based page number, required),
+        "bbox": [x1, y1, x2, y2] (optional, bounding box coordinates),
+        "snippet": "string (text excerpt, optional but recommended)"
       }
     }
   ]
 }
+
+REQUIREMENTS:
+- Every triple MUST have: subject, predicate, object, confidence, claim_text, rq_hits
+- rq_hits MUST be a non-empty array (at least one RQ ID)
+- source_pointer.doc_hash and source_pointer.page MUST be present
+- In conservative mode, bbox or snippet MUST be present in source_pointer
 """
     
-    # Add schema instruction in conservative mode or if explicitly requested
-    rigor_level = state.get("rigor_level") or (project_context or {}).get("rigor_level", "exploratory")
-    if rigor_level == "conservative":
-        system_prompt = f"{system_prompt}\n\n{schema_instruction}"
+    # Add schema instruction (always include for strict enforcement)
+    system_prompt = f"{system_prompt}\n\n{schema_instruction}"
     
-    user_sections = [f"Document:\n{raw_text}"]
+    # Add RQ-scoped chunks context if available
+    if rq_scoped_chunks:
+        chunks_section = "\n\nRetrieved Evidence Chunks (RQ-scoped):\n"
+        for rq_id, chunks in rq_scoped_chunks.items():
+            if chunks:
+                chunks_section += f"\n{rq_id} Evidence:\n"
+                for chunk in chunks[:3]:  # Show first 3 chunks per RQ
+                    text = chunk.get("text_content", "")[:200]  # Truncate for prompt
+                    page = chunk.get("page_number", "?")
+                    chunks_section += f"- Page {page}: {text}...\n"
+        system_prompt = f"{system_prompt}\n{chunks_section}"
+    
+    # Build user content with RQ-scoped chunks if available
+    user_sections = []
+    
+    # If we have RQ-scoped chunks, use them instead of raw_text
+    if rq_scoped_chunks and all_chunks_with_anchors:
+        user_sections.append("Evidence Chunks (retrieved from knowledge base):\n")
+        for rq_id, chunks in rq_scoped_chunks.items():
+            if chunks:
+                user_sections.append(f"\n{rq_id} Evidence:")
+                for chunk in chunks:
+                    text = chunk.get("text_content", "")
+                    page = chunk.get("page_number", "?")
+                    file_hash = chunk.get("file_hash", "")
+                    user_sections.append(f"[Page {page}, File: {file_hash[:16]}...]\n{text}\n")
+    else:
+        # Fallback to raw_text if no chunks available
+        user_sections.append(f"Document:\n{raw_text}")
+    
     if layered_section:
         user_sections.append(f"Layered context:\n{layered_section}")
     if critiques:
@@ -730,50 +799,129 @@ IMPORTANT: Return structured JSON with the following schema for each claim/tripl
             )
             normalized["triples"] = []
         
-        # Add source_anchor to triples for UI context anchors
+        # Convert triples to canonical Claim objects with source_anchor from Qdrant payload
         triples = normalized.get("triples", [])
         if isinstance(triples, list):
-            from ..utils.source_anchor import add_source_anchor_to_triples
-            triples = add_source_anchor_to_triples(triples)
-            normalized["triples"] = triples
-        
-        # Validate schema in conservative mode: ensure metadata-rich structure
-        rigor_level = state.get("rigor_level") or (project_context or {}).get("rigor_level", "exploratory")
-        if rigor_level == "conservative" and isinstance(triples, list):
-            validated_triples = []
+            from ..schemas.claims import Claim, SourceAnchor
+            
+            canonical_claims = []
+            chunk_map = {chunk.get("chunk_id"): chunk for chunk in all_chunks_with_anchors}
+            
             for triple in triples:
                 if not isinstance(triple, dict):
                     continue
-                # Require claim_text, relevance_score, rq_hits, source_anchor
-                if not triple.get("claim_text"):
-                    logger.warning(
-                        "Cartographer: Triple missing claim_text in conservative mode",
+                
+                # Try to find matching chunk by text similarity or use source_pointer
+                source_pointer = triple.get("source_pointer", {})
+                doc_hash = source_pointer.get("doc_hash") or triple.get("file_hash")
+                page_number = source_pointer.get("page") or triple.get("page_number", 1)
+                
+                # Find matching chunk from Qdrant results
+                matching_chunk = None
+                if doc_hash and page_number:
+                    for chunk in all_chunks_with_anchors:
+                        if (chunk.get("file_hash") == doc_hash and 
+                            chunk.get("page_number") == page_number):
+                            matching_chunk = chunk
+                            break
+                
+                # Build source_anchor from chunk payload or source_pointer
+                source_anchor = None
+                if matching_chunk:
+                    payload = matching_chunk.get("payload", {})
+                    anchor_data = {
+                        "doc_id": payload.get("file_hash") or doc_hash or "",
+                        "page_number": payload.get("page_number") or page_number,
+                    }
+                    if payload.get("bbox"):
+                        anchor_data["bbox"] = payload["bbox"]
+                    if source_pointer.get("snippet") or matching_chunk.get("text_content"):
+                        anchor_data["snippet"] = source_pointer.get("snippet") or matching_chunk.get("text_content", "")[:200]
+                    try:
+                        source_anchor = SourceAnchor(**anchor_data)
+                    except Exception as e:
+                        logger.warning(f"Failed to create SourceAnchor from chunk payload: {e}", exc_info=True)
+                elif source_pointer:
+                    # Fallback: create from source_pointer
+                    anchor_data = {
+                        "doc_id": doc_hash or "",
+                        "page_number": page_number,
+                    }
+                    if source_pointer.get("bbox"):
+                        bbox = source_pointer["bbox"]
+                        if isinstance(bbox, list) and len(bbox) == 4:
+                            x1, y1, x2, y2 = bbox
+                            anchor_data["bbox"] = {"x": float(x1), "y": float(y1), "w": float(x2 - x1), "h": float(y2 - y1)}
+                    if source_pointer.get("snippet"):
+                        anchor_data["snippet"] = source_pointer["snippet"]
+                    try:
+                        source_anchor = SourceAnchor(**anchor_data) if anchor_data.get("doc_id") else None
+                    except Exception as e:
+                        logger.warning(f"Failed to create SourceAnchor from source_pointer: {e}", exc_info=True)
+                
+                # Convert to Claim using from_triple_dict
+                try:
+                    # Ensure ingestion_id is present
+                    triple["ingestion_id"] = ingestion_id or triple.get("ingestion_id", "")
+                    triple["file_hash"] = doc_hash or triple.get("file_hash", "")
+                    
+                    # Create Claim from triple dict
+                    claim = Claim.from_triple_dict(triple, ingestion_id=ingestion_id or "", rigor_level=rigor_level)
+                    
+                    # Override source_anchor if we have a better one from Qdrant
+                    if source_anchor:
+                        claim.source_anchor = source_anchor
+                    
+                    # Validate in conservative mode (fail explicitly, no silent rejection)
+                    if rigor_level == "conservative":
+                        if not claim.source_anchor:
+                            error_msg = f"Claim {claim.claim_id} missing source_anchor in conservative mode"
+                            logger.error(
+                                error_msg,
+                                extra={"payload": {"claim_id": claim.claim_id, "triple": triple}}
+                            )
+                            raise ValueError(error_msg)
+                        if not claim.rq_hits:
+                            error_msg = f"Claim {claim.claim_id} missing rq_hits in conservative mode"
+                            logger.error(
+                                error_msg,
+                                extra={"payload": {"claim_id": claim.claim_id, "triple": triple}}
+                            )
+                            raise ValueError(error_msg)
+                    elif rigor_level == "exploratory":
+                        # In exploratory, warn but allow
+                        if not claim.source_anchor:
+                            logger.warning(
+                                f"Claim {claim.claim_id} missing source_anchor (exploratory mode, allowing)",
+                                extra={"payload": {"claim_id": claim.claim_id}}
+                            )
+                        if not claim.rq_hits:
+                            logger.warning(
+                                f"Claim {claim.claim_id} missing rq_hits (exploratory mode, allowing)",
+                                extra={"payload": {"claim_id": claim.claim_id}}
+                            )
+                    
+                    # Convert back to dict for state (maintain backward compatibility)
+                    canonical_claims.append(claim.model_dump(exclude_none=True))
+                except Exception as e:
+                    logger.error(
+                        f"Failed to convert triple to Claim: {e}",
+                        exc_info=True,
                         extra={"payload": {"triple_keys": list(triple.keys())}}
                     )
-                    # Generate claim_text from subject/predicate/object if missing
-                    subj = triple.get("subject", "")
-                    pred = triple.get("predicate", "")
-                    obj = triple.get("object", "")
-                    if subj and pred and obj:
-                        triple["claim_text"] = f"{subj} {pred} {obj}"
-                
-                # Ensure relevance_score exists (default to 0.5 if missing)
-                if "relevance_score" not in triple:
-                    triple["relevance_score"] = 0.5
-                
-                # Ensure rq_hits exists (default to empty list)
-                if "rq_hits" not in triple:
-                    triple["rq_hits"] = []
-                
-                # Ensure source_anchor exists (already added above, but verify)
-                if not triple.get("source_anchor") and triple.get("source_pointer"):
-                    # Should have been added by add_source_anchor_to_triples
-                    logger.warning("Cartographer: Triple missing source_anchor despite having source_pointer")
-                
-                validated_triples.append(triple)
+                    # In conservative mode, fail explicitly on schema validation errors
+                    if rigor_level == "conservative":
+                        error_msg = f"Failed to convert triple to Claim in conservative mode: {e}"
+                        logger.error(
+                            error_msg,
+                            extra={"payload": {"triple_keys": list(triple.keys()), "error": str(e)}}
+                        )
+                        raise ValueError(error_msg) from e
+                    # In exploratory, include as-is
+                    canonical_claims.append(triple)
             
-            normalized["triples"] = validated_triples
-            triples = validated_triples
+            normalized["triples"] = canonical_claims
+            triples = canonical_claims
         
         triples_count = len(triples)
         # Determine actual model used (may be Brain if fallback was used)
@@ -809,6 +957,7 @@ IMPORTANT: Return structured JSON with the following schema for each claim/tripl
             "triples": normalized.get("triples", []),
             "context_sources": merged_context_sources,
             "selected_reference_ids": selected_reference_ids,
+            "phase": PhaseEnum.MAPPING.value,
         }
     except json.JSONDecodeError as e:
         logger.error(
@@ -817,7 +966,7 @@ IMPORTANT: Return structured JSON with the following schema for each claim/tripl
             exc_info=True,
         )
         # Return empty structure on JSON parse failure
-        return {"extracted_json": {"triples": []}, "triples": []}
+        return {"extracted_json": {"triples": []}, "triples": [], "phase": PhaseEnum.MAPPING.value}
     except Exception as e:
         logger.error(
             "Cartographer failed to extract graph",
@@ -825,7 +974,7 @@ IMPORTANT: Return structured JSON with the following schema for each claim/tripl
             exc_info=True,
         )
         # Return empty structure on failure (don't raise to allow workflow to continue)
-        return {"extracted_json": {"triples": []}, "triples": []}
+        return {"extracted_json": {"triples": []}, "triples": [], "phase": PhaseEnum.MAPPING.value}
 
 
 def _detect_quantization_failure(text: str) -> bool:
@@ -880,7 +1029,15 @@ def critic_node(state: ResearchState) -> ResearchState:
     extracted = state.get("extracted_json") or {}
     raw_text = state.get("raw_text", "")
     synthesis = state.get("synthesis", "")
-    role = role_registry.get_role("The Critic")
+    
+    # Fetch prompt from Prompt Registry (with fallback to factory default)
+    from ..prompts import get_active_prompt_with_meta, DEFAULT_CRITIC_PROMPT
+    system_template, prompt_meta = get_active_prompt_with_meta("vyasa-critic", DEFAULT_CRITIC_PROMPT)
+    
+    # Record prompt usage in state
+    prompt_manifest = state.get("prompt_manifest", {})
+    prompt_manifest["critic"] = prompt_meta.model_dump(mode="python")
+    state["prompt_manifest"] = prompt_manifest
     
     # Pre-validation: Check for FP4 quantization failures in extracted text
     # This catches failures before sending to Brain, saving compute
@@ -1046,7 +1203,13 @@ def critic_node(state: ResearchState) -> ResearchState:
         context_segments.append(f"Claim critiques: {json.dumps(claim_critiques, ensure_ascii=False)}")
     if conflict_flags:
         context_segments.append(f"Conflict flags: {conflict_flags}")
-    system_prompt = role.system_prompt
+    
+    # Use wrap_prompt_with_context for consistent context injection
+    # Apply context injection AFTER fetching from Opik
+    from .base import wrap_prompt_with_context
+    system_prompt = wrap_prompt_with_context(state, system_template)
+    
+    # Add claim-specific context segments
     if context_segments:
         system_prompt = f"{system_prompt}\n\nContext:\n" + "\n".join(context_segments)
 
@@ -1135,6 +1298,163 @@ def critic_node(state: ResearchState) -> ResearchState:
         if not claims_ok:
             status = "fail"
 
+        # Deterministic conflict detection: detect contradictions using graph traversal
+        detected_conflicts = []
+        project_id = state.get("project_id")
+        ingestion_id = state.get("ingestion_id")
+        job_id = state.get("jobId") or state.get("job_id")
+        rigor_level = state.get("rigor_level") or (state.get("project_context") or {}).get("rigor_level", "exploratory")
+        
+        if project_id:
+            try:
+                from ..storage.arango import load_claims_for_conflict_detection
+                from ..conflict_utils import (
+                    DeterministicConflictType,
+                    generate_conflict_explanation,
+                )
+                from ..schemas.claims import Claim, SourceAnchor
+                from ...shared.schema import ConflictItem, ConflictSeverity, ConflictProducer, ConflictSuggestedAction
+                
+                # Load existing claims from ArangoDB
+                existing_claims = load_claims_for_conflict_detection(
+                    db=_get_project_service().db if _get_project_service() else None,
+                    project_id=project_id,
+                    ingestion_id=ingestion_id,
+                    job_id=job_id,
+                ) if _get_project_service() else []
+                
+                # Also get current triples from state
+                current_triples = extracted.get("triples", []) if isinstance(extracted, dict) else []
+                
+                # Combine existing and current claims
+                all_claims = existing_claims + current_triples
+                
+                # Detect contradictions: same (subject, predicate) but different object
+                # Build index by (subject, predicate) -> list of claims
+                claim_index: Dict[tuple, List[Dict[str, Any]]] = {}
+                for claim in all_claims:
+                    if not isinstance(claim, dict):
+                        continue
+                    subject = claim.get("subject", "").strip().lower()
+                    predicate = claim.get("predicate", "").strip().lower()
+                    if subject and predicate:
+                        key = (subject, predicate)
+                        if key not in claim_index:
+                            claim_index[key] = []
+                        claim_index[key].append(claim)
+                
+                # Find contradictions
+                for (subject, predicate), claims_list in claim_index.items():
+                    if len(claims_list) < 2:
+                        continue
+                    
+                    # Group by object (normalized)
+                    object_groups: Dict[str, List[Dict[str, Any]]] = {}
+                    for claim in claims_list:
+                        obj = claim.get("object", "").strip().lower()
+                        if obj not in object_groups:
+                            object_groups[obj] = []
+                        object_groups[obj].append(claim)
+                    
+                    # If we have multiple different objects, we have a contradiction
+                    if len(object_groups) > 1:
+                        # Take first two different objects as conflicting claims
+                        obj_keys = list(object_groups.keys())
+                        claim_a = object_groups[obj_keys[0]][0]
+                        claim_b = object_groups[obj_keys[1]][0]
+                        
+                        # Extract source anchors/pointers
+                        source_anchor_a = claim_a.get("source_anchor") or claim_a.get("source_pointer") or {}
+                        source_anchor_b = claim_b.get("source_anchor") or claim_b.get("source_pointer") or {}
+                        
+                        # Build claim texts
+                        claim_a_text = claim_a.get("claim_text") or f"{claim_a.get('subject', '')} {claim_a.get('predicate', '')} {claim_a.get('object', '')}"
+                        claim_b_text = claim_b.get("claim_text") or f"{claim_b.get('subject', '')} {claim_b.get('predicate', '')} {claim_b.get('object', '')}"
+                        
+                        # Generate deterministic explanation
+                        explanation = generate_conflict_explanation(
+                            claim_text=claim_a_text,
+                            source_a=source_anchor_a,
+                            source_b=source_anchor_b,
+                            conflict_type=DeterministicConflictType.CONTRADICTION,
+                            claim_a_text=claim_a_text,
+                            claim_b_text=claim_b_text,
+                        )
+                        
+                        # Create conflict payload with anchors
+                        conflict_payload = {
+                            "source_a": {
+                                "doc_id": source_anchor_a.get("doc_id") or source_anchor_a.get("doc_hash", ""),
+                                "page": source_anchor_a.get("page_number") or source_anchor_a.get("page"),
+                                "excerpt": source_anchor_a.get("snippet") or claim_a_text[:200],
+                            },
+                            "source_b": {
+                                "doc_id": source_anchor_b.get("doc_id") or source_anchor_b.get("doc_hash", ""),
+                                "page": source_anchor_b.get("page_number") or source_anchor_b.get("page"),
+                                "excerpt": source_anchor_b.get("snippet") or claim_b_text[:200],
+                            },
+                            "explanation": explanation,
+                        }
+                        
+                        # Create ConflictItem
+                        conflict_item = ConflictItem(
+                            conflict_id=str(uuid.uuid4()),
+                            conflict_type=ConflictType.STRUCTURAL_CONFLICT,
+                            severity=ConflictSeverity.HIGH,
+                            summary=f"Contradiction detected: {subject} {predicate}",
+                            details=explanation,
+                            produced_by=ConflictProducer.CRITIC,
+                            contradicts=[claim_a.get("claim_id", ""), claim_b.get("claim_id", "")],
+                            evidence_anchors=[
+                                source_anchor_a if isinstance(source_anchor_a, dict) else source_anchor_a.model_dump() if hasattr(source_anchor_a, "model_dump") else {},
+                                source_anchor_b if isinstance(source_anchor_b, dict) else source_anchor_b.model_dump() if hasattr(source_anchor_b, "model_dump") else {},
+                            ],
+                            assumptions=[],
+                            suggested_actions=[ConflictSuggestedAction.HUMAN_SIGNOFF_REQUIRED],
+                            confidence=0.9,  # High confidence for deterministic detection
+                        )
+                        
+                        detected_conflicts.append({
+                            "conflict_item": conflict_item,
+                            "conflict_payload": conflict_payload,
+                            "claim_a_id": claim_a.get("claim_id", ""),
+                            "claim_b_id": claim_b.get("claim_id", ""),
+                        })
+                        
+                        logger.info(
+                            f"Detected contradiction: {subject} {predicate}",
+                            extra={
+                                "payload": {
+                                    "claim_a_id": claim_a.get("claim_id"),
+                                    "claim_b_id": claim_b.get("claim_id"),
+                                    "conflict_type": "CONTRADICTION",
+                                }
+                            }
+                        )
+                
+                # Update state with detected conflicts
+                if detected_conflicts:
+                    # Set conflict_detected flag
+                    state["conflict_detected"] = True
+                    state["conflicts"] = [c["conflict_item"].model_dump() for c in detected_conflicts]
+                    
+                    # Set needs_human_review based on rigor level and conflict count
+                    conflict_threshold = 3  # Configurable threshold
+                    if rigor_level == "conservative":
+                        if len(detected_conflicts) >= conflict_threshold:
+                            state["needs_human_review"] = True
+                            critiques.append(f"Detected {len(detected_conflicts)} conflicts. Human review required (conservative mode).")
+                        else:
+                            critiques.append(f"Detected {len(detected_conflicts)} conflicts. Review recommended.")
+                    else:  # exploratory
+                        critiques.append(f"Detected {len(detected_conflicts)} conflicts. Flagged for review.")
+                    
+                    status = "fail"
+                    
+            except Exception as e:
+                logger.warning(f"Failed to perform deterministic conflict detection: {e}", exc_info=True)
+                # Continue without conflict detection (graceful degradation)
+        
         # Conflict flags surfaced during context assembly
         conflict_flags = state.get("conflict_flags") or []
         if conflict_flags:
@@ -1222,6 +1542,8 @@ def critic_node(state: ResearchState) -> ResearchState:
                 base_state["conflict_report"] = conflict_report.model_dump()  # type: ignore[index]
             except Exception:
                 logger.warning("Failed to persist conflict report", exc_info=True)
+        # Set phase to VETTING
+        base_state["phase"] = PhaseEnum.VETTING.value
         return base_state
     except Exception:
         logger.error(
@@ -1231,7 +1553,12 @@ def critic_node(state: ResearchState) -> ResearchState:
         )
         # On failure to critique, force manual review path
         revision_count = state.get("revision_count", 0) + 1
-        return {"critiques": ["Critic execution failed"], "revision_count": revision_count, "critic_status": "fail"}
+        return {
+            "critiques": ["Critic execution failed"],
+            "revision_count": revision_count,
+            "critic_status": "fail",
+            "phase": PhaseEnum.VETTING.value,
+        }
 
 
 def select_images_for_vision(image_paths: List[str]) -> List[str]:
@@ -1551,7 +1878,12 @@ def saver_node(state: ResearchState) -> ResearchState:
                 logger.debug("Failed to emit artifact_manifest_failed telemetry", exc_info=True)
             state_with_manifest = state
 
-        return {**state_with_manifest, "save_receipt": save_receipt}
+        # Set phase to DONE after successful persistence
+        return {
+            **state_with_manifest,
+            "save_receipt": save_receipt,
+            "phase": PhaseEnum.DONE.value,
+        }
     except Exception as e:
         logger.error(f"DB Save Failed: {e}", exc_info=True)
         raise  # Re-raise to ensure job failure is tracked
@@ -1585,32 +1917,67 @@ def synthesizer_node(state: ResearchState) -> ResearchState:
     triples = extracted.get("triples") if isinstance(extracted, dict) else []
     synthesis_text = state.get("synthesis")
     
-    # Get role and wrap prompt with context
-    role = role_registry.get_role("The Synthesizer")
+    # Fetch prompt from Prompt Registry (with fallback to factory default)
+    from ..prompts import get_active_prompt_with_meta, DEFAULT_SYNTHESIZER_PROMPT
     from .base import wrap_prompt_with_context
-    system_prompt = wrap_prompt_with_context(state, role.system_prompt)
+    system_template, prompt_meta = get_active_prompt_with_meta("vyasa-synthesizer", DEFAULT_SYNTHESIZER_PROMPT)
     
-    # Add citation integrity instruction
-    citation_instruction = """
-CRITICAL: Every paragraph you generate MUST include at least one claim binding reference.
-Use one of these formats:
-1. Inline references: [[claim_id_123]] or [[claim_id_456]]
-2. Explicit claim_ids array in the block metadata: {"claim_ids": ["claim_id_123", "claim_id_456"]}
+    # Record prompt usage in state
+    prompt_manifest = state.get("prompt_manifest", {})
+    prompt_manifest["synthesizer"] = prompt_meta.model_dump(mode="python")
+    state["prompt_manifest"] = prompt_manifest
+    
+    # Wrap prompt with context (apply AFTER fetching from Opik)
+    system_prompt = wrap_prompt_with_context(state, system_template)
+    
+    # Get available claim IDs from triples
+    available_claim_ids = []
+    if isinstance(triples, list):
+        for triple in triples:
+            if isinstance(triple, dict):
+                claim_id = triple.get("claim_id") or triple.get("_id") or triple.get("id")
+                if claim_id:
+                    available_claim_ids.append(str(claim_id))
+    
+    # Prepare claims as JSON for LLM input
+    claims_json = []
+    if isinstance(triples, list):
+        for triple in triples:
+            if isinstance(triple, dict):
+                claim_entry = {
+                    "claim_id": triple.get("claim_id") or triple.get("_id") or "",
+                    "subject": triple.get("subject", ""),
+                    "predicate": triple.get("predicate", ""),
+                    "object": triple.get("object", ""),
+                    "claim_text": triple.get("claim_text") or f"{triple.get('subject', '')} {triple.get('predicate', '')} {triple.get('object', '')}",
+                }
+                claims_json.append(claim_entry)
+    
+    # Add instruction to include claim bindings in output
+    binding_instruction = f"""
+CRITICAL OUTPUT REQUIREMENT:
+You MUST include claim bindings in your output. Use one of these formats:
 
-Blocks without claim bindings will be rejected in conservative mode.
+1. Inline references: End sentences with [[claim_id]] markers.
+   Example: "The study found significant results [[claim_123]]."
+
+2. Explicit claim_ids array: Include a JSON structure with claim_ids.
+   Example: {{"text": "...", "claim_ids": ["claim_123", "claim_456"]}}
+
+Available Claims (with IDs):
+{json.dumps(claims_json[:20], indent=2) if claims_json else "[]"}
+
+Every paragraph MUST reference at least one claim_id from the list above.
 """
     
-    if rigor_level == "conservative":
-        system_prompt = f"{system_prompt}\n\n{citation_instruction}"
-    else:
-        # In exploratory mode, warn but don't reject
-        system_prompt = f"{system_prompt}\n\nNote: {citation_instruction.strip()}"
+    system_prompt = f"{system_prompt}\n\n{binding_instruction}"
     
     # If synthesis_text exists, it means it was generated by a previous step
     # Otherwise, generate it using LLM with vocab guard constraints
     if not synthesis_text:
         # For now, generate a simple summary (placeholder implementation)
         # When fully implemented, this would call llm_client.chat() with vocab_guard constraints
+        # The LLM should be instructed to include claim bindings
         synthesis_text = f"Synthesized summary: processed {len(triples) if isinstance(triples, list) else 0} triples."
         
         # Example of how vocab_guard would be applied before LLM call:
@@ -1618,42 +1985,82 @@ Blocks without claim bindings will be rejected in conservative mode.
         #     system_prompt = vocab_guard.apply_constraints(system_prompt)
         # Then use the modified system_prompt in the llm_client.chat() call
     
-    # Citation integrity guard: validate that synthesis includes claim bindings
-    import re
-    # Check for inline claim references: [[claim_id_...]]
-    inline_claim_refs = re.findall(r'\[\[([^\]]+)\]\]', synthesis_text)
-    # Check for explicit claim_ids in block metadata (if synthesis is structured)
-    has_claim_bindings = len(inline_claim_refs) > 0
+    # Parse synthesis_text to extract manuscript blocks
+    # For now, assume synthesis_text is a single block or JSON array of blocks
+    manuscript_blocks = []
+    try:
+        # Try to parse as JSON array
+        parsed = json.loads(synthesis_text) if isinstance(synthesis_text, str) and synthesis_text.strip().startswith("[") else synthesis_text
+        if isinstance(parsed, list):
+            manuscript_blocks = parsed
+        else:
+            # Single block - create block structure
+            block_id = f"block_{job_id or 'default'}_0"
+            manuscript_blocks = [{
+                "block_id": block_id,
+                "text": synthesis_text,
+                "content": synthesis_text,
+                "claim_ids": [],  # Will be extracted below
+                "citation_keys": [],
+            }]
+    except (json.JSONDecodeError, AttributeError):
+        # Not JSON, treat as single block
+        block_id = f"block_{job_id or 'default'}_0"
+        manuscript_blocks = [{
+            "block_id": block_id,
+            "text": synthesis_text,
+            "content": synthesis_text,
+            "claim_ids": [],
+            "citation_keys": [],
+        }]
     
-    # In conservative mode, reject blocks without bindings
-    if rigor_level == "conservative" and not has_claim_bindings:
+    # Extract claim_ids from inline references and add to block metadata
+    from ..validators.citation_integrity import extract_claim_ids_from_text
+    
+    for block in manuscript_blocks:
+        block_text = block.get("text") or block.get("content", "")
+        inline_claim_ids = extract_claim_ids_from_text(block_text)
+        explicit_claim_ids = block.get("claim_ids", [])
+        # Combine and deduplicate
+        all_claim_ids = list(set(explicit_claim_ids + inline_claim_ids))
+        block["claim_ids"] = all_claim_ids
+    
+    # Citation integrity validation: validate that blocks include claim bindings
+    from ..validators.citation_integrity import validate_manuscript_blocks
+    
+    valid_blocks, validation_errors = validate_manuscript_blocks(
+        blocks=manuscript_blocks,
+        available_claim_ids=available_claim_ids,
+        rigor_level=rigor_level,
+    )
+    
+    # In conservative mode, reject if validation fails
+    if rigor_level == "conservative" and validation_errors:
         logger.error(
-            "Synthesizer: Block rejected - no claim bindings in conservative mode",
-            extra={"payload": {"synthesis_preview": synthesis_text[:200]}}
+            "Synthesizer: Blocks rejected - citation integrity validation failed",
+            extra={"payload": {"errors": validation_errors, "block_count": len(manuscript_blocks)}}
         )
-        # Return empty synthesis to signal rejection
-        return {"synthesis": "", "synthesis_error": "Block rejected: no claim bindings found"}
+        return {
+            "synthesis": "",
+            "synthesis_error": f"Citation integrity validation failed: {'; '.join(validation_errors)}",
+            "manuscript_blocks": [],
+            "phase": PhaseEnum.SYNTHESIZING.value,
+        }
     
     # In exploratory mode, warn but allow
-    if rigor_level == "exploratory" and not has_claim_bindings:
+    if rigor_level == "exploratory" and validation_errors:
         logger.warning(
-            "Synthesizer: Block generated without claim bindings (exploratory mode allows)",
-            extra={"payload": {"synthesis_preview": synthesis_text[:200]}}
+            "Synthesizer: Blocks have citation integrity issues (exploratory mode allows)",
+            extra={"payload": {"errors": validation_errors, "block_count": len(manuscript_blocks)}}
         )
     
-    # Optional tone rewrite based on rigor policy
-    try:
-        policy = load_rigor_policy_yaml()
-        tone_enforcement = policy.get("tone_enforcement", "flag_only")
-        if rigor_level == "conservative" and tone_enforcement == "rewrite":
-            flags = scan_text(synthesis_text or "")
-            hard_flags = [f for f in flags if f.severity == "hard"]
-            if hard_flags:
-                synthesis_text = rewrite_to_neutral(synthesis_text, hard_flags, evidence_context=None)
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Tone rewrite skipped due to error", extra={"payload": {"error": str(exc)}})
-
-    return {"synthesis": synthesis_text}
+    # Update state with validated blocks
+    # Note: Tone guard will run AFTER this (in workflow), so we don't do tone rewrite here
+    return {
+        "synthesis": synthesis_text,
+        "manuscript_blocks": valid_blocks,
+        "phase": PhaseEnum.SYNTHESIZING.value,
+    }
 
 
 @trace_node

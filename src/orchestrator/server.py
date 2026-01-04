@@ -753,10 +753,59 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
         state = {**initial_state, "job_id": job_id, "jobId": job_id, "threadId": job_id}
         config = {"configurable": {"thread_id": job_id}}
         final_state: Dict[str, Any] = {}
+        
+        # Ingest PDF chunks into Qdrant if PDF path and ingestion_id are available
+        # This happens BEFORE workflow starts to ensure chunks are available for retrieval
+        pdf_path = initial_state.get("pdf_path")
+        ingestion_id = initial_state.get("ingestion_id")
+        file_hash = initial_state.get("doc_hash") or initial_state.get("file_hash")
+        project_id = initial_state.get("project_id")
+        rigor_level = initial_state.get("rigor_level") or (initial_state.get("project_context") or {}).get("rigor_level", "exploratory")
+        
+        # Only ingest if we have a real PDF file path (not just a filename)
+        if pdf_path and ingestion_id and file_hash and project_id:
+            from pathlib import Path
+            if Path(pdf_path).exists():
+                try:
+                    from .storage.qdrant import QdrantStorage
+                    qdrant_storage = QdrantStorage()
+                    chunk_count, chunk_metadata = qdrant_storage.ingest_document_chunks(
+                        pdf_path=pdf_path,
+                        file_hash=file_hash,
+                        ingestion_id=ingestion_id,
+                        project_id=project_id,
+                        rigor_level=rigor_level,
+                    )
+                    
+                    # Update Arango ingestion record to INDEXED status
+                    from .storage.arango import update_ingestion_after_qdrant_indexing
+                    from .services.project_service import get_project_service
+                    project_service = get_project_service()
+                    if project_service:
+                        update_ingestion_after_qdrant_indexing(
+                            project_service.db,
+                            ingestion_id,
+                            chunk_count,
+                        )
+                        logger.info(
+                            f"Indexed {chunk_count} chunks in Qdrant for ingestion {ingestion_id}",
+                            extra={"payload": {"ingestion_id": ingestion_id, "chunk_count": chunk_count}}
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to ingest PDF chunks into Qdrant: {e}",
+                        exc_info=True,
+                        extra={"payload": {"ingestion_id": ingestion_id, "pdf_path": pdf_path}}
+                    )
+                    # Continue workflow even if Qdrant ingestion fails (graceful degradation)
 
         try:
             update_job_status(job_id, JobStatus.RUNNING, current_step="Cartographer", progress=0.1, message="Starting Cartographer")
 
+            # Import OpikEmitter for workflow-level tracing
+            from .telemetry.opik_emitter import get_opik_emitter
+            opik_emitter = get_opik_emitter()
+            
             async for event in workflow_app.astream_events(state, config=config, version="v2"):
                 ev_type = event.get("event")
                 node_name = event.get("name") or event.get("node")
@@ -765,6 +814,45 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
                 # Capture latest state if present
                 if "state" in event and isinstance(event["state"], dict):
                     final_state = event["state"]
+                    # Emit Opik trace for node start/end events
+                    try:
+                        if ev_type == "on_node_start" and node_name:
+                            opik_emitter.emit_node_start(
+                                job_id=job_id,
+                                project_id=project_id,
+                                node_name=node_name,
+                                meta={
+                                    "rigor_level": rigor_level,
+                                    "event_type": ev_type,
+                                },
+                            )
+                        elif ev_type == "on_node_end" and node_name:
+                            # Extract counts from state
+                            state_data = event["state"]
+                            extracted = state_data.get("extracted_json", {})
+                            triples_count = len(extracted.get("triples", [])) if isinstance(extracted, dict) else 0
+                            conflicts_count = len(state_data.get("conflicts", [])) if isinstance(state_data.get("conflicts"), list) else 0
+                            blocks_count = len(state_data.get("manuscript_blocks", [])) if isinstance(state_data.get("manuscript_blocks"), list) else 0
+                            
+                            opik_emitter.emit_node_end(
+                                job_id=job_id,
+                                project_id=project_id,
+                                node_name=node_name,
+                                meta={
+                                    "rigor_level": rigor_level,
+                                    "prompt_manifest": state_data.get("prompt_manifest", {}),
+                                    "extracted_json": extracted,
+                                    "conflicts": state_data.get("conflicts", []),
+                                    "manuscript_blocks": state_data.get("manuscript_blocks", []),
+                                    "counts": {
+                                        "claims_count": triples_count,
+                                        "conflicts_count": conflicts_count,
+                                        "blocks_count": blocks_count,
+                                    },
+                                },
+                            )
+                    except Exception:  # pragma: no cover - Opik must be non-blocking
+                        pass
                 # Best-effort telemetry via Opik (non-blocking)
                 try:
                     payload = {"type": "event", "event": ev_type, "node": node_name, "timestamp": get_utc_now().isoformat()}
@@ -927,7 +1015,12 @@ def submit_workflow():
                         logger.warning(f"Failed to cache PDF text layers: {e}", exc_info=True)
                         # Continue without caching (graceful degradation)
                     
-                    pdf_path = uploaded.filename  # Use original filename
+                    # Store PDF path for Qdrant ingestion (will be processed in workflow)
+                    # The pdf_path is already set above, and ingestion_id will be created below
+                    
+                    # Keep actual PDF path for Qdrant ingestion, but use filename for display
+                    pdf_path_display = uploaded.filename  # Use original filename for display
+                    pdf_path = pdf_path_for_qdrant  # Keep actual path for Qdrant
                     payload_images = image_paths
         else:
             # JSON request
@@ -995,6 +1088,8 @@ def submit_workflow():
                 return jsonify({"error": f"Failed to create ingestion record: {str(e)}"}), 500
 
         # Prepare initial state
+        from ..state import PhaseEnum
+        
         initial_state: ResearchState = {
             "raw_text": raw_text,
             "pdf_path": pdf_path or payload.get("pdf_path", ""),
@@ -1004,6 +1099,7 @@ def submit_workflow():
             "image_paths": payload.get("image_paths") if not is_multipart else payload_images,
             "project_id": project_id,
             "rigor_level": (project_context or {}).get("rigor_level") or "exploratory",
+            "phase": PhaseEnum.MAPPING.value,  # Workflow starts with cartographer (mapping phase)
         }
         
         # Inject project context if available
@@ -1118,6 +1214,8 @@ def get_workflow_status(job_id: str):
         return jsonify({"error": "Job not found"}), 404
     
     status = job["status"]
+    result = job.get("result") or {}
+    
     response = {
         "job_id": job["job_id"],
         "status": status.value if isinstance(status, JobStatus) else str(status),
@@ -1132,6 +1230,12 @@ def get_workflow_status(job_id: str):
         response["completed_at"] = job["completed_at"].isoformat() if hasattr(job["completed_at"], "isoformat") else job["completed_at"]
     if status in (JobStatus.SUCCEEDED, JobStatus.FINALIZED) and job.get("result") is not None:
         response["result"] = job.get("result")
+        
+        # Include prompt_manifest in debug mode
+        debug = request.args.get("debug", "false").lower() in ("true", "1", "yes")
+        if debug and result.get("prompt_manifest"):
+            response["prompt_manifest"] = result.get("prompt_manifest")
+    
     return jsonify(response), 200
 
 
@@ -1638,6 +1742,8 @@ def run_workflow():
         logger.error(f"Failed to fetch project {project_id}: {e}", exc_info=True)
         return jsonify({"error": "Database unavailable"}), 503
 
+    from ..state import PhaseEnum
+    
     initial_state: ResearchState = {
         "raw_text": raw_text,
         "pdf_path": payload.get("pdf_path", ""),
@@ -1647,6 +1753,7 @@ def run_workflow():
         "image_paths": payload.get("image_paths") or [],
         "project_id": project_id,
         "rigor_level": (project_context or {}).get("rigor_level") or "exploratory",
+        "phase": PhaseEnum.MAPPING.value,  # Workflow starts with cartographer (mapping phase)
     }
     if project_context:
         initial_state["project_context"] = project_context

@@ -447,7 +447,10 @@ class ManuscriptBlock(BaseModel):
     section_title: str = Field(..., description="Section title (e.g., 'Introduction', 'Methodology')")
     content: str = Field(..., description="Block content in Markdown format")
     order_index: int = Field(default=0, description="Order index for section sequencing")
-    claim_ids: List[str] = Field(default_factory=list, description="Linked triple/claim IDs from knowledge graph")
+    claim_ids: List[str] = Field(
+        default_factory=list,
+        description="Linked triple/claim IDs from knowledge graph (required, non-empty in conservative mode)"
+    )
     citation_keys: List[str] = Field(default_factory=list, description="BibTeX citation keys referenced in this block")
     project_id: Optional[str] = Field(None, description="Project identifier this block belongs to")
     version: int = Field(default=1, ge=1, description="Version number for auditability")

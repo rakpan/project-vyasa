@@ -102,13 +102,13 @@ def build_workflow():
     )
     graph.add_conditional_edges(
         "synthesizer",
-        lambda state: "failure_cleanup" if state.get("force_failure_cleanup") else "saver",
+        lambda state: "failure_cleanup" if state.get("force_failure_cleanup") else "tone_guard",
         {
-            "saver": "artifact_registry",
+            "tone_guard": "tone_guard",
             "failure_cleanup": "failure_cleanup",
         },
     )
-    graph.add_edge("artifact_registry", "tone_guard")
+    graph.add_edge("tone_guard", "artifact_registry")
     graph.add_edge("tone_guard", "tone_validator")
     graph.add_edge("tone_validator", "saver")
     graph.add_edge("saver", END)

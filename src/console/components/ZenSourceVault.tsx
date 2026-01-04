@@ -62,6 +62,10 @@ function toHighlightArea(coords: EvidenceCoordinates | null | undefined) {
  * Zen-First: Controls appear only when needed.
  */
 export function ZenSourceVault({ fileUrl, highlight: propHighlight, workerUrl, onRescan, projectId }: ZenSourceVaultProps) {
+  const { highlight: contextHighlight } = useEvidence()
+  
+  // Use context highlight if available, fallback to prop
+  const activeHighlight = contextHighlight || propHighlight
   // Subscribe to evidence context for anchor updates
   const { highlight: contextHighlight } = useEvidence()
   
