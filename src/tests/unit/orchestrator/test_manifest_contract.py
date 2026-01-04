@@ -94,20 +94,20 @@ def test_manifest_persist_called(monkeypatch, base_node_state):
         called["persist"] += 1
         # No actual file write - just track the call
 
-    # Patch persist_manifest at the source module first (before nodes module uses it)
+    # Patch persist_manifest at the source module first (before export module uses it)
     # This is the source of the function
     monkeypatch.setattr("src.orchestrator.artifacts.manifest_builder.persist_manifest", fake_persist)
     
-    # Also patch it in the nodes module where it's imported and used
+    # Also patch it in the export module where it's imported and used
     # artifact_registry_node imports persist_manifest from ..artifacts.manifest_builder
-    # at module level, so we need to patch it in the nodes module namespace
-    # IMPORTANT: Import nodes AFTER patching the source, so the import uses the patched version
+    # at module level, so we need to patch it in the export module namespace
+    # IMPORTANT: Import export AFTER patching the source, so the import uses the patched version
     import importlib
-    import src.orchestrator.nodes.nodes as nodes_module
+    import src.orchestrator.nodes.export as export_module
     # Reload the module to pick up the patched function
-    importlib.reload(nodes_module)
+    importlib.reload(export_module)
     # Also patch it directly in the module namespace as a backup
-    monkeypatch.setattr(nodes_module, "persist_manifest", fake_persist)
+    monkeypatch.setattr(export_module, "persist_manifest", fake_persist)
     
     # Note: ArangoClient is automatically mocked by the firewall, so artifact_registry_node
     # will create a mock DB when it calls ArangoClient()

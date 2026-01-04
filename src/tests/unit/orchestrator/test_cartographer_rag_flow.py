@@ -13,7 +13,7 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 from typing import Dict, Any, List
 
-from src.orchestrator.nodes.nodes import cartographer_node
+from src.orchestrator.nodes import cartographer_node
 from src.orchestrator.schemas.claims import Claim, SourceAnchor
 from src.orchestrator.state import ResearchState
 
@@ -126,9 +126,9 @@ def mock_llm_response():
 class TestCartographerRQScopedRetrieval:
     """Tests for RQ-scoped chunk retrieval from Qdrant."""
     
-    @patch("src.orchestrator.nodes.nodes.QdrantStorage")
+    @patch("src.orchestrator.storage.qdrant.QdrantStorage")
     @patch("src.orchestrator.nodes.nodes.call_expert_with_fallback")
-    @patch("src.orchestrator.nodes.nodes.role_registry")
+    @patch("src.orchestrator.nodes.cartography.role_registry")
     @patch("src.orchestrator.nodes.nodes.route_to_expert")
     def test_retrieves_chunks_per_rq(
         self,
@@ -178,9 +178,9 @@ class TestCartographerRQScopedRetrieval:
         assert calls[0].kwargs["ingestion_id"] == "test-ingestion-789"
         assert calls[0].kwargs["limit"] == 5  # Default chunks_per_rq
     
-    @patch("src.orchestrator.nodes.nodes.QdrantStorage")
+    @patch("src.orchestrator.storage.qdrant.QdrantStorage")
     @patch("src.orchestrator.nodes.nodes.call_expert_with_fallback")
-    @patch("src.orchestrator.nodes.nodes.role_registry")
+    @patch("src.orchestrator.nodes.cartography.role_registry")
     @patch("src.orchestrator.nodes.nodes.route_to_expert")
     def test_claims_have_anchors_from_qdrant_payload(
         self,
@@ -229,9 +229,9 @@ class TestCartographerRQScopedRetrieval:
             assert anchor["page_number"] == 1
             assert "bbox" in anchor or "snippet" in anchor
     
-    @patch("src.orchestrator.nodes.nodes.QdrantStorage")
+    @patch("src.orchestrator.storage.qdrant.QdrantStorage")
     @patch("src.orchestrator.nodes.nodes.call_expert_with_fallback")
-    @patch("src.orchestrator.nodes.nodes.role_registry")
+    @patch("src.orchestrator.nodes.cartography.role_registry")
     @patch("src.orchestrator.nodes.nodes.route_to_expert")
     def test_rq_hits_populated_correctly(
         self,
@@ -280,9 +280,9 @@ class TestCartographerRQScopedRetrieval:
 class TestCartographerValidation:
     """Tests for validation in conservative vs exploratory mode."""
     
-    @patch("src.orchestrator.nodes.nodes.QdrantStorage")
+    @patch("src.orchestrator.storage.qdrant.QdrantStorage")
     @patch("src.orchestrator.nodes.nodes.call_expert_with_fallback")
-    @patch("src.orchestrator.nodes.nodes.role_registry")
+    @patch("src.orchestrator.nodes.cartography.role_registry")
     @patch("src.orchestrator.nodes.nodes.route_to_expert")
     def test_conservative_mode_rejects_claim_without_anchor(
         self,
@@ -343,9 +343,9 @@ class TestCartographerValidation:
             for t in triples
         )
     
-    @patch("src.orchestrator.nodes.nodes.QdrantStorage")
+    @patch("src.orchestrator.storage.qdrant.QdrantStorage")
     @patch("src.orchestrator.nodes.nodes.call_expert_with_fallback")
-    @patch("src.orchestrator.nodes.nodes.role_registry")
+    @patch("src.orchestrator.nodes.cartography.role_registry")
     @patch("src.orchestrator.nodes.nodes.route_to_expert")
     def test_conservative_mode_rejects_claim_without_rq_hits(
         self,
@@ -409,9 +409,9 @@ class TestCartographerValidation:
             for t in triples
         )
     
-    @patch("src.orchestrator.nodes.nodes.QdrantStorage")
+    @patch("src.orchestrator.storage.qdrant.QdrantStorage")
     @patch("src.orchestrator.nodes.nodes.call_expert_with_fallback")
-    @patch("src.orchestrator.nodes.nodes.role_registry")
+    @patch("src.orchestrator.nodes.cartography.role_registry")
     @patch("src.orchestrator.nodes.nodes.route_to_expert")
     def test_exploratory_mode_allows_with_warnings(
         self,
@@ -468,9 +468,9 @@ class TestCartographerValidation:
 class TestAnchorThread:
     """Tests for anchor metadata preservation (Qdrant → Claim)."""
     
-    @patch("src.orchestrator.nodes.nodes.QdrantStorage")
+    @patch("src.orchestrator.storage.qdrant.QdrantStorage")
     @patch("src.orchestrator.nodes.nodes.call_expert_with_fallback")
-    @patch("src.orchestrator.nodes.nodes.role_registry")
+    @patch("src.orchestrator.nodes.cartography.role_registry")
     @patch("src.orchestrator.nodes.nodes.route_to_expert")
     def test_anchor_matches_qdrant_payload_exactly(
         self,

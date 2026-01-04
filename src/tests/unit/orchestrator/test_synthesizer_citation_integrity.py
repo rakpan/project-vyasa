@@ -6,15 +6,29 @@ blocks without bindings in conservative mode.
 """
 
 import pytest
-from unittest.mock import Mock, patch
-from src.orchestrator.nodes.nodes import synthesizer_node
+from unittest.mock import Mock, patch, MagicMock
+from src.orchestrator.nodes import synthesizer_node
 from src.tests.conftest import base_node_state
 
 
 class TestSynthesizerCitationIntegrity:
     """Test Synthesizer citation integrity enforcement."""
     
-    def test_synthesizer_rejects_block_without_bindings_conservative(self):
+    @pytest.fixture(autouse=True)
+    def mock_prompt_registry(self):
+        """Mock get_active_prompt_with_meta to avoid Opik HTTP calls in tests."""
+        with patch("src.orchestrator.nodes.synthesis.get_active_prompt_with_meta") as mock_get_prompt:
+            # Return a simple prompt template and metadata
+            mock_meta = MagicMock()
+            mock_meta.model_dump.return_value = {
+                "prompt_name": "vyasa-synthesizer",
+                "version": "default",
+                "source": "fallback"
+            }
+            mock_get_prompt.return_value = ("Default synthesizer prompt template", mock_meta)
+            yield mock_get_prompt
+    
+    def test_synthesizer_rejects_block_without_bindings_conservative(self, base_node_state):
         """Test Synthesizer rejects blocks without claim bindings in conservative mode."""
         state = {
             **base_node_state,
@@ -43,7 +57,7 @@ class TestSynthesizerCitationIntegrity:
         assert "synthesis_error" in result
         assert "no claim bindings" in result.get("synthesis_error", "").lower()
     
-    def test_synthesizer_allows_block_without_bindings_exploratory(self):
+    def test_synthesizer_allows_block_without_bindings_exploratory(self, base_node_state):
         """Test Synthesizer allows blocks without bindings in exploratory mode (with warning)."""
         state = {
             **base_node_state,
@@ -65,7 +79,7 @@ class TestSynthesizerCitationIntegrity:
         assert result.get("synthesis") != ""
         assert "synthesis_error" not in result
     
-    def test_synthesizer_accepts_block_with_inline_bindings(self):
+    def test_synthesizer_accepts_block_with_inline_bindings(self, base_node_state):
         """Test Synthesizer accepts blocks with inline claim bindings."""
         state = {
             **base_node_state,
@@ -88,7 +102,7 @@ class TestSynthesizerCitationIntegrity:
         assert "synthesis_error" not in result
         assert "claim_id_123" in result.get("synthesis", "")
     
-    def test_synthesizer_uses_context_wrapper(self):
+    def test_synthesizer_uses_context_wrapper(self, base_node_state):
         """Test Synthesizer uses wrap_prompt_with_context."""
         state = {
             **base_node_state,
@@ -103,7 +117,7 @@ class TestSynthesizerCitationIntegrity:
             "extracted_json": {"triples": []},
         }
         
-        with patch("src.orchestrator.nodes.nodes.wrap_prompt_with_context") as mock_wrap:
+        with patch("src.orchestrator.nodes.synthesis.wrap_prompt_with_context") as mock_wrap:
             mock_wrap.return_value = "Wrapped prompt"
             
             result = synthesizer_node(state)

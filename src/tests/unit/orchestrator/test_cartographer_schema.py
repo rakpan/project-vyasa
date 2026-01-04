@@ -7,14 +7,13 @@ and validates schema in conservative mode.
 
 import pytest
 from unittest.mock import Mock, patch
-from src.orchestrator.nodes.nodes import cartographer_node
-from src.tests.conftest import base_node_state
+from src.orchestrator.nodes import cartographer_node
 
 
 class TestCartographerSchema:
     """Test Cartographer schema enforcement."""
     
-    def test_cartographer_adds_metadata_in_conservative_mode(self):
+    def test_cartographer_adds_metadata_in_conservative_mode(self, base_node_state):
         """Test Cartographer adds claim_text, relevance_score, rq_hits in conservative mode."""
         state = {
             **base_node_state,
@@ -51,7 +50,7 @@ class TestCartographerSchema:
             )
             
             # Mock normalize_extracted_json to return our test triples
-            with patch("src.orchestrator.nodes.nodes.normalize_extracted_json") as mock_norm:
+            with patch("src.orchestrator.normalize.normalize_extracted_json") as mock_norm:
                 mock_norm.return_value = {
                     "triples": [
                         {
@@ -81,7 +80,7 @@ class TestCartographerSchema:
         assert "rq_hits" in first_triple
         assert "source_anchor" in first_triple
     
-    def test_cartographer_validates_source_anchor_presence(self):
+    def test_cartographer_validates_source_anchor_presence(self, base_node_state):
         """Test Cartographer ensures source_anchor is present."""
         state = {
             **base_node_state,
@@ -100,7 +99,7 @@ class TestCartographerSchema:
                 {"duration_ms": 100},
             )
             
-            with patch("src.orchestrator.nodes.nodes.normalize_extracted_json") as mock_norm:
+            with patch("src.orchestrator.normalize.normalize_extracted_json") as mock_norm:
                 mock_norm.return_value = {
                     "triples": [
                         {

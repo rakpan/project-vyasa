@@ -145,6 +145,20 @@ Project Vyasa follows a **Committee of Experts Architecture** with functional na
 - Dynamic role system: prompts stored in ArangoDB, editable without redeployment
 - Optimized for DGX-class systems with unified memory and multiple GPUs
 
+### Node Module Organization
+
+The orchestrator nodes are organized by **domain responsibility** to maintain clear boundaries and prevent circular dependencies:
+
+- **`cartography.py`**: Knowledge extraction (cartographer_node)
+- **`quality.py`**: Governance and validation (critic_node, reframing_node, tone_validator_node)
+- **`synthesis.py`**: Manuscript generation (synthesizer_node, lead_counsel_node, logician_node)
+- **`export.py`**: Persistence and artifacts (saver_node, artifact_registry_node)
+- **`utils.py`**: Cross-cutting utilities (vision_node)
+- **`base.py`**: Shared prompt wrappers (wrap_prompt_with_context)
+- **`nodes.py`**: Compatibility shim with shared infrastructure utilities
+
+See [`docs/architecture/module-map.md`](docs/architecture/module-map.md) for detailed guidance on where to add new nodes and dependency rules.
+
 ---
 
 ## Quick Start

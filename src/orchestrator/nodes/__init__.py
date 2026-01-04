@@ -6,29 +6,44 @@ This package provides node functions from nodes.py and re-exports tone_guard uti
 import importlib
 import logging
 
-# Import directly from the local nodes.py module
-from .nodes import (
-    cartographer_node,
+# Import cartographer_node from cartography module (moved in refactor)
+from .cartography import cartographer_node
+
+# Import vision_node from utils module (moved in refactor)
+from .utils import vision_node, select_images_for_vision
+
+# Import quality/governance nodes from quality module (moved in refactor)
+from .quality import (
     critic_node,
     reframing_node,
-    artifact_registry_node,
     tone_validator_node,
-    saver_node,
+    _build_conflict_report,
+)
+
+# Import synthesis nodes from synthesis module (moved in refactor)
+from .synthesis import (
     synthesizer_node,
-    vision_node,
     lead_counsel_node,
     logician_node,
+)
+
+# Import export nodes from export module (moved in refactor)
+from .export import (
+    saver_node,
+    artifact_registry_node,
+)
+
+# Import directly from the local nodes.py module
+from .nodes import (
     route_to_expert,
     call_expert_with_fallback,
     ExpertType,
     NODE_EXPERT_MAP,
     failure_cleanup_node,
-    select_images_for_vision,
     # Internal symbols for test mocking compatibility (imported in nodes.py)
     requests,
     ArangoClient,
     interrupt,
-    _build_conflict_report,
     telemetry_emitter,  # Module-level telemetry emitter instance
 )
 
