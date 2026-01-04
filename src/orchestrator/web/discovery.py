@@ -12,7 +12,12 @@ import requests
 from ...shared.config import _env
 from ...shared.logger import get_logger
 from ..schemas.disputes import DisputeContext, TriggerSourceType
-from .domain_policy import filter_urls, parse_domain_lists
+from .domain_policy import (
+    filter_urls,
+    filter_urls_by_allowlist,
+    parse_domain_lists,
+    default_allowlist,
+)
 
 logger = get_logger("orchestrator", __name__)
 
@@ -45,15 +50,27 @@ class WebDiscoveryService:
         Args:
             api_key: Google Custom Search API key (defaults to env var)
             engine_id: Google Custom Search Engine ID (defaults to env var)
-            allowlist: Comma-separated allowed domains (defaults to env var)
+            allowlist: Comma-separated allowed domains (defaults to env var, or default_allowlist if empty)
             blocklist: Comma-separated blocked domains (defaults to env var)
         """
         self.api_key = api_key or GOOGLE_SEARCH_API_KEY
         self.engine_id = engine_id or GOOGLE_SEARCH_ENGINE_ID
+        
+        # Parse allowlist/blocklist
+        allowlist_str = allowlist or WEB_DOMAIN_ALLOWLIST
+        # If allowlist is empty, use default Tier 1 allowlist
+        if not allowlist_str or not allowlist_str.strip():
+            allowlist_str = ",".join(default_allowlist())
+        
         self.allowlist, self.blocklist = parse_domain_lists(
-            allowlist or WEB_DOMAIN_ALLOWLIST,
+            allowlist_str,
             blocklist or WEB_DOMAIN_BLOCKLIST,
         )
+        
+        # Store allowlist patterns for strict filtering (supports wildcards)
+        self.allowlist_patterns = [
+            pattern.strip() for pattern in allowlist_str.split(",") if pattern.strip()
+        ] if allowlist_str else default_allowlist()
         
         # Check if API is configured
         self._api_enabled = bool(self.api_key and self.engine_id)
@@ -240,12 +257,27 @@ class WebDiscoveryService:
             logger.info(f"No URLs found for dispute {dispute.dispute_id}")
             return []
         
-        # Filter by domain policy
-        filtered_urls = filter_urls(urls, self.allowlist, self.blocklist)
+        # Apply strict allowlist filtering (after Google search, before Firecrawl)
+        original_count = len(urls)
+        filtered_urls = filter_urls_by_allowlist(urls, self.allowlist_patterns)
+        dropped_count = original_count - len(filtered_urls)
+        
+        if dropped_count > 0:
+            logger.info(
+                f"Filtered {dropped_count} URL(s) not in allowlist for dispute {dispute.dispute_id} "
+                f"({len(filtered_urls)} remain)"
+            )
+        
+        if not filtered_urls:
+            logger.info(
+                f"No allowlisted URLs found for dispute {dispute.dispute_id} "
+                f"(all {original_count} results were filtered)"
+            )
+            return []  # Return empty list with implicit reason "no_allowlisted_results"
         
         logger.info(
-            f"Discovered {len(filtered_urls)} URLs for dispute {dispute.dispute_id} "
-            f"(filtered from {len(urls)} total)"
+            f"Discovered {len(filtered_urls)} allowlisted URLs for dispute {dispute.dispute_id} "
+            f"(filtered from {original_count} total)"
         )
         
         return filtered_urls

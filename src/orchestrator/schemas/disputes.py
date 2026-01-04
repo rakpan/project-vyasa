@@ -17,6 +17,7 @@ class TriggerSourceType(str, Enum):
     RQ = "RQ"  # Research Question
     BLOCK = "BLOCK"  # Manuscript Block
     CLAIM = "CLAIM"  # Individual Claim
+    MANUAL_SEARCH = "MANUAL_SEARCH"  # Explicit user-initiated search (bypasses priority gate)
 
 
 class DisputePriority(str, Enum):

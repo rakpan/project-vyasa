@@ -84,7 +84,7 @@ The result is a workflow where AI accelerates the grunt work of extraction and o
 - Ports/services and resource optimization: `docs/architecture/04-resource-optimization.md`
 - Observability/Opik: `docs/architecture/05-telemetry-and-observability.md`
 - Node module organization: `docs/architecture/module-map.md`
-- Web Augmentation (optional): `docs/decisions/ADR-004-web-augmentation-sidecar.md` — Trigger-driven web augmentation via Firecrawl sidecar
+- Web Augmentation (optional): `docs/decisions/ADR-004-web-augmentation-sidecar.md` — Trigger-driven web augmentation via Firecrawl Cloud (retrieval only)
 
 ### Web Augmentation Loop (Optional)
 
@@ -103,7 +103,7 @@ When enabled (`WEB_AUGMENTATION_ENABLED=true`), Vyasa can augment local knowledg
                           │ HTTP only (no SDK imports)
                           ↓
 ┌─────────────────────────────────────────────────────────────┐
-│              Firecrawl Sidecar (CPU-only)                   │
+│              Firecrawl Cloud (Retrieval Only)               │
 │                                                             │
 │                    Retrieval: Scrape URLs                   │
 │                    Returns: Markdown content               │
@@ -122,9 +122,12 @@ When enabled (`WEB_AUGMENTATION_ENABLED=true`), Vyasa can augment local knowledg
 
 **Key Boundaries:**
 - **Vyasa Core decides** (when/what to augment)
-- **Firecrawl retrieves** (HTTP-only, no SDK imports)
-- **GPUs reserved** for worker/brain inference (Firecrawl CPU-only)
+- **Firecrawl Cloud retrieves** (HTTP-only, no SDK imports)
+- **GPUs reserved** for worker/brain inference (Firecrawl Cloud is remote API)
 - **Feature flag** controls enablement (disabled by default)
+- **Firecrawl Cloud required**: API key needed; free tier limited to 500 requests/month
+- **Strict allowlist**: Results restricted to approved domains (gov, edu, journals)
+- **Quota guardrails**: Usage tracked and enforced (500/month free tier)
 
 ## Operations & Maintenance
 - **Backups**: `docs/runbooks/backups.md` - Daily automated backups (ArangoDB + Qdrant) with restore procedures and weekly off-host sync

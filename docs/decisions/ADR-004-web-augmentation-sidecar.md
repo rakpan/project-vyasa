@@ -18,11 +18,14 @@ However, web scraping and search require external dependencies that must be isol
 
 ## Decision
 
-We will implement a **sidecar architecture** where:
+We will implement a **cloud-based retrieval architecture** where:
 - **Vyasa Core** (orchestrator) makes all decisions about when and what to augment
-- **Firecrawl** runs as a separate, optional service that only retrieves content
+- **Firecrawl Cloud** provides retrieval as a remote API service (no local deployment)
 - Communication is **HTTP-only** (no SDK imports in Vyasa core)
 - Feature is **disabled by default** and requires explicit opt-in
+- **Vyasa owns extraction and governance**; Firecrawl Cloud only provides retrieval
+- **Strict allowlist policy** restricts results to high-fidelity domains (gov, edu, journals)
+- **Quota guardrails** enforce budget limits (500 requests/month free tier)
 
 ## System Boundaries
 
@@ -34,12 +37,14 @@ The web augmentation loop is divided into five distinct boundaries:
 - **Dependencies**: Google Custom Search JSON API (optional, HTTP-only)
 - **Output**: List of candidate URLs (bounded by `WEB_MAX_URLS`)
 
-### 2. Retrieval (Firecrawl Sidecar)
+### 2. Retrieval (Firecrawl Cloud)
 - **Responsibility**: Scrape URLs and return markdown content
 - **Implementation**: `FirecrawlBridge` in `src/orchestrator/web/firecrawl.py`
-- **Communication**: HTTP POST requests to `FIRECRAWL_SERVICE_URL`
+- **Communication**: HTTP POST requests to Firecrawl Cloud API (`FIRECRAWL_BASE_URL`)
 - **No SDK imports**: Uses `requests` library only (no Firecrawl SDK)
 - **Output**: Markdown content per URL (bounded by `WEB_MAX_PAGES`)
+- **Quota**: Free tier limited to 500 requests/month (enforced via `QuotaManager`)
+- **Allowlist**: URLs must pass strict domain allowlist before scraping (see Domain Policy section)
 
 ### 3. Normalization (Vyasa Core)
 - **Responsibility**: Convert Firecrawl/PDF content into unified `NormalizedEvidenceUnit`
@@ -75,6 +80,43 @@ Markdown → EvidenceNormalizer → NormalizedEvidenceUnit
 NormalizedEvidenceUnit → Worker.extract → Claims
 Claims → AugmentationOrchestrator → ReviewTask(PENDING)
 ```
+
+## Domain Allowlist Policy
+
+**Critical**: Web search and scraping are restricted to approved domains only.
+
+### Allowlist Strategy
+
+Vyasa enforces a **strict allowlist policy** to ensure high-fidelity sources:
+
+1. **Default Allowlist**: Includes Tier 1 domains:
+   - `.gov` (government)
+   - `.edu` (educational institutions)
+   - `.org` (organizations)
+   - `.com`, `.net` (commercial, with quality scoring)
+
+2. **Quality Tiers**:
+   - **High**: `.gov`, `.edu`, academic journals (nature.com, science.org, ieee.org, acm.org)
+   - **Medium**: `.com`, `.net` (general commercial)
+   - **Low**: Other domains (rarely included)
+
+3. **Configuration**: Set `WEB_DOMAIN_ALLOWLIST` in `deploy/.env` to override defaults
+   - Comma-separated list of domains or patterns (e.g., `*.gov,*.edu,nature.com`)
+   - Empty string means use default allowlist
+   - Blocklist (`WEB_DOMAIN_BLOCKLIST`) filters out social media and low-quality sites
+
+4. **Enforcement Points**:
+   - **Search endpoint** (`/api/web/search`): Filters results before returning to UI
+   - **Queue endpoint** (`/api/web/queue`): Filters URLs before scraping
+   - **AugmentationOrchestrator**: Applies allowlist as safety check
+
+### Why This Matters
+
+- **Quality Control**: Ensures only high-fidelity sources enter the knowledge graph
+- **Quota Efficiency**: Prevents wasting quota on low-quality sources
+- **Safety**: Reduces risk of misinformation or unreliable claims
+
+**⚠️ Warning**: Do not broaden the allowlist casually. All additions should be justified and reviewed.
 
 ## AGPL Boundary Rule
 
@@ -121,19 +163,14 @@ Claims → AugmentationOrchestrator → ReviewTask(PENDING)
 
 ### Service Configuration
 ```yaml
-# docker-compose.yml
-firecrawl:
-  image: mintlabs/firecrawl:latest
-  container_name: firecrawl
-  ports:
-    - "3002:3002"
-  # No GPU access
-  deploy:
-    resources:
-      limits:
-        cpus: '2'
-        memory: 2G
+# No Docker service required - Firecrawl Cloud is a remote API
+# Configuration via environment variables:
+# FIRECRAWL_MODE=cloud
+# FIRECRAWL_API_KEY=your-api-key-here
+# FIRECRAWL_BASE_URL=https://api.firecrawl.dev
 ```
+<｜tool▁call▁begin｜>
+read_file
 
 ### HTTP Client Pattern
 ```python
@@ -174,8 +211,10 @@ class AugmentationOrchestrator:
 
 ### Negative
 - ⚠️ **Network Dependency**: Requires internet for web scraping (when enabled)
-- ⚠️ **Additional Service**: Firecrawl container must be running (when enabled)
+- ⚠️ **External API**: Firecrawl Cloud API key required (when enabled)
+- ⚠️ **Quota Limits**: Free tier limited to 500 requests/month (enforced via quota manager)
 - ⚠️ **Latency**: HTTP round-trips add delay to augmentation loop
+- ⚠️ **Allowlist Restrictions**: Only approved domains are accessible (may limit coverage)
 
 ### Neutral
 - **Review Queue**: Creates new UI surface for human approval
@@ -199,8 +238,45 @@ class AugmentationOrchestrator:
 - **Why**: Duplicates Firecrawl functionality, maintenance burden
 - **Complexity**: Would require browser automation, proxy handling, etc.
 
+## Setup Instructions
+
+**Note**: Local Firecrawl deployment was removed due to instability. Firecrawl Cloud is now required.
+
+### Firecrawl Cloud Setup
+
+1. **Sign up for Firecrawl Cloud:**
+   - Visit https://firecrawl.dev
+   - Create an account and obtain your API key
+   - Free tier includes 500 requests/month
+
+2. **Configure in `deploy/.env`:**
+   ```bash
+   FIRECRAWL_MODE=cloud
+   FIRECRAWL_API_KEY=your-api-key-here
+   FIRECRAWL_BASE_URL=https://api.firecrawl.dev
+   FIRECRAWL_MONTHLY_QUOTA=500
+   FIRECRAWL_FAIL_OPEN=false
+   WEB_AUGMENTATION_ENABLED=true
+   ```
+
+**Important Notes:**
+- **Firecrawl Cloud required**: Local deployment removed due to instability
+- **Quota limits**: Free tier limited to 500 requests/month; use only for high-fidelity disputes
+  - Quota is enforced via `QuotaManager` in `src/orchestrator/web/quota.py`
+  - Usage tracked in ArangoDB `web_usage` collection (keyed by YYYY-MM)
+  - When quota exceeded, `ReviewTask` created with status `FAILED` and reason `quota_exceeded`
+- **Allowlist policy**: Results restricted to approved domains (see Domain Allowlist Policy section)
+  - Default includes `.gov`, `.edu`, `.org`, `.com`, `.net`
+  - Configure via `WEB_DOMAIN_ALLOWLIST` in `deploy/.env`
+  - Do not broaden allowlist casually; all additions require justification
+- **HTTP-only**: Vyasa uses HTTP bridge only (no SDK imports, preserves AGPL boundaries)
+- **Vyasa owns extraction and governance**: Firecrawl Cloud only provides retrieval
+- **Cognition stays in Vyasa**: Firecrawl Cloud is retrieval-only; all reasoning/extraction happens in Vyasa Core
+
 ## References
 
+- [Firecrawl Cloud](https://firecrawl.dev) - Cloud API service (required; sign up for API key)
+- [Firecrawl Repository](https://github.com/firecrawl/firecrawl) - Source code (local deployment deprecated)
 - [Firecrawl Documentation](https://docs.firecrawl.dev/)
 - [AGPL License](https://www.gnu.org/licenses/agpl-3.0.html)
 - [Web Augmentation Implementation](../architecture/00-overview.md#web-augmentation-loop)

@@ -25,7 +25,7 @@ from ...shared.config import (
 from ...shared.model_registry import get_model_config
 from ...shared.logger import get_logger
 from ..config import ExpertType, WEB_AUGMENTATION_ENABLED
-from ..schemas.disputes import DisputeContext
+from ..schemas.disputes import DisputeContext, DisputePriority, TriggerSourceType
 from ..schemas.review import ReviewTask, ReviewStatus
 from ..schemas.claims import Claim
 from ..normalize import normalize_extracted_json
@@ -33,6 +33,7 @@ from ..nodes.nodes import route_to_expert, call_expert_with_fallback
 from .discovery import WebDiscoveryService
 from .firecrawl import FirecrawlBridge
 from .normalizer import EvidenceNormalizer
+from .quota import can_spend, record_spend
 
 logger = get_logger("orchestrator", __name__)
 
@@ -365,6 +366,7 @@ class AugmentationOrchestrator:
                 candidate_claims=[],
                 source_quality_score=0.0,
                 status=ReviewStatus.FAILED,
+                reason="web_augmentation_disabled",
             )
         
         if self.db is None:
@@ -376,6 +378,25 @@ class AugmentationOrchestrator:
                 candidate_claims=[],
                 source_quality_score=0.0,
                 status=ReviewStatus.FAILED,
+                reason="database_unavailable",
+            )
+        
+        # Priority gate: Only allow web augmentation for HIGH priority disputes
+        # OR explicit manual searches (user intent)
+        if dispute.priority != DisputePriority.HIGH and dispute.trigger_source_type != TriggerSourceType.MANUAL_SEARCH:
+            logger.info(
+                f"Web augmentation skipped for dispute {dispute.dispute_id}: "
+                f"priority={dispute.priority.value}, trigger={dispute.trigger_source_type.value}. "
+                "Only HIGH priority disputes or MANUAL_SEARCH triggers are allowed."
+            )
+            return ReviewTask.create(
+                project_id=dispute.project_id,
+                job_id=dispute.job_id,
+                dispute_id=dispute.dispute_id,
+                candidate_claims=[],
+                source_quality_score=0.0,
+                status=ReviewStatus.FAILED,
+                reason="priority_gate_failed",
             )
         
         try:
@@ -398,13 +419,81 @@ class AugmentationOrchestrator:
                     candidate_claims=[],
                     source_quality_score=0.0,
                     status=ReviewStatus.FAILED,
+                    reason="no_urls_discovered",
                 )
             
             logger.info(f"Discovered {len(urls)} URLs for dispute {dispute.dispute_id}")
             
-            # Step 2: Scrape URLs via Firecrawl
+            # Step 2: Check quota before scraping
+            # Count URLs to scrape (1 request per URL)
+            urls_to_scrape = len(urls)
+            if not can_spend(self.db, n=urls_to_scrape):
+                logger.warning(
+                    f"Quota exceeded for dispute {dispute.dispute_id}. "
+                    f"Would need {urls_to_scrape} requests but quota is exhausted."
+                )
+                return ReviewTask.create(
+                    project_id=dispute.project_id,
+                    job_id=dispute.job_id,
+                    dispute_id=dispute.dispute_id,
+                    candidate_claims=[],
+                    source_quality_score=0.0,
+                    status=ReviewStatus.FAILED,
+                    reason="quota_exceeded",
+                )
+            
+            # Step 3: Scrape URLs via Firecrawl
             logger.info(f"Scraping {len(urls)} URLs via Firecrawl")
             firecrawl_results = self.firecrawl_bridge.scrape(urls)
+            
+            # Record quota spend: 1 request per URL scraped (count successful + failed)
+            # This is conservative: we count all URLs attempted, not just successful ones
+            # This prevents quota exhaustion from retries or failed requests
+            successful_count = len([r for r in firecrawl_results if r.get("error") is None])
+            failed_count = len([r for r in firecrawl_results if r.get("error") is not None])
+            total_spent = successful_count + failed_count
+            
+            if total_spent > 0:
+                record_spend(self.db, n=total_spent)
+                logger.info(
+                    f"Recorded {total_spent} quota spend for dispute {dispute.dispute_id} "
+                    f"({successful_count} successful, {failed_count} failed)"
+                )
+            
+            # Check if Firecrawl is completely unavailable (all connection errors)
+            connection_errors = [
+                r for r in firecrawl_results
+                if r.get("error_type") == "connection_error"
+            ]
+            if len(connection_errors) == len(firecrawl_results) and len(firecrawl_results) > 0:
+                # All requests failed with connection errors - Firecrawl is unavailable
+                logger.error(
+                    f"Firecrawl service unavailable for dispute {dispute.dispute_id}. "
+                    f"All {len(firecrawl_results)} URLs failed with connection errors.",
+                    extra={
+                        "payload": {
+                            "dispute_id": dispute.dispute_id,
+                            "project_id": dispute.project_id,
+                            "url_count": len(firecrawl_results),
+                        }
+                    },
+                )
+                # Create FAILED ReviewTask with reason
+                review_task = ReviewTask.create(
+                    project_id=dispute.project_id,
+                    job_id=dispute.job_id,
+                    dispute_id=dispute.dispute_id,
+                    candidate_claims=[],
+                    source_quality_score=0.0,
+                    status=ReviewStatus.FAILED,
+                    reason="firecrawl_unavailable",
+                )
+                # Persist the failed task (best effort, don't fail if persistence fails)
+                try:
+                    _persist_review_task(self.db, review_task)
+                except Exception as e:
+                    logger.warning(f"Failed to persist FAILED ReviewTask: {e}")
+                return review_task
             
             # Filter successful results and bound by WEB_MAX_PAGES
             successful_results = [r for r in firecrawl_results if r.get("error") is None]
@@ -419,11 +508,12 @@ class AugmentationOrchestrator:
                     candidate_claims=[],
                     source_quality_score=0.0,
                     status=ReviewStatus.FAILED,
+                    reason="no_successful_scrapes",
                 )
             
             logger.info(f"Successfully scraped {len(successful_results)} pages")
             
-            # Step 3: Normalize to NormalizedEvidenceUnits
+            # Step 4: Normalize to NormalizedEvidenceUnits
             evidence_units = []
             for firecrawl_item in successful_results:
                 try:
@@ -442,11 +532,12 @@ class AugmentationOrchestrator:
                     candidate_claims=[],
                     source_quality_score=0.0,
                     status=ReviewStatus.FAILED,
+                    reason="no_evidence_units",
                 )
             
             logger.info(f"Normalized {len(evidence_units)} evidence units")
             
-            # Step 4: Extract claims from each evidence unit
+            # Step 5: Extract claims from each evidence unit
             all_claims: List[Claim] = []
             domain_scores: List[float] = []
             
@@ -484,10 +575,10 @@ class AugmentationOrchestrator:
             
             logger.info(f"Extracted {len(all_claims)} candidate claims")
             
-            # Step 5: Compute source quality score (average of domain scores)
+            # Step 6: Compute source quality score (average of domain scores)
             source_quality_score = sum(domain_scores) / len(domain_scores) if domain_scores else 0.5
             
-            # Step 6: Create ReviewTask
+            # Step 7: Create ReviewTask
             review_task = ReviewTask.create(
                 project_id=dispute.project_id,
                 job_id=dispute.job_id,
@@ -497,7 +588,7 @@ class AugmentationOrchestrator:
                 status=ReviewStatus.PENDING,
             )
             
-            # Step 7: Persist ReviewTask to governance queue
+            # Step 8: Persist ReviewTask to governance queue
             if not _persist_review_task(self.db, review_task):
                 logger.error(f"Failed to persist ReviewTask {review_task.review_id}")
                 # Still return the task, but mark as FAILED
@@ -522,7 +613,7 @@ class AugmentationOrchestrator:
                 f"Web augmentation workflow failed for dispute {dispute.dispute_id}: {e}",
                 exc_info=True,
             )
-            # Return FAILED ReviewTask
+            # Return FAILED ReviewTask with error reason
             return ReviewTask.create(
                 project_id=dispute.project_id,
                 job_id=dispute.job_id,
@@ -530,5 +621,6 @@ class AugmentationOrchestrator:
                 candidate_claims=[],
                 source_quality_score=0.0,
                 status=ReviewStatus.FAILED,
+                reason=f"workflow_error: {str(e)[:100]}",  # Truncate long error messages
             )
 

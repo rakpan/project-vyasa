@@ -268,19 +268,29 @@ services:
   # HTTP-only integration preserves AGPL boundaries (no SDK imports in Vyasa core)
   # Used for web augmentation when WEB_AUGMENTATION_ENABLED=true
   # Note: Firecrawl includes Playwright internally; no separate browser service needed
+  # IMPORTANT: Firecrawl does not ship a stable public Docker image.
+  # Build locally from canonical repo: https://github.com/firecrawl/firecrawl
+  # Recommended: Pin to a specific commit for reproducibility
+  # Example: git clone https://github.com/firecrawl/firecrawl.git && cd firecrawl && git checkout <commit> && docker build -t firecrawl:local .
+  # Then set FIRECRAWL_IMAGE=firecrawl:local in deploy/.env
   firecrawl:
-    image: mendableai/firecrawl:latest
+    profiles:
+      - firecrawl
+    # FIRECRAWL_IMAGE must be set when using --firecrawl flag
+    # Build locally: git clone https://github.com/firecrawl/firecrawl.git && docker build -t firecrawl:local .
+    image: ${FIRECRAWL_IMAGE}
     cpuset: "0-9"
     mem_limit: "4g"
     ports:
-      - "${PORT_FIRECRAWL:-3002}:3002"
+      - "${FIRECRAWL_PORT:-3002}:3002"
     environment:
       - PORT=3002
     networks:
       - vyasa-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      # Try /health endpoint first, fallback to scraping endpoint test
+      test: ["CMD-SHELL", "curl -f http://localhost:3002/health || curl -f http://localhost:3002/v0/scrape -X POST -H 'Content-Type: application/json' -d '{\"url\":\"https://example.com\"}' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

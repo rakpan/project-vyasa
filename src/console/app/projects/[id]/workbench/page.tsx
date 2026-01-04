@@ -13,6 +13,7 @@
 import { useMemo, useEffect, useState, Suspense } from "react"
 import { useParams, useSearchParams, useRouter } from "next/navigation"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ZenSourceVault } from "@/components/ZenSourceVault"
 import { ZenManuscriptEditor } from "@/components/ZenManuscriptEditor"
 import { LiveGraphWorkbench } from "@/components/LiveGraphWorkbench"
@@ -27,6 +28,7 @@ import { AlertTriangle } from "lucide-react"
 import { EvidenceProvider, useEvidence } from "@/contexts/evidence-context"
 import { OpikLiveFeedPanel } from "@/components/opik-live-feed-panel"
 import { RigorToggleModal } from "@/components/rigor-toggle-modal"
+import { WebSearchPanel } from "@/components/workbench/WebSearchPanel"
 
 function PaneSkeleton({ title }: { title: string }) {
   return (
@@ -256,18 +258,43 @@ function ProjectWorkbenchContent() {
             <div className="flex-1 overflow-hidden">
               {isLoading ? (
                 <PaneSkeleton title="Knowledge Claims" />
-              ) : jobId ? (
-                <KnowledgePane
-                  jobId={jobId}
-                  projectId={projectId}
-                  researchQuestions={activeProject?.research_questions || []}
-                />
               ) : (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground p-8">
-                  <div className="text-center">
-                    <p className="mb-2">No knowledge claims available</p>
-                    <p className="text-xs">Start a research job to view extracted knowledge</p>
-                  </div>
+                <div className="h-full flex flex-col">
+                  <Tabs defaultValue="claims" className="h-full flex flex-col">
+                    <TabsList className="mx-4 mt-2">
+                      <TabsTrigger value="claims">Claims</TabsTrigger>
+                      <TabsTrigger value="search">Web Search</TabsTrigger>
+                    </TabsList>
+                    
+                    <TabsContent value="claims" className="flex-1 overflow-hidden mt-0">
+                      {jobId ? (
+                        <KnowledgePane
+                          jobId={jobId}
+                          projectId={projectId}
+                          researchQuestions={activeProject?.research_questions || []}
+                        />
+                      ) : (
+                        <div className="h-full flex items-center justify-center text-sm text-muted-foreground p-8">
+                          <div className="text-center">
+                            <p className="mb-2">No knowledge claims available</p>
+                            <p className="text-xs">Start a research job to view extracted knowledge</p>
+                          </div>
+                        </div>
+                      )}
+                    </TabsContent>
+                    
+                    <TabsContent value="search" className="flex-1 overflow-hidden mt-0">
+                      <WebSearchPanel
+                        projectId={projectId}
+                        onQueueComplete={(reviewTaskId) => {
+                          toast({
+                            title: "URLs queued",
+                            description: `Review task ${reviewTaskId} created. Check the review queue.`,
+                          });
+                        }}
+                      />
+                    </TabsContent>
+                  </Tabs>
                 </div>
               )}
             </div>

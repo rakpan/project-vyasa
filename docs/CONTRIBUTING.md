@@ -31,11 +31,32 @@ See the main [README.md](../README.md) for setup instructions.
 
 ## Critical Boundaries
 
-### AGPL License Boundary: Firecrawl Integration
+### License Boundary / Sidecar Rule
 
 **⚠️ CRITICAL: No Firecrawl SDK imports in Vyasa core code.**
 
 Firecrawl is AGPL-licensed. To preserve license boundaries, Vyasa core must **never** import Firecrawl's SDK or create a dependency on Firecrawl's code.
+
+#### The Sidecar Pattern
+
+Firecrawl runs as a **sidecar service** (separate Docker container) and communicates with Vyasa core via HTTP only. This maintains clear license boundaries:
+
+- **Vyasa core**: Remains under its own license
+- **Firecrawl sidecar**: Runs as a separate service (AGPL-licensed)
+- **Communication**: HTTP requests only (standard protocol, not code dependency)
+
+#### Browser Automation Boundary
+
+**Playwright** is only allowed in:
+- ✅ Console E2E tests (`src/console/e2e/`)
+- ✅ Inside Firecrawl container (Firecrawl's internal use)
+
+**Playwright is FORBIDDEN in:**
+- ❌ Vyasa orchestrator runtime code (`src/orchestrator/`)
+- ❌ Any core Python modules
+- ❌ Integration tests that run in Vyasa containers
+
+### AGPL License Boundary: Firecrawl Integration
 
 #### Allowed Patterns
 
@@ -64,9 +85,45 @@ import firecrawl  # FORBIDDEN
 
 #### Enforcement
 
+- **Automated Tests**: `test_firecrawl_boundary.py` scans codebase for forbidden imports
 - **Code Reviews**: All PRs are checked for Firecrawl SDK imports
 - **Linting**: Use grep/ripgrep to detect `from firecrawl` or `import firecrawl`
-- **Tests**: Integration tests verify HTTP-only communication
+- **CI/CD**: Test suite fails if forbidden imports are detected
+
+Run the boundary test:
+```bash
+pytest src/tests/unit/orchestrator/test_firecrawl_boundary.py -v
+```
+
+### Domain Allowlist Policy
+
+**⚠️ CRITICAL: Do not broaden the allowlist casually.**
+
+The web augmentation system enforces a **strict allowlist policy** to ensure only high-fidelity sources enter the knowledge graph:
+
+- **Default Allowlist**: Includes `.gov`, `.edu`, `.org`, `.com`, `.net` (with quality scoring)
+- **Configuration**: Set via `WEB_DOMAIN_ALLOWLIST` in `deploy/.env`
+- **Enforcement Points**: Search endpoint, queue endpoint, and `AugmentationOrchestrator`
+
+#### Why This Matters
+
+- **Quality Control**: Prevents low-quality or unreliable sources from entering the knowledge graph
+- **Quota Efficiency**: Ensures quota is used only for high-fidelity sources
+- **Safety**: Reduces risk of misinformation or unreliable claims
+
+#### Adding Domains to Allowlist
+
+If you need to add a domain to the allowlist:
+
+1. **Justify the addition**: Explain why the domain is high-fidelity and necessary
+2. **Update configuration**: Add to `WEB_DOMAIN_ALLOWLIST` in `deploy/.env.example`
+3. **Update documentation**: Document the addition in `docs/configuration/config-reference.md`
+4. **Code review**: All allowlist changes require explicit approval
+
+**Do not**:
+- Add domains without justification
+- Add social media sites or low-quality sources
+- Bypass allowlist checks in code
 
 #### Why This Matters
 

@@ -3,6 +3,9 @@ Domain policy filtering for web augmentation.
 
 Filters URLs based on allowlist/blocklist configuration,
 aligning with Vyasa's safety and governance principles.
+
+Supports wildcard patterns (e.g., *.gov, *.nature.com) for flexible
+domain matching while maintaining strict filtering.
 """
 
 import re
@@ -34,13 +37,17 @@ def parse_domain_lists(
         for domain in allowlist_str.split(","):
             domain = domain.strip()
             if domain:
-                allowlist.add(_normalize_domain(domain))
+                norm = _normalize_domain(domain)
+                if norm:
+                    allowlist.add(norm)
     
     if blocklist_str:
         for domain in blocklist_str.split(","):
             domain = domain.strip()
             if domain:
-                blocklist.add(_normalize_domain(domain))
+                norm = _normalize_domain(domain)
+                if norm:
+                    blocklist.add(norm)
     
     return allowlist, blocklist
 
@@ -54,24 +61,20 @@ def _normalize_domain(domain: str) -> str:
     Returns:
         Normalized domain (lowercase, no www., no protocol, no path)
     """
-    # Remove protocol if present
-    if "://" in domain:
-        domain = domain.split("://", 1)[1]
-    
-    # Remove path if present
-    if "/" in domain:
-        domain = domain.split("/", 1)[0]
-    
-    # Remove port if present
-    if ":" in domain:
-        domain = domain.split(":", 1)[0]
-    
-    # Remove www. prefix
-    domain = domain.lower().strip()
-    if domain.startswith("www."):
-        domain = domain[4:]
-    
-    return domain
+    # Prepend scheme if missing so urlparse can extract hostname
+    candidate = domain.strip()
+    if not candidate:
+        return ""
+    if "://" not in candidate:
+        candidate = f"//{candidate}"
+    parsed = urlparse(candidate)
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    # Allow only hostname characters (letters, digits, dots, hyphens)
+    if not re.fullmatch(r"[a-z0-9.-]+", host):
+        return ""
+    return host
 
 
 def _extract_domain(url: str) -> str:
@@ -84,13 +87,135 @@ def _extract_domain(url: str) -> str:
         Normalized domain string
     """
     try:
-        parsed = urlparse(url)
-        domain = parsed.netloc or parsed.path.split("/")[0]
+        parsed = urlparse(url if "://" in url else f"//{url}")
+        domain = parsed.hostname or ""
         return _normalize_domain(domain)
     except Exception as e:
         logger.warning(f"Failed to parse URL {url}: {e}")
         # Fallback: try to extract domain manually
         return _normalize_domain(url)
+
+
+def domain_matches(pattern: str, domain: str) -> bool:
+    """Check if a domain matches a pattern (supports wildcard prefix).
+    
+    Supports:
+    - Wildcard prefix: `*.gov` matches `fda.gov`, `www.fda.gov`, `cdc.gov`
+    - Exact match: `nature.com` matches only `nature.com` (not `www.nature.com` unless pattern is `*.nature.com`)
+    
+    Args:
+        pattern: Pattern string (may start with `*.` for wildcard)
+        domain: Normalized domain string to match
+    
+    Returns:
+        True if domain matches pattern, False otherwise
+    """
+    if not pattern or not domain:
+        return False
+    
+    pattern = pattern.strip().lower()
+    domain = domain.lower()
+    
+    # Wildcard prefix pattern (e.g., *.gov, *.nature.com)
+    if pattern.startswith("*."):
+        # Remove wildcard prefix
+        suffix = pattern[2:]  # Remove "*."
+        # Match if domain ends with suffix (with optional leading dot)
+        # Examples: *.gov matches fda.gov, www.fda.gov, cdc.gov
+        #           *.nature.com matches www.nature.com, nature.com (if normalized)
+        if domain == suffix or domain.endswith("." + suffix):
+            return True
+    
+    # Exact match
+    if pattern == domain:
+        return True
+    
+    return False
+
+
+def default_allowlist() -> List[str]:
+    """Return default Tier 1 domain allowlist for high-fidelity sources.
+    
+    Returns:
+        List of domain patterns (wildcard or exact) for Tier 1 sources
+    """
+    return [
+        # Academic and research institutions
+        "*.edu",
+        "*.ac.uk",
+        "*.ac.jp",
+        # Government sources
+        "*.gov",
+        "*.gov.uk",
+        "*.europa.eu",
+        # Scientific publishers
+        "*.nature.com",
+        "*.science.org",
+        "*.cell.com",
+        "*.elsevier.com",
+        "*.springer.com",
+        "*.ieee.org",
+        "*.acm.org",
+        "*.arxiv.org",
+        # Medical and health
+        "*.nih.gov",
+        "*.who.int",
+        "*.cdc.gov",
+        "*.fda.gov",
+        # International organizations
+        "*.un.org",
+        "*.unesco.org",
+        "*.oecd.org",
+        "*.worldbank.org",
+    ]
+
+
+def filter_urls_by_allowlist(
+    urls: List[str],
+    allowlist_patterns: List[str],
+) -> List[str]:
+    """Strictly filter URLs by allowlist patterns (only allowlisted domains pass).
+    
+    This is a strict filter: any URL not matching an allowlist pattern is dropped.
+    Preserves deterministic ordering (stable sort by original position).
+    
+    Args:
+        urls: List of URLs to filter
+        allowlist_patterns: List of domain patterns (wildcard or exact)
+    
+    Returns:
+        Filtered list of URLs (preserves original order, only allowlisted domains)
+    """
+    if not urls:
+        return []
+    
+    if not allowlist_patterns:
+        # Empty allowlist means no URLs allowed (strict mode)
+        return []
+    
+    filtered: List[str] = []
+    
+    for url in urls:
+        if not url or not isinstance(url, str):
+            continue
+        
+        domain = _extract_domain(url)
+        if not domain:
+            continue
+        
+        # Check if domain matches any allowlist pattern
+        matched = False
+        for pattern in allowlist_patterns:
+            if domain_matches(pattern, domain):
+                matched = True
+                break
+        
+        if matched:
+            filtered.append(url)
+        else:
+            logger.debug(f"Filtered URL (not in allowlist): {url} (domain: {domain})")
+    
+    return filtered
 
 
 def filter_urls(
@@ -104,6 +229,9 @@ def filter_urls(
     1. Remove URLs from blocklisted domains
     2. If allowlist is present and non-empty, only allow URLs from allowlisted domains
     3. If allowlist is empty/None, allow all except blocklisted
+    
+    Note: This function uses exact domain matching. For wildcard patterns,
+    use `filter_urls_by_allowlist()` instead.
     
     Args:
         urls: List of URLs to filter
@@ -141,4 +269,3 @@ def filter_urls(
         filtered.append(url)
     
     return filtered
-

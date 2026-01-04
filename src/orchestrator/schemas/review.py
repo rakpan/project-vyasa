@@ -60,6 +60,10 @@ class ReviewTask(BaseModel):
         default=ReviewStatus.PENDING,
         description="Current review status"
     )
+    reason: Optional[str] = Field(
+        default=None,
+        description="Reason for status (e.g., 'firecrawl_unavailable', 'no_urls_discovered')"
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when review was created"
@@ -115,6 +119,7 @@ class ReviewTask(BaseModel):
         candidate_claims: List[Claim],
         source_quality_score: float,
         status: ReviewStatus = ReviewStatus.PENDING,
+        reason: Optional[str] = None,
     ) -> "ReviewTask":
         """Create a new ReviewTask with generated UUID.
         
@@ -125,6 +130,7 @@ class ReviewTask(BaseModel):
             candidate_claims: List of candidate claims
             source_quality_score: Quality score of source (0.0 to 1.0)
             status: Initial review status (default: PENDING)
+            reason: Optional reason for status (e.g., 'firecrawl_unavailable')
         
         Returns:
             ReviewTask instance with generated review_id
@@ -138,6 +144,7 @@ class ReviewTask(BaseModel):
             candidate_claims=candidate_claims,
             source_quality_score=source_quality_score,
             status=status,
+            reason=reason,
             created_at=now,
             updated_at=now,
         )

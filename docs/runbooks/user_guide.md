@@ -20,6 +20,32 @@ The workbench provides a 3-pane interface:
 - **Center**: Manuscript editor with live graph updates
 - **Right**: Knowledge graph visualization
 
+## Web Search (Workbench)
+
+The Workbench includes a **Web Search** panel that allows you to search the web and queue URLs for review.
+
+### Web Search Restrictions
+
+**Important**: Web search results are restricted to **approved domains only**:
+- Government sites (`.gov`)
+- Educational institutions (`.edu`)
+- Organizations (`.org`)
+- Commercial sites (`.com`, `.net`) with quality scoring
+
+This restriction ensures only high-fidelity sources enter your knowledge graph. If a search returns no results, it may be because all results were filtered by the allowlist policy.
+
+### Queue for Review
+
+When you select URLs and click "Queue for Review":
+1. **Quota Check**: Each URL consumes 1 request from your monthly quota (default: 500/month)
+2. **Allowlist Filtering**: URLs are filtered to ensure only approved domains are processed
+3. **Firecrawl Scraping**: URLs are scraped via Firecrawl Cloud (retrieval only)
+4. **Claim Extraction**: Claims are extracted using Vyasa's Worker pipeline
+5. **Review Task Creation**: A `ReviewTask` is created with status `PENDING` (requires human approval)
+6. **No Direct Persistence**: Claims are **not** written to the knowledge graph until you approve them in the Review Queue
+
+**Quota Management**: If your quota is exceeded, the queue operation will fail with a `FAILED` status and reason `quota_exceeded`. You can check your quota usage in the Review Queue or by querying the `web_usage` collection in ArangoDB.
+
 ## Handling Disagreements
 
 When the system detects conflicting evidence or requires human judgment, review tasks are created in the **Review Queue**.

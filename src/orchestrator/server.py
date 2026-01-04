@@ -87,6 +87,8 @@ app.register_blueprint(claims_bp)
 app.register_blueprint(review_bp)
 from .api.ingestion import ingestion_bp
 app.register_blueprint(ingestion_bp)
+from .api.web_search import web_search_bp
+app.register_blueprint(web_search_bp)
 workflow_app = build_workflow()
 
 # Global telemetry emitter (use factory to get singleton)
@@ -769,9 +771,45 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
         # Only ingest if we have a real PDF file path (not just a filename)
         if pdf_path and ingestion_id and file_hash and project_id:
             from pathlib import Path
-            resolved_pdf_path = Path(pdf_path).resolve()
+            # Security: Validate path before resolving to prevent path traversal
+            # Only allow paths within temp directory
             allowed_root = Path(tempfile.gettempdir()).resolve()
-            if resolved_pdf_path.is_file() and allowed_root in resolved_pdf_path.parents:
+            try:
+                # Security: Validate path before resolving to prevent path traversal
+                # Normalize the path and ensure it's within allowed_root
+                input_path = Path(pdf_path)
+                
+                # For relative paths, resolve against allowed_root
+                if not input_path.is_absolute():
+                    resolved_pdf_path = (allowed_root / input_path).resolve()
+                else:
+                    # For absolute paths, resolve and then validate
+                    resolved_pdf_path = input_path.resolve()
+                
+                # Security check: Ensure resolved path is within allowed_root (prevents path traversal)
+                # Use try/except for is_relative_to (Python 3.9+) or fallback to string comparison
+                try:
+                    # Python 3.9+ has is_relative_to which is more reliable
+                    if not resolved_pdf_path.is_relative_to(allowed_root):
+                        logger.warning(f"Path traversal attempt blocked: {pdf_path}")
+                        resolved_pdf_path = None
+                except AttributeError:
+                    # Fallback for Python < 3.9: use commonpath check
+                    try:
+                        common_path = Path(os.path.commonpath([resolved_pdf_path, allowed_root]))
+                        if common_path != allowed_root:
+                            logger.warning(f"Path traversal attempt blocked: {pdf_path}")
+                            resolved_pdf_path = None
+                    except (ValueError, OSError):
+                        # Paths on different drives or invalid - block it
+                        logger.warning(f"Path traversal attempt blocked: {pdf_path}")
+                        resolved_pdf_path = None
+            except (ValueError, OSError) as e:
+                # Invalid path - log but don't expose details
+                logger.warning(f"Invalid path provided: {type(e).__name__}")
+                resolved_pdf_path = None
+            
+            if resolved_pdf_path and resolved_pdf_path.is_file() and allowed_root in resolved_pdf_path.parents:
                 try:
                     from .storage.qdrant import QdrantStorage
                     qdrant_storage = QdrantStorage()
@@ -1092,7 +1130,8 @@ def submit_workflow():
                 project_service.add_seed_file(project_id, uploaded_filename)
             except Exception as e:
                 logger.error(f"Failed to create ingestion record for {project_id}: {e}", exc_info=True)
-                return jsonify({"error": f"Failed to create ingestion record: {str(e)}"}), 500
+                # Security: Don't expose exception details to client to prevent information disclosure
+                return jsonify({"error": "Failed to create ingestion record"}), 500
 
         # Prepare initial state
         from ..state import PhaseEnum

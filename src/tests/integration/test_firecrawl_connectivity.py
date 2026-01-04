@@ -4,17 +4,29 @@ Integration tests for Firecrawl connectivity.
 Tests HTTP-only integration with Firecrawl sidecar service.
 Requires Firecrawl container to be running.
 
+**Opt-in Test**: These tests are skipped by default unless RUN_FIRECRAWL_TESTS=true is set.
+
 Run with:
-    pytest src/tests/integration/test_firecrawl_connectivity.py -v
+    # Enable Firecrawl tests
+    RUN_FIRECRAWL_TESTS=true pytest src/tests/integration/test_firecrawl_connectivity.py -v
+    
     # Or with integration marker:
-    pytest -m integration src/tests/integration/test_firecrawl_connectivity.py -v
+    RUN_FIRECRAWL_TESTS=true pytest -m integration src/tests/integration/test_firecrawl_connectivity.py -v
+
+Prerequisites:
+    1. Start stack with Firecrawl: ./scripts/run_stack.sh start --firecrawl
+    2. Set RUN_FIRECRAWL_TESTS=true environment variable
 """
 
+import os
 import pytest
 import requests
 from typing import Optional
 
 from src.orchestrator.web.firecrawl import FirecrawlBridge
+
+# Opt-in flag: tests are skipped unless RUN_FIRECRAWL_TESTS=true
+RUN_FIRECRAWL_TESTS = os.getenv("RUN_FIRECRAWL_TESTS", "false").lower() in ("true", "1", "yes")
 
 
 def _check_firecrawl_available(service_url: str = "http://localhost:3002") -> bool:
@@ -47,25 +59,44 @@ def firecrawl_bridge() -> Optional[FirecrawlBridge]:
     Returns:
         FirecrawlBridge instance, or None if service is unavailable
     """
+    # Skip if opt-in flag is not set
+    if not RUN_FIRECRAWL_TESTS:
+        pytest.skip("Firecrawl tests are opt-in. Set RUN_FIRECRAWL_TESTS=true to enable.")
+    
     service_url = "http://localhost:3002"
     
     if not _check_firecrawl_available(service_url):
-        pytest.skip("Firecrawl service not available. Start with: docker compose up firecrawl")
+        pytest.skip(
+            "Firecrawl service not available. "
+            "Start with: ./scripts/run_stack.sh start --firecrawl"
+        )
     
     return FirecrawlBridge(service_url=service_url, timeout=30)
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(not RUN_FIRECRAWL_TESTS, reason="Firecrawl tests are opt-in. Set RUN_FIRECRAWL_TESTS=true to enable.")
 class TestFirecrawlConnectivity:
-    """Integration tests for Firecrawl HTTP bridge."""
+    """Integration tests for Firecrawl HTTP bridge.
+    
+    These tests are opt-in and require:
+    1. RUN_FIRECRAWL_TESTS=true environment variable
+    2. Firecrawl sidecar running (./scripts/run_stack.sh start --firecrawl)
+    """
     
     def test_firecrawl_health_check(self):
         """Test that Firecrawl service is reachable."""
+        if not RUN_FIRECRAWL_TESTS:
+            pytest.skip("Firecrawl tests are opt-in. Set RUN_FIRECRAWL_TESTS=true to enable.")
+        
         service_url = "http://localhost:3002"
         is_available = _check_firecrawl_available(service_url)
         
         if not is_available:
-            pytest.skip("Firecrawl service not available. Start with: docker compose up firecrawl")
+            pytest.skip(
+                "Firecrawl service not available. "
+                "Start with: ./scripts/run_stack.sh start --firecrawl"
+            )
         
         assert is_available, "Firecrawl service should be reachable"
     
@@ -73,9 +104,11 @@ class TestFirecrawlConnectivity:
         """Test scraping example.com via Firecrawl.
         
         This test verifies:
-        - HTTP 200 response from Firecrawl API
+        - HTTP 200 response from Firecrawl API (implicit via successful scrape)
         - Markdown content includes "Example Domain"
         - Result structure is correct
+        
+        This is the primary end-to-end validation test for Firecrawl connectivity.
         """
         if firecrawl_bridge is None:
             pytest.skip("Firecrawl service not available")
@@ -98,12 +131,12 @@ class TestFirecrawlConnectivity:
         assert result["url"] == "https://example.com"
         assert result["domain"] == "example.com"
         
-        # Verify no error
-        assert result["error"] is None, f"Scraping should succeed, got error: {result.get('error')}"
+        # Verify no error (HTTP 200 equivalent - successful scrape)
+        assert result["error"] is None, f"Scraping should succeed (HTTP 200), got error: {result.get('error')}"
         
-        # Verify markdown content
+        # Verify markdown content contains "Example Domain"
         assert result["markdown"], "Markdown content should not be empty"
-        assert "Example Domain" in result["markdown"] or "example" in result["markdown"].lower(), \
+        assert "Example Domain" in result["markdown"], \
             f"Markdown should include 'Example Domain', got: {result['markdown'][:200]}"
         
         # Verify timestamp format
@@ -112,6 +145,9 @@ class TestFirecrawlConnectivity:
     
     def test_firecrawl_scrape_multiple_urls(self, firecrawl_bridge):
         """Test scraping multiple URLs (partial success handling)."""
+        if not RUN_FIRECRAWL_TESTS:
+            pytest.skip("Firecrawl tests are opt-in. Set RUN_FIRECRAWL_TESTS=true to enable.")
+        
         if firecrawl_bridge is None:
             pytest.skip("Firecrawl service not available")
         
@@ -138,6 +174,9 @@ class TestFirecrawlConnectivity:
     
     def test_firecrawl_scrape_handles_invalid_url(self, firecrawl_bridge):
         """Test that invalid URLs are handled gracefully."""
+        if not RUN_FIRECRAWL_TESTS:
+            pytest.skip("Firecrawl tests are opt-in. Set RUN_FIRECRAWL_TESTS=true to enable.")
+        
         if firecrawl_bridge is None:
             pytest.skip("Firecrawl service not available")
         
@@ -162,6 +201,9 @@ class TestFirecrawlConnectivity:
     
     def test_firecrawl_scrape_handles_failed_urls_gracefully(self, firecrawl_bridge):
         """Test that failed URLs don't abort the entire batch."""
+        if not RUN_FIRECRAWL_TESTS:
+            pytest.skip("Firecrawl tests are opt-in. Set RUN_FIRECRAWL_TESTS=true to enable.")
+        
         if firecrawl_bridge is None:
             pytest.skip("Firecrawl service not available")
         

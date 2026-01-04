@@ -39,7 +39,11 @@ OPIK_COMPOSE="$PROJECT_ROOT/deploy/docker-compose.opik.yml"
 
 usage() {
   cat <<EOF
-Usage: $0 <start|stop|restart|up|down|logs|status|backup|verify> [--opik] [--hot|--dev-console] [--detach] [service]
+Usage: $0 <start|stop|restart|up|down|logs|status|backup|verify> [--opik] [--firecrawl] [--hot|--dev-console] [--detach] [service]
+
+Optional Services:
+  --opik                   Enable Opik observability services
+  --firecrawl              Enable Firecrawl web scraping sidecar (requires FIRECRAWL_IMAGE)
 
 Hot Reload Options:
   --hot, --dev-console     Enable hot reload for console (mounts local source, auto-refresh on changes)
@@ -48,6 +52,8 @@ Hot Reload Options:
 Examples:
   $0 start                 # start Vyasa in detached mode
   $0 start --opik          # start Vyasa + Opik in detached mode
+  $0 start --firecrawl     # start Vyasa + Firecrawl (requires FIRECRAWL_IMAGE)
+  $0 start --opik --firecrawl  # start Vyasa + Opik + Firecrawl
   $0 start --hot           # start Vyasa with console hot reload enabled
   $0 restart --hot         # restart with console hot reload
   $0 up --detach           # start Vyasa (explicit up)
@@ -68,6 +74,7 @@ COMMAND="${1:-}"
 shift || true
 
 USE_OPIK=false
+USE_FIRECRAWL=false
 DEV_CONSOLE=false
 DETACH=""
 
@@ -79,6 +86,7 @@ fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --opik) USE_OPIK=true ;;
+    --firecrawl) USE_FIRECRAWL=true ;;
     --dev-console|--hot|--dev) DEV_CONSOLE=true ;;
     --detach|-d) DETACH="-d" ;;
     *) break ;;
@@ -109,6 +117,15 @@ compose_cmd() {
   echo "${COMPOSE[@]}" "${files[@]}"
 }
 
+# Helper to get profile flags for compose commands
+compose_profiles() {
+  local profiles=()
+  if $USE_FIRECRAWL; then
+    profiles+=("--profile" "firecrawl")
+  fi
+  echo "${profiles[@]}"
+}
+
 # Print dev console status
 if $DEV_CONSOLE; then
   echo "🔥 Console hot reload enabled:"
@@ -119,11 +136,41 @@ if $DEV_CONSOLE; then
   echo ""
 fi
 
-# Print config summary (check USE_OPIK flag in addition to env vars)
-if $USE_OPIK; then
+# Validate Firecrawl configuration if enabled
+if $USE_FIRECRAWL; then
+  # Load FIRECRAWL_IMAGE from .env if not already set
+  if [ -z "${FIRECRAWL_IMAGE:-}" ] && [ -f "$ENV_FILE" ]; then
+    set +u
+    # shellcheck source=/dev/null
+    source "$ENV_FILE" 2>/dev/null || true
+    set -u
+  fi
+  
+  if [ -z "${FIRECRAWL_IMAGE:-}" ]; then
+    echo "Error: --firecrawl flag requires FIRECRAWL_IMAGE to be set in deploy/.env" >&2
+    echo "       Example: FIRECRAWL_IMAGE=firecrawl:local" >&2
+    echo "       Build Firecrawl: git clone https://github.com/firecrawl/firecrawl.git && docker build -t firecrawl:local ." >&2
+    exit 1
+  fi
+  
+  # Verify image exists locally (warning only, not fatal)
+  if ! docker image inspect "${FIRECRAWL_IMAGE}" >/dev/null 2>&1; then
+    echo "Warning: FIRECRAWL_IMAGE=${FIRECRAWL_IMAGE} not found locally." >&2
+    echo "         Firecrawl container will fail to start." >&2
+    echo "         Build it: git clone https://github.com/firecrawl/firecrawl.git && docker build -t ${FIRECRAWL_IMAGE} ." >&2
+  fi
+fi
+
+# Print config summary (check USE_OPIK and USE_FIRECRAWL flags)
+if $USE_OPIK || $USE_FIRECRAWL; then
   echo "Config summary:"
   echo "  Vyasa: compose=deploy/docker-compose.yml"
-  echo "  Opik: enabled (--opik flag)"
+  if $USE_OPIK; then
+    echo "  Opik: enabled (--opik flag)"
+  fi
+  if $USE_FIRECRAWL; then
+    echo "  Firecrawl: enabled (--firecrawl flag, image: ${FIRECRAWL_IMAGE:-not set})"
+  fi
 else
   print_config_summary
 fi
@@ -352,7 +399,7 @@ case "$COMMAND" in
       echo "Creating network $NETWORK_NAME..."
       docker network create "$NETWORK_NAME" || true
     fi
-    $(compose_cmd) up $DETACH
+    $(compose_cmd) up $DETACH $(compose_profiles)
     
     # Wait for Opik services to be ready (if Opik is enabled and detached)
     if $USE_OPIK && [ -n "$DETACH" ]; then
@@ -379,11 +426,11 @@ case "$COMMAND" in
     ;;
   stop)
     # Use down with --remove-orphans and ignore errors if network doesn't exist
-    $(compose_cmd) down --remove-orphans 2>/dev/null || true
+    $(compose_cmd) down --remove-orphans $(compose_profiles) 2>/dev/null || true
     ;;
   down)
     # Use down with --remove-orphans and ignore errors if network doesn't exist
-    $(compose_cmd) down --remove-orphans 2>/dev/null || true
+    $(compose_cmd) down --remove-orphans $(compose_profiles) 2>/dev/null || true
     ;;
   restart)
     # Stop services first (this will free up ports)
@@ -403,7 +450,7 @@ case "$COMMAND" in
     # Start services again
     echo "Starting services..."
     DETACH="${DETACH:--d}"
-    $(compose_cmd) up $DETACH
+    $(compose_cmd) up $DETACH $(compose_profiles)
     
     # Wait for Opik services to be ready (if Opik is enabled)
     if $USE_OPIK && [ -n "$DETACH" ]; then
@@ -429,10 +476,10 @@ case "$COMMAND" in
     fi
     ;;
   logs)
-    $(compose_cmd) logs -f ${SERVICE:+$SERVICE}
+    $(compose_cmd) logs -f $(compose_profiles) ${SERVICE:+$SERVICE}
     ;;
   status)
-    $(compose_cmd) ps
+    $(compose_cmd) ps $(compose_profiles)
     ;;
   backup)
     # Run full backup (ArangoDB + Qdrant)
