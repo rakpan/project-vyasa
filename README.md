@@ -84,6 +84,10 @@ The result is a workflow where AI accelerates the grunt work of extraction and o
 - Observability/Opik: `docs/architecture/05-telemetry-and-observability.md`
 - Node module organization: `docs/architecture/module-map.md`
 
+## Operations & Maintenance
+- **Backups**: `docs/runbooks/backups.md` - Daily automated backups (ArangoDB + Qdrant) with restore procedures and weekly off-host sync
+- DGX runtime: `deploy/runbooks/dgx-runtime.md` - Resource management and monitoring
+
 ---
 
 ## The Name: Veda Vyasa

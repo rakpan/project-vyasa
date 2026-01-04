@@ -39,7 +39,7 @@ OPIK_COMPOSE="$PROJECT_ROOT/deploy/docker-compose.opik.yml"
 
 usage() {
   cat <<EOF
-Usage: $0 <start|stop|restart|up|down|logs|status> [--opik] [--hot|--dev-console] [--detach] [service]
+Usage: $0 <start|stop|restart|up|down|logs|status|backup|verify> [--opik] [--hot|--dev-console] [--detach] [service]
 
 Hot Reload Options:
   --hot, --dev-console     Enable hot reload for console (mounts local source, auto-refresh on changes)
@@ -55,6 +55,8 @@ Examples:
   $0 stop                  # stop all Vyasa services
   $0 down --opik           # stop all including Opik
   $0 logs --opik opik-api  # tail Opik API logs
+  $0 backup                # run full backup (ArangoDB + Qdrant)
+  $0 verify                # verify backups exist and are valid
 
 Hot Reload:
   When enabled, changes to src/console/ are automatically detected and the page
@@ -184,8 +186,8 @@ if [ -f "$PROJECT_ROOT/deploy/.env" ]; then
 fi
 
 # Check critical ports (best effort - may not catch all conflicts)
-# Skip port check for stop/down/restart commands (ports will be freed when services stop)
-if [[ "$COMMAND" != "stop" && "$COMMAND" != "down" && "$COMMAND" != "restart" ]]; then
+# Skip port check for stop/down/restart/backup/verify commands
+if [[ "$COMMAND" != "stop" && "$COMMAND" != "down" && "$COMMAND" != "restart" && "$COMMAND" != "backup" && "$COMMAND" != "verify" ]]; then
   PORT_DRAFTER="${PORT_DRAFTER:-11435}"
   if ! check_port_conflict "$PORT_DRAFTER" "drafter"; then
     echo "" >&2
@@ -431,6 +433,44 @@ case "$COMMAND" in
     ;;
   status)
     $(compose_cmd) ps
+    ;;
+  backup)
+    # Run full backup (ArangoDB + Qdrant)
+    BACKUP_SCRIPT="$SCRIPT_DIR/backup_all.sh"
+    if [ ! -f "$BACKUP_SCRIPT" ]; then
+      echo "Error: Backup script not found: $BACKUP_SCRIPT" >&2
+      exit 1
+    fi
+    if [ ! -x "$BACKUP_SCRIPT" ]; then
+      echo "Error: Backup script is not executable: $BACKUP_SCRIPT" >&2
+      exit 1
+    fi
+    echo "Running full backup (ArangoDB + Qdrant)..."
+    cd "$PROJECT_ROOT"
+    if ! "$BACKUP_SCRIPT"; then
+      echo "Error: Backup failed. Check logs: /var/log/vyasa-backups.log" >&2
+      exit 1
+    fi
+    echo "Backup completed successfully"
+    ;;
+  verify)
+    # Verify backups exist and are valid
+    VERIFY_SCRIPT="$SCRIPT_DIR/verify_backups.sh"
+    if [ ! -f "$VERIFY_SCRIPT" ]; then
+      echo "Error: Verification script not found: $VERIFY_SCRIPT" >&2
+      exit 1
+    fi
+    if [ ! -x "$VERIFY_SCRIPT" ]; then
+      echo "Error: Verification script is not executable: $VERIFY_SCRIPT" >&2
+      exit 1
+    fi
+    echo "Verifying backups..."
+    cd "$PROJECT_ROOT"
+    if ! "$VERIFY_SCRIPT"; then
+      echo "Error: Backup verification failed. Check logs: /var/log/vyasa-backups.log" >&2
+      exit 1
+    fi
+    echo "All backups verified successfully"
     ;;
   *)
     usage
