@@ -119,12 +119,13 @@ class QdrantStorage:
         except ImportError:
             raise RuntimeError("pymupdf is required for PDF chunking")
         
-        pdf_path_obj = Path(pdf_path)
-        if not pdf_path_obj.exists():
-            raise FileNotFoundError(f"PDF not found: {pdf_path}")
+        pdf_path_obj = Path(pdf_path).resolve()
+        allowed_root = Path(tempfile.gettempdir()).resolve()
+        if not (pdf_path_obj.is_file() and allowed_root in pdf_path_obj.parents):
+            raise FileNotFoundError("PDF not found or path not allowed")
         
         # Open PDF and extract chunks with metadata
-        doc = pymupdf.open(pdf_path)
+        doc = pymupdf.open(str(pdf_path_obj))
         chunks: List[Dict[str, Any]] = []
         chunk_points: List[PointStruct] = []
         
@@ -519,4 +520,3 @@ class QdrantStorage:
         except Exception as e:
             logger.error(f"Failed to retrieve chunks from Qdrant: {e}", exc_info=True)
             return []
-

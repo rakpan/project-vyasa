@@ -15,6 +15,7 @@ Vyasa is not a chatbot. It is a platform for building and governing research art
 - Orchestrator runtime/bridge: `docs/architecture/orchestrator-architecture-ops.md` and `docs/orchestrator-guide.md`
 - UX standards: `docs/ux-standards.md` (checklist) and `docs/ux-guide.md` (examples)
 - Config/env flags: `docs/configuration/config-reference.md`
+- Deployment: `docs/deployment.md` — Service setup and optional components
 - Testing: `docs/guides/testing.md`
 - Refactors/migrations: `docs/refactors/` and `docs/migrations/`
 
@@ -83,6 +84,47 @@ The result is a workflow where AI accelerates the grunt work of extraction and o
 - Ports/services and resource optimization: `docs/architecture/04-resource-optimization.md`
 - Observability/Opik: `docs/architecture/05-telemetry-and-observability.md`
 - Node module organization: `docs/architecture/module-map.md`
+- Web Augmentation (optional): `docs/decisions/ADR-004-web-augmentation-sidecar.md` — Trigger-driven web augmentation via Firecrawl sidecar
+
+### Web Augmentation Loop (Optional)
+
+When enabled (`WEB_AUGMENTATION_ENABLED=true`), Vyasa can augment local knowledge with web sources:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Vyasa Core (Orchestrator)                │
+│                                                             │
+│  DisputeContext → Discovery → Normalization → Intelligence │
+│       ↓              ↓            ↓              ↓          │
+│   Trigger      Search URLs   Normalize      Extract Claims │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+                          │
+                          │ HTTP only (no SDK imports)
+                          ↓
+┌─────────────────────────────────────────────────────────────┐
+│              Firecrawl Sidecar (CPU-only)                   │
+│                                                             │
+│                    Retrieval: Scrape URLs                   │
+│                    Returns: Markdown content               │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+                          │
+                          │ Markdown
+                          ↓
+┌─────────────────────────────────────────────────────────────┐
+│                    Vyasa Core (Governance)                  │
+│                                                             │
+│              ReviewTask(PENDING) → Human Approval          │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key Boundaries:**
+- **Vyasa Core decides** (when/what to augment)
+- **Firecrawl retrieves** (HTTP-only, no SDK imports)
+- **GPUs reserved** for worker/brain inference (Firecrawl CPU-only)
+- **Feature flag** controls enablement (disabled by default)
 
 ## Operations & Maintenance
 - **Backups**: `docs/runbooks/backups.md` - Daily automated backups (ArangoDB + Qdrant) with restore procedures and weekly off-host sync

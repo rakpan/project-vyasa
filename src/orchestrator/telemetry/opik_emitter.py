@@ -80,9 +80,12 @@ class OpikEmitter:
             )
             response.raise_for_status()
         except requests.Timeout:
-            logger.debug(f"Opik POST timeout (ignored): {url}", extra={"payload": {"timeout": client["timeout"]}})
+            logger.debug("Opik POST timeout (ignored)")
         except Exception as exc:  # pragma: no cover - best effort
-            logger.debug(f"Opik POST failed (ignored): {exc}", exc_info=True, extra={"payload": {"url": url, "error": str(exc)}})
+            logger.debug(
+                "Opik POST failed (ignored)",
+                extra={"payload": {"error_type": type(exc).__name__}},
+            )
     
     def emit_node_start(
         self,
@@ -245,4 +248,3 @@ def get_opik_emitter() -> OpikEmitter:
     if _opik_emitter is None:
         _opik_emitter = OpikEmitter()
     return _opik_emitter
-

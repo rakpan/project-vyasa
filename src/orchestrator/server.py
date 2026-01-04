@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import tempfile
+import os
 from flask import Flask, request, jsonify, Response, stream_with_context
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
@@ -58,6 +59,7 @@ from .api.jobs import _get_job_version
 from .api.jobs import jobs_bp
 from .api.manuscript import manuscript_bp
 from .api.claims import claims_bp
+from .api.review import review_bp
 from .services.events import publish_event, get_event_queue, remove_event_queue
 from .services.metrics import calculate_quality_metrics, store_quality_metrics, emit_reprocess_completion_telemetry
 from .services.triples import extract_nodes_from_triples, extract_edges_from_triples
@@ -82,6 +84,7 @@ app.register_blueprint(knowledge_bp)
 app.register_blueprint(jobs_bp)
 app.register_blueprint(manuscript_bp)
 app.register_blueprint(claims_bp)
+app.register_blueprint(review_bp)
 from .api.ingestion import ingestion_bp
 app.register_blueprint(ingestion_bp)
 workflow_app = build_workflow()
@@ -766,12 +769,14 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
         # Only ingest if we have a real PDF file path (not just a filename)
         if pdf_path and ingestion_id and file_hash and project_id:
             from pathlib import Path
-            if Path(pdf_path).exists():
+            resolved_pdf_path = Path(pdf_path).resolve()
+            allowed_root = Path(tempfile.gettempdir()).resolve()
+            if resolved_pdf_path.is_file() and allowed_root in resolved_pdf_path.parents:
                 try:
                     from .storage.qdrant import QdrantStorage
                     qdrant_storage = QdrantStorage()
                     chunk_count, chunk_metadata = qdrant_storage.ingest_document_chunks(
-                        pdf_path=pdf_path,
+                        pdf_path=str(resolved_pdf_path),
                         file_hash=file_hash,
                         ingestion_id=ingestion_id,
                         project_id=project_id,
@@ -796,7 +801,7 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
                     logger.warning(
                         f"Failed to ingest PDF chunks into Qdrant: {e}",
                         exc_info=True,
-                        extra={"payload": {"ingestion_id": ingestion_id, "pdf_path": pdf_path}}
+                        extra={"payload": {"ingestion_id": ingestion_id}}
                     )
                     # Continue workflow even if Qdrant ingestion fails (graceful degradation)
 

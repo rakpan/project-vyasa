@@ -1,8 +1,23 @@
 """
-Orchestrator configuration for expert routing.
+Orchestrator configuration for expert routing and web augmentation.
 """
 
 from __future__ import annotations
+
+
+# Web Augmentation Configuration
+# These are re-exported from shared.config for convenience
+# but the canonical source is src/shared/config.py
+from ..shared.config import (
+    _env as _get_env,
+)
+
+# Web augmentation feature flag
+WEB_AUGMENTATION_ENABLED = _get_env("WEB_AUGMENTATION_ENABLED", "false").lower() in ("true", "1", "yes")
+
+# Web augmentation limits
+WEB_MAX_URLS = int(_get_env("WEB_MAX_URLS", "10"))
+WEB_MAX_PAGES = int(_get_env("WEB_MAX_PAGES", "25"))
 
 
 class ExpertType:

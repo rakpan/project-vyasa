@@ -14,6 +14,9 @@ from langgraph.graph.message import add_messages
 
 from ...project.types import ProjectConfig
 from .claims import Claim, DocumentChunk
+from .disputes import DisputeContext
+from .evidence import NormalizedEvidenceUnit
+from .review import ReviewTask
 from ...shared.schema import ConflictItem, ManuscriptBlock
 from ..prompts.models import PromptUse
 
@@ -78,6 +81,10 @@ class ResearchState(BaseModel):
     context_sources: Optional[Dict[str, Any]] = Field(None, description="Context sources for RAG")
     selected_reference_ids: Optional[List[str]] = Field(None, description="Selected reference IDs for synthesis")
     conflict_flags: Optional[List[Dict[str, Any]]] = Field(None, description="Conflict flags from Critic")
+    
+    # Web Augmentation fields (optional)
+    dispute_context: Optional[DisputeContext] = Field(None, description="Dispute context triggering web augmentation")
+    review_task_id: Optional[str] = Field(None, description="Review task identifier for web augmentation claims")
     
     # Prompt manifest for reproducibility
     prompt_manifest: Dict[str, PromptUse] = Field(
@@ -145,6 +152,9 @@ class ResearchState(BaseModel):
             data["conflicts"] = [conflict.model_dump(mode="python") if hasattr(conflict, "model_dump") else conflict for conflict in data["conflicts"]]
         if data.get("manuscript_blocks"):
             data["manuscript_blocks"] = [block.model_dump(mode="python") if hasattr(block, "model_dump") else block for block in data["manuscript_blocks"]]
+        # Convert dispute_context to dict if it's a model
+        if data.get("dispute_context") and hasattr(data["dispute_context"], "model_dump"):
+            data["dispute_context"] = data["dispute_context"].model_dump(mode="python")
         return data
     
     @classmethod
@@ -209,6 +219,11 @@ class ResearchState(BaseModel):
                 k: PromptUse(**v) if isinstance(v, dict) else v
                 for k, v in data["prompt_manifest"].items()
             }
+        
+        # Convert dispute_context from dict to model if needed
+        if "dispute_context" in data and isinstance(data["dispute_context"], dict):
+            from .disputes import DisputeContext
+            data["dispute_context"] = DisputeContext(**data["dispute_context"])
         
         return cls(**data)
     

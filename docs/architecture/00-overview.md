@@ -27,6 +27,25 @@ flowchart LR
 - Telemetry hooks: `src/orchestrator/nodes.py`
 - Eval harness: `src/tests/eval/test_eval_harness.py`
 
+## Web Augmentation Loop (Optional)
+
+When `WEB_AUGMENTATION_ENABLED=true`, Vyasa can augment local knowledge with web sources via a sidecar architecture:
+
+**Trigger-Driven Flow:**
+1. **Discovery** (Vyasa Core): `DisputeContext` → search queries → candidate URLs
+2. **Retrieval** (Firecrawl Sidecar): URLs → HTTP scrape → markdown content
+3. **Normalization** (Vyasa Core): Markdown → `NormalizedEvidenceUnit`
+4. **Intelligence** (Vyasa Core): Evidence → Worker extraction → candidate claims
+5. **Governance** (Vyasa Core): Claims → `ReviewTask(PENDING)` → human approval
+
+**Critical Boundaries:**
+- **HTTP-only communication** with Firecrawl (no SDK imports)
+- **Firecrawl CPU-only** (GPUs reserved for worker/brain)
+- **Feature flag** controls enablement (disabled by default)
+- **Review Queue** requires human approval before knowledge graph writes
+
+See [ADR-004: Web Augmentation Sidecar](../decisions/ADR-004-web-augmentation-sidecar.md) for full architectural details.
+
 ## Docs map
 - [01-model-inventory](01-model-inventory.md)
 - [02-model-registry-and-router](02-model-registry-and-router.md)

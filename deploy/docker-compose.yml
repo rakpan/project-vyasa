@@ -242,6 +242,7 @@ services:
       - DRAFTER_URL=http://drafter:11435
       - MEMORY_URL=http://graph:${PORT_MEMORY}
       - VECTOR_URL=http://vector:${PORT_VECTOR}
+      - FIRECRAWL_SERVICE_URL=${FIRECRAWL_SERVICE_URL:-http://firecrawl:3002}
       - ARANGODB_DB=${GRAPH_DB_NAME}
       - ARANGODB_USER=${ARANGODB_USER}
       - ARANGODB_PASSWORD=${ARANGO_ROOT_PASSWORD}
@@ -260,6 +261,28 @@ services:
       test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('localhost',8000)); s.close()"]
       interval: 30s
       timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Firecrawl - Web scraping sidecar (CPU-only, optional)
+  # HTTP-only integration preserves AGPL boundaries (no SDK imports in Vyasa core)
+  # Used for web augmentation when WEB_AUGMENTATION_ENABLED=true
+  # Note: Firecrawl includes Playwright internally; no separate browser service needed
+  firecrawl:
+    image: mendableai/firecrawl:latest
+    cpuset: "0-9"
+    mem_limit: "4g"
+    ports:
+      - "${PORT_FIRECRAWL:-3002}:3002"
+    environment:
+      - PORT=3002
+    networks:
+      - vyasa-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
       retries: 3
       start_period: 15s
 
