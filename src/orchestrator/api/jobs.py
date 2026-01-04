@@ -5,21 +5,27 @@ Provides endpoints for:
 - Reprocessing jobs with new knowledge references
 - Comparing job versions (diff endpoint)
 - Getting conflict reports
+- Streaming job events via SSE
 """
 
 import threading
+import asyncio
+import json as json_lib
 from typing import Dict, Any, List, Optional, Set
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response, stream_with_context
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 
 from ..job_manager import create_job, get_job
 from ..job_store import get_job_record, update_job_record, get_conflict_report
 from ..state import JobStatus
-from ..telemetry import TelemetryEmitter
+from ..telemetry import TelemetryEmitter, get_telemetry_emitter
+from ..services.events import get_event_queue, remove_event_queue, publish_event
 from ...shared.logger import get_logger
 from datetime import datetime, timezone, timedelta
 
 logger = get_logger("orchestrator", __name__)
-telemetry_emitter = TelemetryEmitter()
+telemetry_emitter = get_telemetry_emitter()
 
 # Import workflow runner (avoid circular dependency by importing at function level)
 
@@ -457,3 +463,75 @@ def get_job_events(job_id: str):
             logger.warning(f"Failed to read telemetry events: {exc}", exc_info=True)
     
     return jsonify({"events": events}), 200
+
+
+@jobs_bp.route("/<job_id>/stream", methods=["GET"])
+def stream_job_events(job_id: str):
+    """Stream job events via Server-Sent Events (SSE).
+    
+    This endpoint provides real-time updates for a job, including:
+    - Node execution events
+    - Graph updates
+    - Status changes
+    
+    The frontend connects to this endpoint to receive live updates.
+    Uses the same event queue mechanism as /events/{job_id} but via Flask.
+    
+    Returns:
+        StreamingResponse with text/event-stream content type.
+    """
+    def event_generator():
+        """Generator that yields SSE events from the event queue."""
+        queue = None
+        loop = None
+        try:
+            # Get or create event queue for this job
+            queue = get_event_queue(job_id)
+            
+            # Create event loop in a thread-safe way for Flask
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Send initial connection event
+            yield f"data: {json_lib.dumps({'type': 'connected', 'job_id': job_id})}\n\n"
+            
+            # Poll queue for events (with timeout for heartbeat)
+            while True:
+                try:
+                    # Wait for event with timeout
+                    payload = loop.run_until_complete(
+                        asyncio.wait_for(queue.get(), timeout=30.0)
+                    )
+                    yield f"data: {json_lib.dumps(payload)}\n\n"
+                except asyncio.TimeoutError:
+                    # Send heartbeat to keep connection alive
+                    yield f"data: {json_lib.dumps({'type': 'heartbeat'})}\n\n"
+                except GeneratorExit:
+                    # Client disconnected
+                    break
+                except Exception as e:
+                    logger.warning(f"Error in SSE stream for job {job_id}: {e}", exc_info=True)
+                    yield f"data: {json_lib.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                    break
+        except Exception as e:
+            logger.error(f"Failed to create SSE stream for job {job_id}: {e}", exc_info=True)
+            yield f"data: {json_lib.dumps({'type': 'error', 'message': 'Failed to create stream'})}\n\n"
+        finally:
+            # Cleanup: close loop and remove event queue when client disconnects
+            if loop:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+            if job_id:
+                remove_event_queue(job_id)
+    
+    return Response(
+        stream_with_context(event_generator()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )

@@ -1,41 +1,21 @@
 """
 Event publish/subscribe service for job event streams.
 
-Manages SSE connections and async event queues for real-time job updates.
+Manages async event queues for real-time job updates via Server-Sent Events (SSE).
 Provides reset hooks for test isolation.
 """
 
 import asyncio
 import threading
-from collections import defaultdict
-from typing import Dict, Set, Any
+from typing import Dict, Any
 
 from ...shared.logger import get_logger
 
 logger = get_logger("orchestrator", __name__)
 
-# SSE event streams: job_id -> set of active connections
-_sse_connections: Dict[str, Set[threading.Event]] = defaultdict(set)
-_sse_lock = threading.Lock()
-
 # Async event queues: job_id -> asyncio.Queue
 _event_queues: Dict[str, asyncio.Queue] = {}
 _event_queues_lock = threading.Lock()
-
-
-def notify_sse_clients(job_id: str, data: Dict[str, Any]) -> None:
-    """Notify all SSE clients for a job about new data.
-    
-    Args:
-        job_id: Job identifier.
-        data: Event data to send.
-    """
-    with _sse_lock:
-        events = _sse_connections.get(job_id, set()).copy()
-    
-    # Set event to notify waiting SSE streams
-    for event in events:
-        event.set()
 
 
 def publish_event(job_id: str, payload: Dict[str, Any]) -> None:
@@ -84,15 +64,23 @@ def remove_event_queue(job_id: str) -> None:
 
 
 def reset_events() -> None:
-    """Reset all event queues and connections (for tests).
+    """Reset all event queues (for tests).
     
-    Clears all SSE connections and event queues to ensure test isolation.
+    Clears all event queues to ensure test isolation.
     """
-    with _sse_lock:
-        _sse_connections.clear()
-    
     with _event_queues_lock:
         _event_queues.clear()
     
-    logger.debug("Event queues and connections reset")
+    logger.debug("Event queues reset")
+
+
+def reset_for_tests() -> None:
+    """Reset all event queues and SSE state (for test isolation).
+    
+    This is an alias for reset_events() with a more explicit name for test fixtures.
+    Clears all event queues to prevent state leakage between tests.
+    
+    Safe to call in production (no-op if no queues exist), but intended for test teardown.
+    """
+    reset_events()
 

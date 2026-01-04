@@ -13,6 +13,17 @@ Successfully migrated Project Vyasa from React Flow v11 to v12 (`@xyflow/react`)
 
 ---
 
+## Quick Reference (Appendix)
+- Branch/tag: `git checkout -b migrate/reactflow-v12`; optional tag `pre-reactflow-v12-migration`.
+- Dependencies: `cd src/console && npm uninstall reactflow @reactflow/controls @reactflow/background && npm install @xyflow/react@^12.0.0`.
+- Imports: switch to `import { ReactFlow, ..., useStoreApi } from "@xyflow/react"` and `@xyflow/react/dist/style.css`; remove default import.
+- Node dimensions: use `node.measured?.width/height ?? node.width/height ?? 150/50` in layout/transform.
+- Event prop rename: `onEdgeUpdate` → `onReconnect` (`OnEdgeUpdateFunc` → `OnReconnect`).
+- Tests to run: `npm run build`, `npm run test`; manual checks—render, pan/zoom, selection, redline, SSE updates, dagre layout.
+- Rollback: reinstall `reactflow@^11` + controls/background packages; revert imports and width/height additions.
+
+---
+
 ## Changes Made
 
 ### 1. Dependency Updates
@@ -333,4 +344,3 @@ If issues are discovered:
 **Migration completed by**: AI Assistant  
 **Reviewed by**: [Pending]  
 **Deployed**: [Pending]
-

@@ -24,7 +24,7 @@ from ...shared.logger import get_logger
 from ...shared.role_manager import RoleRegistry
 from ...shared.utils import get_utc_now
 from ..state import JobStatus, PhaseEnum, ResearchState
-from ..telemetry import TelemetryEmitter, trace_node
+from ..telemetry import get_telemetry_emitter, trace_node
 from ..job_store import store_conflict_report, store_reframing_proposal
 from ...shared.conflict_utils import compute_conflict_hash
 from ...shared.schema import (
@@ -56,7 +56,7 @@ from .nodes import (
 from .base import wrap_prompt_with_context
 
 logger = get_logger("orchestrator", __name__)
-telemetry_emitter = TelemetryEmitter()
+telemetry_emitter = get_telemetry_emitter()
 role_registry = RoleRegistry()
 
 

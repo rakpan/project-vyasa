@@ -39,7 +39,7 @@ from arango import ArangoClient
 from .pdf_processor import process_pdf
 from .workflow import build_workflow
 from .state import ResearchState, JobStatus, DEFAULT_REVISION_COUNT
-from .telemetry import TelemetryEmitter
+from .telemetry import get_telemetry_emitter
 from .job_manager import (
     create_job,
     get_job,
@@ -58,7 +58,7 @@ from .api.jobs import _get_job_version
 from .api.jobs import jobs_bp
 from .api.manuscript import manuscript_bp
 from .api.claims import claims_bp
-from .services.events import notify_sse_clients, publish_event, get_event_queue, remove_event_queue
+from .services.events import publish_event, get_event_queue, remove_event_queue
 from .services.metrics import calculate_quality_metrics, store_quality_metrics, emit_reprocess_completion_telemetry
 from .services.triples import extract_nodes_from_triples, extract_edges_from_triples
 from .services.telemetry import emit_reframe_event
@@ -81,12 +81,13 @@ app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100MB
 app.register_blueprint(knowledge_bp)
 app.register_blueprint(jobs_bp)
 app.register_blueprint(manuscript_bp)
+app.register_blueprint(claims_bp)
 from .api.ingestion import ingestion_bp
 app.register_blueprint(ingestion_bp)
 workflow_app = build_workflow()
 
-# Global telemetry emitter
-telemetry_emitter = TelemetryEmitter()
+# Global telemetry emitter (use factory to get singleton)
+telemetry_emitter = get_telemetry_emitter()
 
 
 @app.errorhandler(RequestEntityTooLarge)
@@ -868,7 +869,8 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
             if isinstance(extracted_json, dict):
                 triples = extracted_json.get("triples", [])
                 if triples:
-                    notify_sse_clients(job_id, {
+                    # Publish graph update event to SSE subscribers
+                    publish_event(job_id, {
                         "type": "graph_update",
                         "timestamp": get_utc_now().isoformat(),
                         "step": "cartographer",

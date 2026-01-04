@@ -4,6 +4,8 @@
 
 The Ingestion API provides endpoints for managing file ingestion with duplicate detection, status polling, and retry capabilities.
 
+Configuration: see `docs/configuration/config-reference.md` for env flags (upload limits, service URLs); this page focuses on routes and payloads.
+
 ## Endpoints
 
 ### 1. Check Duplicate
@@ -223,4 +225,3 @@ Error responses include:
   "error": "Human-readable error message"
 }
 ```
-

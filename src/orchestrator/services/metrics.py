@@ -15,16 +15,14 @@ from ..telemetry import TelemetryEmitter
 
 logger = get_logger("orchestrator", __name__)
 
-# Singleton telemetry emitter instance
-_telemetry_emitter: TelemetryEmitter | None = None
-
-
 def _get_telemetry_emitter() -> TelemetryEmitter:
-    """Get or create telemetry emitter instance."""
-    global _telemetry_emitter
-    if _telemetry_emitter is None:
-        _telemetry_emitter = TelemetryEmitter()
-    return _telemetry_emitter
+    """Get telemetry emitter instance (delegates to centralized factory).
+    
+    This function now delegates to the centralized factory in telemetry.py
+    to ensure a single singleton across all modules.
+    """
+    from ..telemetry import get_telemetry_emitter
+    return get_telemetry_emitter()
 
 
 def calculate_quality_metrics(result: Dict[str, Any]) -> Dict[str, Any]:

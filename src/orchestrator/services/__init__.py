@@ -6,10 +6,11 @@ with no Flask dependencies, making them testable and reusable.
 """
 
 from .events import (
-    notify_sse_clients,
     publish_event,
     get_event_queue,
+    remove_event_queue,
     reset_events,
+    reset_for_tests,
 )
 from .metrics import (
     calculate_quality_metrics,
@@ -27,11 +28,11 @@ from .telemetry import (
 
 __all__ = [
     # Events
-    "notify_sse_clients",
     "publish_event",
     "get_event_queue",
     "remove_event_queue",
     "reset_events",
+    "reset_for_tests",
     # Metrics
     "calculate_quality_metrics",
     "store_quality_metrics",

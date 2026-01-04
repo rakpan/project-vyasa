@@ -25,14 +25,14 @@ from ...shared.role_manager import RoleRegistry
 from ..context_packer import build_extraction_layers, stub_retrieve_evidence
 from ..state import PhaseEnum, ResearchState
 from ..normalize import normalize_extracted_json
-from ..telemetry import TelemetryEmitter, trace_node
+from ..telemetry import get_telemetry_emitter, trace_node
 from ..config import ExpertType
 from arango import ArangoClient
 
 from .base import wrap_prompt_with_context
 
 logger = get_logger("orchestrator", __name__)
-telemetry_emitter = TelemetryEmitter()
+telemetry_emitter = get_telemetry_emitter()
 role_registry = RoleRegistry()
 
 # Lazy import to avoid circular dependencies

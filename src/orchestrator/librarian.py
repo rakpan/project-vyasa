@@ -11,14 +11,14 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from .telemetry import TelemetryEmitter
+from .telemetry import TelemetryEmitter, get_telemetry_emitter
 
 
 class LibrarianKernel:
     """Thin wrapper to emit retrieval telemetry from the Librarian."""
 
     def __init__(self, emitter: Optional[TelemetryEmitter] = None) -> None:
-        self.emitter = emitter or TelemetryEmitter()
+        self.emitter = emitter or get_telemetry_emitter()
 
     def emit_retrieval(
         self,

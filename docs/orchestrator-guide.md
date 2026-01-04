@@ -1,5 +1,13 @@
 # Orchestrator Guide (LangGraph 0.3.x)
 
+Scope: how to run, debug, and operate the Orchestrator (Flask/FastAPI bridge, workflows, health). For runtime layout and entrypoints, see `docs/architecture/orchestrator-architecture-ops.md`. For the full platform architecture and kernel story, see `docs/README.md`.
+
+## Prompt Registry (Opik) toggles
+- **Env flags:** `PROMPT_REGISTRY_ENABLED` (defaults to false unless set or `OPIK_ENABLED` is true); `OPIK_ENABLED` (defaults false). Both off → use local defaults.
+- **Endpoints/config:** `OPIK_BASE_URL`, `OPIK_API_KEY`, `PROMPT_TAG` (default `production`), `PROMPT_CACHE_SECONDS` (default `300`), `OPIK_TIMEOUT_SECONDS` (default `2`).
+- **Behavior:** `get_active_prompt_with_meta` caches per `(name, tag)` for `PROMPT_CACHE_SECONDS`. Failures/timeouts fall back to local defaults.
+- **Testing tip:** For fast unit tests, set `PROMPT_REGISTRY_ENABLED=0 OPIK_ENABLED=0` (or patch `requests.get` via firewall). Otherwise, long timeouts can slow runs if Opik is unreachable.
+
 ## State-First Architecture
 - **Canonical State**: `ResearchState` (TypedDict) with reducer semantics:
   - Control keys: `jobId`, `threadId`, `revision_count`

@@ -581,3 +581,41 @@ class TestDeterminismInvariants:
         test_file = Path(__file__).parent / "test_determinism_guardrails.py"
         assert test_file.exists(), "Determinism guardrails tests must exist"
 
+
+class TestEventQueueIsolation:
+    """Tests that event queues are properly isolated between tests."""
+    
+    def test_reset_for_tests_clears_queues(self):
+        """Test that reset_for_tests() clears all event queues."""
+        from src.orchestrator.services.events import get_event_queue, reset_for_tests, publish_event
+        
+        # Create a queue for a test job
+        job_id = "test-job-isolation"
+        queue = get_event_queue(job_id)
+        
+        # Publish an event
+        publish_event(job_id, {"type": "test", "data": "test"})
+        
+        # Verify queue has item
+        assert not queue.empty()
+        
+        # Reset
+        reset_for_tests()
+        
+        # Verify queue is cleared (new queue should be empty)
+        new_queue = get_event_queue(job_id)
+        assert new_queue.empty() or new_queue != queue, "Reset should clear queues"
+    
+    def test_reset_for_tests_safe_to_call_multiple_times(self):
+        """Test that reset_for_tests() is safe to call multiple times."""
+        from src.orchestrator.services.events import reset_for_tests, get_event_queue
+        
+        # Call multiple times - should not raise
+        reset_for_tests()
+        reset_for_tests()
+        reset_for_tests()
+        
+        # Should still work after multiple resets
+        queue = get_event_queue("test-job")
+        assert queue is not None
+

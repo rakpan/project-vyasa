@@ -13,7 +13,7 @@ from arango import ArangoClient
 from ...shared.logger import get_logger
 from ...shared.utils import get_utc_now
 from ..state import PhaseEnum, ResearchState
-from ..telemetry import TelemetryEmitter, trace_node
+from ..telemetry import get_telemetry_emitter, trace_node
 from ..artifacts.manifest_builder import build_manifest, persist_manifest
 from ...shared.config import (
     get_memory_url,
@@ -24,7 +24,7 @@ from ...shared.config import (
 from .nodes import validate_state_schema
 
 logger = get_logger("orchestrator", __name__)
-telemetry_emitter = TelemetryEmitter()
+telemetry_emitter = get_telemetry_emitter()
 
 
 @trace_node

@@ -328,5 +328,49 @@ def mock_cortex(mock_worker):
     return mock_worker
 
 
+@pytest.fixture(autouse=True)
+def reset_event_queues():
+    """Automatically reset event queues before and after each test.
+    
+    This fixture ensures that event queues don't leak state between tests,
+    preventing flaky test failures due to stale queues or connections.
+    
+    The fixture is autouse=True, so it runs automatically for all tests
+    without needing to be explicitly requested.
+    """
+    from src.orchestrator.services.events import reset_for_tests
+    
+    # Reset before test
+    reset_for_tests()
+    
+    yield
+    
+    # Reset after test
+    reset_for_tests()
+
+
 # Note: real_arango and real_qdrant fixtures have been moved to src/tests/integration/conftest.py
 # They are available to integration tests automatically.
+
+
+@pytest.fixture(autouse=True)
+def reset_event_queues():
+    """Automatically reset event queues before and after each test.
+    
+    This fixture ensures that event queues don't leak state between tests,
+    preventing flaky test failures due to stale queues or connections.
+    
+    The fixture is autouse=True, so it runs automatically for all tests
+    without needing to be explicitly requested.
+    
+    Safe to call in production (no-op if no queues exist), but intended for test isolation.
+    """
+    from src.orchestrator.services.events import reset_for_tests
+    
+    # Reset before test
+    reset_for_tests()
+    
+    yield
+    
+    # Reset after test
+    reset_for_tests()

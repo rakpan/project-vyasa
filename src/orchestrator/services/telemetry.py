@@ -8,24 +8,21 @@ No routing logic, pure business logic.
 from typing import Optional
 
 from ...shared.logger import get_logger
-from ..telemetry import TelemetryEmitter
+from ..telemetry import get_telemetry_emitter as _get_telemetry_emitter
 
 logger = get_logger("orchestrator", __name__)
 
-# Singleton telemetry emitter instance
-_telemetry_emitter: TelemetryEmitter | None = None
 
-
-def get_telemetry_emitter() -> TelemetryEmitter:
-    """Get or create singleton TelemetryEmitter instance.
+def get_telemetry_emitter():
+    """Get singleton TelemetryEmitter instance (delegates to centralized factory).
+    
+    This function is kept for backward compatibility but now delegates to
+    the centralized factory in telemetry.py to ensure a single singleton.
     
     Returns:
-        TelemetryEmitter instance.
+        TelemetryEmitter singleton instance.
     """
-    global _telemetry_emitter
-    if _telemetry_emitter is None:
-        _telemetry_emitter = TelemetryEmitter()
-    return _telemetry_emitter
+    return _get_telemetry_emitter()
 
 
 def emit_reframe_event(

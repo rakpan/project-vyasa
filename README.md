@@ -10,6 +10,14 @@ Vyasa is a **research workspace** optimized for NVIDIA DGX Spark. It helps resea
 
 Vyasa is not a chatbot. It is a platform for building and governing research artifacts.
 
+### Quick links
+- Architecture & system map: `docs/architecture/system-map.md`
+- Orchestrator runtime/bridge: `docs/architecture/orchestrator-architecture-ops.md` and `docs/orchestrator-guide.md`
+- UX standards: `docs/ux-standards.md` (checklist) and `docs/ux-guide.md` (examples)
+- Config/env flags: `docs/configuration/config-reference.md`
+- Testing: `docs/guides/testing.md`
+- Refactors/migrations: `docs/refactors/` and `docs/migrations/`
+
 ## What Vyasa does
 
 Vyasa helps you:
@@ -70,6 +78,14 @@ The result is a workflow where AI accelerates the grunt work of extraction and o
 
 ---
 
+## Architecture & Design (read more)
+- System map, kernels, and committee: `docs/architecture/system-map.md`
+- Ports/services and resource optimization: `docs/architecture/04-resource-optimization.md`
+- Observability/Opik: `docs/architecture/05-telemetry-and-observability.md`
+- Node module organization: `docs/architecture/module-map.md`
+
+---
+
 ## The Name: Veda Vyasa
 
 The project is named after the legendary sage **Veda Vyasa**, whose name literally means *Compiler* or *Arranger* in Sanskrit.
@@ -79,85 +95,6 @@ The project is named after the legendary sage **Veda Vyasa**, whose name literal
 **The Chronicler**  By compiling the *Mahabharata* and the *Puranas*, Vyasa bridged abstract philosophy with human narrative. Project Vyasa bridges raw documents with evidence-bound research manuscripts.
 
 **Philosophy of Arrangement**  Vyasa did not invent knowledge—he structured it. Likewise, this system does not invent facts. **It arranges evidence.**
-
----
-
-## Architecture & Design
-
-### Native Vision (Core Philosophy)
-
-- **Factory, Not Chatbot**: We build artifacts (Graphs, Manuscripts), not conversations.
-- **Project-First**: Every action is downstream of a `project_id` (Thesis + Research Questions + Anti-Scope injected into prompts).
-- **Graph = System of Record**: If it is not persisted to ArangoDB, it did not happen.
-- **Governed Outputs**: Orchestrator guarantees schema contracts; no silent failures on DB writes.
-- **Block-Based**: Manuscripts are bound blocks (Text + ClaimIDs + CitationKeys), never raw strings.
-
-### The Four Kernels (Functional Domains)
-
-1. **Project Kernel (Intent)**  
-   `ProjectConfig` (Thesis, Research Questions, Anti-Scope, Target Journal)  
-   No agent runs without it.
-
-2. **Knowledge Kernel (Evidence)**  
-   Ingestion + extraction of claims, tagged as HIGH/LOW priority by project Research Questions; High recall; tag then rank.
-
-3. **Manuscript Kernel (Production)**  
-   Blocks and Patches; every block must bind to specific Claim IDs and Citation Keys  
-   Humans accept/reject (redline review).
-
-4. **Governance Kernel (Quality)**  
-   Guards for drift, citation, evidence, and contract compliance  
-   Roles and prompts are versioned in DB, not hardcoded.
-
-### Observability (Opik) — Debugging the Committee
-
-Vyasa has multiple nodes, strict contracts, retries, and human gates. When a job fails, drifts, or produces a surprising outcome, the hard part is not “seeing logs” — it’s reconstructing *what happened across the graph*.
-
-Opik adds that missing layer:
-
-- **Trace every job end-to-end**: See each node execution, inputs/outputs, timing, and failure points across the LangGraph run.
-- **Explain disagreements**: When committee nodes diverge (Brain vs Worker vs Vision), Opik makes it visible where the path split and why.
-- **Governance verification**: Track when contract checks triggered (tone guard, precision validator, manifest enforcement) and what was changed.
-- **Regression safety**: Compare runs across prompt/model changes to see if quality improved or drift increased.
-
-Opik is optional and runs locally as part of the stack. It does not change Vyasa’s “graph as system of record” principle — it makes execution diagnosable.
-
-
-### System Architecture: Committee of Experts
-
-Project Vyasa follows a **Committee of Experts Architecture** with functional naming:
-
-| Component | Port | Function | Technology |
-|-----------|------|----------|------------|
-| **Console** | 3000 | Web UI & project management | Next.js + NextAuth |
-| **Brain** | 30000 | High-level reasoning & routing | SGLang (large model) |
-| **Worker** | 30001 | Strict JSON extraction & validation | SGLang (small model) |
-| **Vision** | 30002 | Confidence scoring & filtering | SGLang (large model) |
-| **Drafter** | 11435 | Prose generation & summarization | Ollama |
-| **Graph** | 8529 | Knowledge graph storage & retrieval | ArangoDB |
-| **Vector** | 6333 | Semantic search index | Qdrant |
-| **Embedder** | ${PORT_EMBEDDER} (default 8000 → container 80) | Text-to-vector conversion | Sentence-Transformers |
-| **Orchestrator** | 8000 | Workflow coordination & state machine | LangGraph |
-
-**Key Design Principles:**
-- All processing happens locally on your DGX (no external APIs)
-- Strict JSON extraction via SGLang regex constraints ensures schema compliance
-- Dynamic role system: prompts stored in ArangoDB, editable without redeployment
-- Optimized for DGX-class systems with unified memory and multiple GPUs
-
-### Node Module Organization
-
-The orchestrator nodes are organized by **domain responsibility** to maintain clear boundaries and prevent circular dependencies:
-
-- **`cartography.py`**: Knowledge extraction (cartographer_node)
-- **`quality.py`**: Governance and validation (critic_node, reframing_node, tone_validator_node)
-- **`synthesis.py`**: Manuscript generation (synthesizer_node, lead_counsel_node, logician_node)
-- **`export.py`**: Persistence and artifacts (saver_node, artifact_registry_node)
-- **`utils.py`**: Cross-cutting utilities (vision_node)
-- **`base.py`**: Shared prompt wrappers (wrap_prompt_with_context)
-- **`nodes.py`**: Compatibility shim with shared infrastructure utilities
-
-See [`docs/architecture/module-map.md`](docs/architecture/module-map.md) for detailed guidance on where to add new nodes and dependency rules.
 
 ---
 

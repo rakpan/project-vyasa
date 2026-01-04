@@ -1,5 +1,7 @@
 # UX Standards – Modern Factory
 
+Authoritative checklist for Vyasa Console UX. For narrative context and examples, see `docs/ux-guide.md`.
+
 ## Light Theme Tokens
 - Use Tailwind token classes only: `bg-background`, `text-foreground`, `border-border`, `bg-muted`, `text-primary`.
 - No hardcoded hex or legacy brand utilities; SVG/Canvas should inherit `currentColor` or `rgb(var(--primary))`.

@@ -20,10 +20,10 @@ from ...shared.config import (
 from ...shared.model_registry import get_model_config
 from ...shared.logger import get_logger
 from ..nodes import route_to_expert, call_expert_with_fallback, ExpertType
-from ..telemetry import TelemetryEmitter
+from ..telemetry import get_telemetry_emitter
 
 logger = get_logger("orchestrator", __name__)
-telemetry_emitter = TelemetryEmitter()
+telemetry_emitter = get_telemetry_emitter()
 
 # Flask Blueprint for manuscript routes
 manuscript_bp = Blueprint("manuscript", __name__, url_prefix="/api/projects/<project_id>/blocks")

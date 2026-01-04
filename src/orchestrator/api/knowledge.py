@@ -34,11 +34,11 @@ from ...shared.config import (
 from ...shared.model_registry import get_model_config
 from ...shared.logger import get_logger
 from ..nodes import route_to_expert, call_expert_with_fallback, ExpertType
-from ..telemetry import TelemetryEmitter, extract_usage_from_response
+from ..telemetry import get_telemetry_emitter, extract_usage_from_response
 from ..normalize import normalize_extracted_json
 
 logger = get_logger("orchestrator", __name__)
-telemetry_emitter = TelemetryEmitter()
+telemetry_emitter = get_telemetry_emitter()
 
 # Flask Blueprint for knowledge routes
 knowledge_bp = Blueprint("knowledge", __name__, url_prefix="/api/knowledge")

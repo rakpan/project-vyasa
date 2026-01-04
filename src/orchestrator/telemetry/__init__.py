@@ -22,11 +22,26 @@ if _telemetry_file.exists():
     extract_usage_from_response = _telemetry_file_module.extract_usage_from_response
     TelemetryEmitter = _telemetry_file_module.TelemetryEmitter
     trace_node = _telemetry_file_module.trace_node
+    get_telemetry_emitter = _telemetry_file_module.get_telemetry_emitter
+    reset_for_tests = _telemetry_file_module.reset_for_tests
+    reset_telemetry_emitter = _telemetry_file_module.reset_telemetry_emitter
 else:
     # Fallback - these won't work but at least the import won't fail
     extract_usage_from_response = None
     TelemetryEmitter = None
     trace_node = None
+    get_telemetry_emitter = None
+    reset_for_tests = None
+    reset_telemetry_emitter = None
 
-__all__ = ["get_opik_emitter", "OpikEmitter", "extract_usage_from_response", "TelemetryEmitter", "trace_node"]
+__all__ = [
+    "get_opik_emitter",
+    "OpikEmitter",
+    "extract_usage_from_response",
+    "TelemetryEmitter",
+    "trace_node",
+    "get_telemetry_emitter",
+    "reset_for_tests",
+    "reset_telemetry_emitter",
+]
 

@@ -116,9 +116,51 @@ class TelemetryEmitter:
             logger.warning("Failed to emit telemetry event", extra={"payload": {"error": str(exc), "event_type": event_type}})
 
 
+# Singleton TelemetryEmitter instance (lazy initialization)
+_telemetry_emitter: Optional[TelemetryEmitter] = None
+
+
+def get_telemetry_emitter() -> TelemetryEmitter:
+    """Get or create singleton TelemetryEmitter instance.
+    
+    This is the centralized factory for TelemetryEmitter. All modules should
+    use this function instead of creating TelemetryEmitter() directly to avoid
+    duplicate threads and inconsistent configuration.
+    
+    The emitter respects configuration flags (e.g., telemetry enabled/disabled)
+    and is lazily initialized on first access.
+    
+    Returns:
+        TelemetryEmitter singleton instance.
+    """
+    global _telemetry_emitter
+    if _telemetry_emitter is None:
+        _telemetry_emitter = TelemetryEmitter()
+    return _telemetry_emitter
+
+
+def reset_telemetry_emitter() -> None:
+    """Reset the telemetry emitter singleton (for tests).
+    
+    Clears the singleton instance to ensure test isolation.
+    Safe to call in production (no-op if no emitter exists), but intended for test teardown.
+    """
+    global _telemetry_emitter
+    _telemetry_emitter = None
+    logger.debug("Telemetry emitter singleton reset")
+
+
+def reset_for_tests() -> None:
+    """Reset telemetry emitter singleton (alias for test fixtures).
+    
+    This is an alias for reset_telemetry_emitter() with a more explicit name for test fixtures.
+    """
+    reset_telemetry_emitter()
+
+
 def trace_node(func: Callable) -> Callable:
     """Decorator to emit node_execution breadcrumbs around LangGraph nodes."""
-    emitter = TelemetryEmitter()
+    emitter = get_telemetry_emitter()
     opik_emitter = get_opik_emitter()
 
     @wraps(func)

@@ -65,8 +65,8 @@ def sample_claim_with_pointer():
 class TestClaimAnchorEndpoint:
     """Tests for GET /api/claims/{claim_id}/anchor endpoint."""
 
-    @patch("src.orchestrator.api.claims.ArangoClient")
-    @patch("src.orchestrator.api.claims.get_anchor_from_db")
+    @patch("arango.ArangoClient")
+    @patch("src.orchestrator.storage.arango.get_claim_anchor")
     def test_get_claim_anchor_success_with_anchor(
         self,
         mock_get_anchor,
@@ -90,8 +90,8 @@ class TestClaimAnchorEndpoint:
         assert anchor["bbox"] == {"x": 10.0, "y": 20.0, "w": 100.0, "h": 50.0}
         assert anchor["snippet"] == "This is a test snippet."
 
-    @patch("src.orchestrator.api.claims.ArangoClient")
-    @patch("src.orchestrator.api.claims.get_anchor_from_db")
+    @patch("arango.ArangoClient")
+    @patch("src.orchestrator.storage.arango.get_claim_anchor")
     def test_get_claim_anchor_success_with_pointer(
         self,
         mock_get_anchor,
@@ -122,8 +122,8 @@ class TestClaimAnchorEndpoint:
         assert anchor["bbox"]["x"] == 15.0
         assert anchor["bbox"]["w"] == 100.0
 
-    @patch("src.orchestrator.api.claims.ArangoClient")
-    @patch("src.orchestrator.api.claims.get_anchor_from_db")
+    @patch("arango.ArangoClient")
+    @patch("src.orchestrator.storage.arango.get_claim_anchor")
     def test_get_claim_anchor_not_found(
         self,
         mock_get_anchor,
@@ -141,7 +141,7 @@ class TestClaimAnchorEndpoint:
         assert "error" in data
         assert "not found" in data["error"].lower()
 
-    @patch("src.orchestrator.api.claims.ArangoClient")
+    @patch("arango.ArangoClient")
     def test_get_claim_anchor_database_unavailable(
         self,
         mock_arango_client,
@@ -158,8 +158,8 @@ class TestClaimAnchorEndpoint:
         assert "error" in data
         assert "unavailable" in data["error"].lower()
 
-    @patch("src.orchestrator.api.claims.ArangoClient")
-    @patch("src.orchestrator.api.claims.get_anchor_from_db")
+    @patch("arango.ArangoClient")
+    @patch("src.orchestrator.storage.arango.get_claim_anchor")
     def test_get_claim_anchor_stable_fields(
         self,
         mock_get_anchor,
@@ -193,7 +193,7 @@ class TestClaimAnchorEndpoint:
 class TestGetClaimAnchorFromDB:
     """Tests for get_claim_anchor function in storage/arango.py."""
 
-    @patch("src.orchestrator.storage.arango.SourceAnchor")
+    @patch("src.orchestrator.schemas.claims.SourceAnchor")
     def test_get_claim_anchor_from_extractions_with_anchor(
         self,
         mock_source_anchor,
@@ -215,7 +215,7 @@ class TestGetClaimAnchorFromDB:
         assert result["page_number"] == 5
         assert "bbox" in result
 
-    @patch("src.orchestrator.storage.arango.SourceAnchor")
+    @patch("src.orchestrator.schemas.claims.SourceAnchor")
     def test_get_claim_anchor_converts_pointer_to_anchor(
         self,
         mock_source_anchor,
