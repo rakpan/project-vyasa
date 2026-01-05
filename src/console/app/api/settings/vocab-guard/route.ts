@@ -15,58 +15,35 @@
 // limitations under the License.
 //
 import { NextRequest, NextResponse } from "next/server"
-import { promises as fs } from "fs"
-import { join } from "path"
-import yaml from "js-yaml"
-
-// Path resolution: In Next.js standalone mode, we need to resolve relative to project root
-// process.cwd() should point to the project root when running
-const FORBIDDEN_VOCAB_PATH = join(process.cwd(), "deploy", "forbidden_vocab.yaml")
 
 /**
  * GET /api/settings/vocab-guard
- * Retrieve forbidden vocabulary configuration
+ * Retrieve forbidden vocabulary configuration from orchestrator (DB-backed)
  */
 export async function GET(request: NextRequest) {
   try {
-    // Read the YAML file
-    const fileContents = await fs.readFile(FORBIDDEN_VOCAB_PATH, "utf-8")
-    const data = yaml.load(fileContents) as any
-
-    // Normalize the data format for frontend
-    const forbiddenWords = data?.forbidden_words || []
-    const normalizedWords = Array.isArray(forbiddenWords)
-      ? forbiddenWords.map((item: any) => {
-          if (typeof item === "string") {
-            return { word: item, alternative: "" }
-          }
-          if (typeof item === "object" && item !== null) {
-            // Handle both string and array alternatives
-            const alternative = item.alternative
-            const alternativeStr = Array.isArray(alternative)
-              ? alternative.join(" or ")
-              : (alternative || "")
-            
-            return {
-              word: item.word || "",
-              alternative: alternativeStr,
-            }
-          }
-          return { word: "", alternative: "" }
-        })
-      : []
-
-    return NextResponse.json({
-      forbidden_words: normalizedWords.filter((w: any) => w.word),
+    // Proxy to orchestrator API
+    // Use Docker service name for internal communication
+    const orchestratorUrl = process.env.ORCHESTRATOR_SERVICE_URL || "http://orchestrator:8000"
+    const response = await fetch(`${orchestratorUrl}/api/settings/vocab-guard`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
     })
-  } catch (error: any) {
-    // If file doesn't exist, return empty list
-    if (error.code === "ENOENT") {
-      return NextResponse.json({
-        forbidden_words: [],
-      })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error(`Orchestrator API error: ${response.status} ${errorText}`)
+      return NextResponse.json(
+        { error: "Failed to load vocabulary guard settings" },
+        { status: response.status }
+      )
     }
 
+    const data = await response.json()
+    return NextResponse.json(data)
+  } catch (error: any) {
     console.error("Failed to load forbidden vocabulary:", error)
     return NextResponse.json(
       { error: "Failed to load vocabulary guard settings" },
@@ -77,7 +54,7 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/settings/vocab-guard
- * Update forbidden vocabulary configuration
+ * Update forbidden vocabulary configuration (proxies to orchestrator, DB-backed)
  */
 export async function POST(request: NextRequest) {
   try {
@@ -107,40 +84,30 @@ export async function POST(request: NextRequest) {
       })
       .filter((item: any) => item && item.word) // Remove empty/null entries
 
-    // Convert to YAML format
-    // If alternative contains " or ", split it back into an array for YAML
-    const yamlData = {
-      forbidden_words: normalizedWords.map((item: any) => {
-        const alternative = item.alternative || ""
-        // If alternative contains " or ", split it into an array
-        const alternativeArray = alternative.includes(" or ")
-          ? alternative.split(" or ").map((a: string) => a.trim()).filter((a: string) => a)
-          : (alternative ? [alternative] : [])
-        
-        return {
-          word: item.word,
-          alternative: alternativeArray.length > 1 ? alternativeArray : (alternativeArray[0] || ""),
-        }
+    // Proxy to orchestrator API
+    // Use Docker service name for internal communication
+    const orchestratorUrl = process.env.ORCHESTRATOR_SERVICE_URL || "http://orchestrator:8000"
+    const response = await fetch(`${orchestratorUrl}/api/settings/vocab-guard`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        forbidden_words: normalizedWords,
       }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error(`Orchestrator API error: ${response.status} ${errorText}`)
+      return NextResponse.json(
+        { error: "Failed to save vocabulary guard settings" },
+        { status: response.status }
+      )
     }
 
-    // Write to file
-    const yamlString = yaml.dump(yamlData, {
-      lineWidth: 120,
-      quotingType: '"',
-      forceQuotes: false,
-    })
-
-    // Ensure the directory exists
-    const dir = join(process.cwd(), "deploy")
-    await fs.mkdir(dir, { recursive: true })
-
-    await fs.writeFile(FORBIDDEN_VOCAB_PATH, yamlString, "utf-8")
-
-    return NextResponse.json({
-      success: true,
-      message: "Vocabulary guard settings updated successfully",
-    })
+    const data = await response.json()
+    return NextResponse.json(data)
   } catch (error: any) {
     console.error("Failed to save forbidden vocabulary:", error)
     return NextResponse.json(

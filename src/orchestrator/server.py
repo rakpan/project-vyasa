@@ -89,6 +89,8 @@ from .api.ingestion import ingestion_bp
 app.register_blueprint(ingestion_bp)
 from .api.web_search import web_search_bp
 app.register_blueprint(web_search_bp)
+from .api.settings import settings_bp
+app.register_blueprint(settings_bp)
 workflow_app = build_workflow()
 
 # Global telemetry emitter (use factory to get singleton)
@@ -248,6 +250,34 @@ def _init_project_service() -> Optional[ProjectService]:
         return None
 
 
+def _init_vocab_guard_service():
+    """Initialize VocabGuardService with automatic seeding.
+    
+    This ensures forbidden vocabulary is seeded from YAML on first run.
+    """
+    try:
+        from ..shared.vocab_guard_service import get_vocab_guard_service
+        
+        arango_url = get_memory_url()
+        arango_db = ARANGODB_DB
+        arango_user = ARANGODB_USER
+        arango_password = get_arango_password()
+        
+        service = get_vocab_guard_service(
+            arango_url=arango_url,
+            arango_db=arango_db,
+            arango_user=arango_user,
+            arango_password=arango_password
+        )
+        # Seeding happens automatically in __init__ → _seed_if_empty()
+        logger.info("VocabGuardService initialized and seeded (if needed)")
+        return service
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize VocabGuardService: {e}", exc_info=True)
+        return None
+
+
 def get_project_service() -> Optional[ProjectService]:
     """Get or initialize ProjectService (lazy initialization).
     
@@ -258,6 +288,14 @@ def get_project_service() -> Optional[ProjectService]:
     if _project_service is None:
         _project_service = _init_project_service()
     return _project_service
+
+
+# Initialize VocabGuardService on module import (for automatic seeding on first run)
+# This ensures the YAML seed is loaded into DB when orchestrator starts
+try:
+    _init_vocab_guard_service()
+except Exception as e:
+    logger.warning(f"VocabGuardService initialization deferred: {e}")
 
 
 @app.route("/ingest/pdf", methods=["POST"])

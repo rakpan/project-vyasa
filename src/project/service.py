@@ -59,8 +59,18 @@ class ProjectService:
             
             # Ensure persistent index on created_at for sorting
             collection = self.db.collection(self.COLLECTION_NAME)
-            collection.ensure_persistent_index(["created_at"])
-            logger.debug(f"Ensured index on 'created_at' in '{self.COLLECTION_NAME}'")
+            # Check if index already exists, create if not
+            indexes = collection.indexes()
+            index_exists = any(
+                idx.get("type") == "persistent" 
+                and idx.get("fields") == ["created_at"]
+                for idx in indexes
+            )
+            if not index_exists:
+                collection.add_index({"type": "persistent", "fields": ["created_at"]})
+                logger.debug(f"Created index on 'created_at' in '{self.COLLECTION_NAME}'")
+            else:
+                logger.debug(f"Index on 'created_at' already exists in '{self.COLLECTION_NAME}'")
             
         except ArangoError as e:
             logger.error(f"Failed to ensure schema for '{self.COLLECTION_NAME}': {e}", exc_info=True)

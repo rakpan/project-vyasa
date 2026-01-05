@@ -275,7 +275,7 @@ export function OpikLiveFeedPanel({ jobId, opikEnabled, opikTraceUrl }: OpikLive
                     </div>
                   )}
                 </div>
-              </div>
+              </ScrollArea>
             )}
           </div>
         )}

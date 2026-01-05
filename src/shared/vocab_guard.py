@@ -1,80 +1,42 @@
 """
 Vocabulary Guardrail utility for Project Vyasa.
 
-Loads forbidden vocabulary from YAML configuration and applies constraints to prompts
+Loads forbidden vocabulary from ArangoDB (system of record) and applies constraints to prompts
 to prevent the use of prohibited words in attorney-style write-ups.
 """
 
 import logging
-from pathlib import Path
 from typing import Dict, List, Optional
-import yaml
 
 logger = logging.getLogger(__name__)
 
-# Default path to forbidden vocabulary YAML
-DEFAULT_VOCAB_PATH = Path(__file__).resolve().parents[2] / "deploy" / "forbidden_vocab.yaml"
-
 
 class VocabGuard:
-    """Manages forbidden vocabulary constraints."""
+    """Manages forbidden vocabulary constraints (DB-backed)."""
     
-    def __init__(self, vocab_path: Optional[Path] = None):
+    def __init__(self, service=None):
         """Initialize the vocabulary guard.
         
         Args:
-            vocab_path: Path to forbidden_vocab.yaml file. Defaults to deploy/forbidden_vocab.yaml.
+            service: Optional VocabGuardService instance. If None, will use global instance.
         """
-        self.vocab_path = vocab_path or DEFAULT_VOCAB_PATH
+        from .vocab_guard_service import get_vocab_guard_service
+        self.service = service or get_vocab_guard_service()
         self._forbidden_words: Dict[str, str] = {}  # word -> alternative mapping
         self._load_vocab()
     
     def _load_vocab(self) -> None:
-        """Load forbidden vocabulary from YAML file."""
+        """Load forbidden vocabulary from database."""
         try:
-            if not self.vocab_path.exists():
-                logger.warning(
-                    f"Forbidden vocabulary file not found: {self.vocab_path}. Using empty vocabulary.",
-                    extra={"payload": {"vocab_path": str(self.vocab_path)}},
-                )
-                self._forbidden_words = {}
-                return
-            
-            with open(self.vocab_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            
-            # Extract forbidden words and alternatives
-            forbidden_list = data.get("forbidden_words", [])
-            if isinstance(forbidden_list, list):
-                for item in forbidden_list:
-                    if isinstance(item, dict):
-                        word = item.get("word", "").strip().lower()
-                        alt_val = item.get("alternative", "")
-                        # Handle both string and list formats
-                        if isinstance(alt_val, list):
-                            alternative = " or ".join(str(a).strip() for a in alt_val if a)
-                        else:
-                            alternative = str(alt_val).strip()
-                        if word:
-                            self._forbidden_words[word] = alternative
-                    elif isinstance(item, str):
-                        # Simple string format: just the word
-                        self._forbidden_words[item.strip().lower()] = ""
-            elif isinstance(forbidden_list, dict):
-                # Dictionary format: {word: alternative}
-                self._forbidden_words = {
-                    k.strip().lower(): (v.strip() if isinstance(v, str) else "")
-                    for k, v in forbidden_list.items()
-                }
+            self._forbidden_words = self.service.get_all_words(include_inactive=False)
             
             logger.info(
-                f"Loaded {len(self._forbidden_words)} forbidden words from {self.vocab_path}",
-                extra={"payload": {"vocab_path": str(self.vocab_path), "count": len(self._forbidden_words)}},
+                f"Loaded {len(self._forbidden_words)} forbidden words from database",
+                extra={"payload": {"count": len(self._forbidden_words)}},
             )
         except Exception as e:
             logger.error(
                 f"Failed to load forbidden vocabulary: {e}",
-                extra={"payload": {"vocab_path": str(self.vocab_path)}},
                 exc_info=True,
             )
             self._forbidden_words = {}
@@ -159,17 +121,17 @@ If you encounter any of these words in your response, replace them with the sugg
 _guard_instance: Optional[VocabGuard] = None
 
 
-def get_vocab_guard(vocab_path: Optional[Path] = None) -> VocabGuard:
+def get_vocab_guard(service=None) -> VocabGuard:
     """Get or create the global VocabGuard instance.
     
     Args:
-        vocab_path: Optional path to vocabulary file. Only used on first call.
+        service: Optional VocabGuardService instance. If None, will use global instance.
         
     Returns:
         VocabGuard instance.
     """
     global _guard_instance
     if _guard_instance is None:
-        _guard_instance = VocabGuard(vocab_path)
+        _guard_instance = VocabGuard(service=service)
     return _guard_instance
 

@@ -19,10 +19,12 @@
 // Mount this file into the ArangoDB container at /docker-entrypoint-initdb.d/arango-init.js
 
 const db = require('@arangodb').db;
-const systemDb = require('@arangodb').db._system();
+const systemDb = db._system();
+const users = require('@arangodb/users');
 
 // Database name
 const DB_NAME = 'project_vyasa';
+const ROOT_USER = 'root';
 
 try {
   // Check if database already exists
@@ -33,6 +35,16 @@ try {
     // Create the database
     systemDb._createDatabase(DB_NAME);
     console.log(`✅ Database '${DB_NAME}' created successfully!`);
+  }
+
+  // Grant root user access to the database (critical for orchestrator access)
+  try {
+    users.grantDatabase(ROOT_USER, DB_NAME, 'rw');
+    console.log(`✅ Granted '${ROOT_USER}' user read/write access to '${DB_NAME}' database`);
+  } catch (grantError) {
+    // If grant fails, it might already be granted or user doesn't exist
+    // Log but don't fail - the database creation is more important
+    console.warn(`Warning: Could not grant database access: ${grantError.message}`);
   }
 
   // Switch to the project_vyasa database
@@ -89,6 +101,11 @@ try {
       name: 'pdf_text_cache',
       type: 'document',
       description: 'Cached PDF page text layers for evidence verification (keyed by doc_hash and page)'
+    },
+    {
+      name: 'vocab_guard',
+      type: 'document',
+      description: 'Forbidden vocabulary configuration for attorney-style write-ups (word -> alternative mappings)'
     }
   ];
 

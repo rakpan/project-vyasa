@@ -159,13 +159,19 @@ services:
   console:
     build:
       context: ../src/console
-      dockerfile: ${CONSOLE_DOCKERFILE:-Dockerfile}
+      dockerfile: ${CONSOLE_DOCKERFILE:-Dockerfile.dev}
     cpuset: "0-9"
     ports:
       - "${PORT_CONSOLE}:${PORT_CONSOLE}"
     volumes:
+      # Mount source code for development mode with hot reload
+      - ../src/console:/app:rw
+      # Use named volume for node_modules to avoid overwriting with host directory
+      - console_node_modules:/app/node_modules
       # Mount deploy directory for accessing configuration files (forbidden_vocab.yaml, etc.)
-      - ./deploy:/app/deploy:ro
+      # Note: docker-compose is run from deploy/ directory, so we mount the current directory
+      # Mount to /app/deploy-config to avoid conflicts with console's /app directory
+      - .:/app/deploy-config:ro
     environment:
       - NODE_ENV=${CONSOLE_NODE_ENV:-${NODE_ENV:-production}}
       - NEXT_PUBLIC_API_URL=http://localhost:${PORT_BRAIN}/v1
@@ -173,6 +179,8 @@ services:
       - MEMORY_SERVICE_URL=http://graph:${PORT_MEMORY}
       - SENTENCE_TRANSFORMER_URL=http://embedder:30010
       - QDRANT_URL=http://vector:${PORT_VECTOR}
+      - ORCHESTRATOR_SERVICE_URL=http://orchestrator:8000
+      - ORCHESTRATOR_URL=http://orchestrator:8000
       - ARANGODB_DB=${GRAPH_DB_NAME}
       - ARANGODB_USER=${ARANGODB_USER}
       - ARANGO_ROOT_PASSWORD=${ARANGO_ROOT_PASSWORD}
@@ -220,19 +228,19 @@ services:
   orchestrator:
     image: ${ORCHESTRATOR_IMAGE}
     working_dir: /app
-    # Install system dependencies and Python packages, then run uvicorn
-    # Note: torch_memory_saver requires CUDA headers to build, but orchestrator only uses SGLang as HTTP client
-    # Solution: Use setup script to create minimal CUDA header stubs to satisfy build requirements
-    # The orchestrator doesn't actually use CUDA at runtime - it just makes HTTP requests to cortex services
+    # Install Python packages from orchestrator-specific requirements, then run uvicorn
+    # Note: Uses requirements-orchestrator.txt which excludes sglang (orchestrator uses HTTP only)
     command: ["/app/deploy/scripts/orchestrator-setup.sh"]
     cpuset: "0-9"
     ports:
       - "8000:8000"
     volumes:
-      - ../src:/app
+      - ../src:/app/src
+      - ../requirements-orchestrator.txt:/app/requirements-orchestrator.txt:ro
       - ../requirements.txt:/app/requirements.txt:ro
       - ./scripts:/app/deploy/scripts:ro
       - ./scripts/orchestrator-setup.sh:/app/deploy/scripts/orchestrator-setup.sh:ro
+      - ./forbidden_vocab.yaml:/app/deploy/forbidden_vocab.yaml:ro
       - /raid/vyasa/telemetry:/raid/telemetry
       - /raid/vyasa/scratch:/raid/scratch
     environment:
@@ -245,6 +253,7 @@ services:
       - FIRECRAWL_SERVICE_URL=${FIRECRAWL_SERVICE_URL:-http://firecrawl:3002}
       - ARANGODB_DB=${GRAPH_DB_NAME}
       - ARANGODB_USER=${ARANGODB_USER}
+      - ARANGO_ROOT_PASSWORD=${ARANGO_ROOT_PASSWORD}
       - ARANGODB_PASSWORD=${ARANGO_ROOT_PASSWORD}
       - QDRANT_API_KEY=${QDRANT_API_KEY}
       - LOG_FORMAT=json
@@ -305,3 +314,4 @@ volumes:
   memory_data:
   qdrant_data:
   ollama_data:
+  console_node_modules:

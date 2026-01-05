@@ -231,6 +231,19 @@ export async function listProjectsHub(filters?: {
     });
   } catch (error) {
     const message = safeParseError(error);
+    
+    // Preserve retryable flag from proxy response
+    const body = error instanceof ApiError ? error.body : null;
+    const bodyAsObject = typeof body === 'object' && body !== null ? (body as any) : null;
+    
+    // If it's a retryable error, preserve that information
+    if (bodyAsObject?.retryable === true || bodyAsObject?.code === 'ORCHESTRATOR_UNAVAILABLE') {
+      const apiError = new ApiError(message, error instanceof ApiError ? error.status : 503, error);
+      // Attach retryable flag to the error object for frontend detection
+      (apiError as any).retryable = true;
+      throw apiError;
+    }
+    
     throw new ApiError(message, error instanceof ApiError ? error.status : 500, error);
   }
 }

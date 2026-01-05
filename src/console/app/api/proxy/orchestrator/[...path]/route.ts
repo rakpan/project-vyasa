@@ -15,11 +15,79 @@ const ORCHESTRATOR_URL =
   process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || 
   'http://orchestrator:8000';
 
+/**
+ * Retry configuration for orchestrator requests
+ */
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY_MS = 500; // Start with 500ms
+const MAX_RETRY_DELAY_MS = 5000; // Cap at 5 seconds
+
+/**
+ * Check if an error is retryable (temporary connection issue)
+ */
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('econnrefused') ||
+      message.includes('connection refused') ||
+      message.includes('fetch failed') ||
+      message.includes('network') ||
+      message.includes('timeout') ||
+      message.includes('econnreset')
+    );
+  }
+  return false;
+}
+
+/**
+ * Sleep for specified milliseconds
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Retry fetch with exponential backoff
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries: number = MAX_RETRIES,
+  initialDelay: number = INITIAL_RETRY_DELAY_MS
+): Promise<Response> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      // If we get a response (even if error status), return it
+      // Only retry on network/connection errors
+      return response;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      
+      // Only retry on retryable errors
+      if (!isRetryableError(error) || attempt === maxRetries) {
+        throw lastError;
+      }
+      
+      // Exponential backoff: delay = initialDelay * 2^attempt, capped at MAX_RETRY_DELAY_MS
+      const delay = Math.min(initialDelay * Math.pow(2, attempt), MAX_RETRY_DELAY_MS);
+      console.log(`[Proxy] Retry attempt ${attempt + 1}/${maxRetries} after ${delay}ms for ${url}`);
+      await sleep(delay);
+    }
+  }
+  
+  throw lastError || new Error('Failed after retries');
+}
+
 export async function GET(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
-  const path = params.path.join('/');
+  const { path: pathArray } = await params;
+  const path = pathArray.join('/');
   const url = new URL(request.url);
   const queryString = url.search;
   const isStream = path.includes('/stream');
@@ -40,7 +108,7 @@ export async function GET(
     const targetUrl = `${ORCHESTRATOR_URL}/${path}${queryString ? `?${queryString}` : ''}`;
     console.log(`[Proxy] GET ${targetUrl}`);
     
-    const response = await fetch(targetUrl, {
+    const response = await fetchWithRetry(targetUrl, {
       method: 'GET',
       headers,
       // Add timeout to prevent hanging
@@ -83,14 +151,39 @@ export async function GET(
   } catch (error) {
     // Network errors, connection refused, etc.
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const isRetryable = isRetryableError(error);
+    
     console.error('Orchestrator proxy GET error:', errorMessage);
     console.error('Full error:', error);
+    
+    // For retryable errors, indicate it's temporary and suggest retry
+    if (isRetryable) {
+      return NextResponse.json(
+        { 
+          error: 'Orchestrator service is temporarily unavailable',
+          details: errorMessage,
+          hint: 'The orchestrator may be starting up. The request will be retried automatically.',
+          code: 'ORCHESTRATOR_UNAVAILABLE',
+          retryable: true,
+          retry_after: 2, // Suggest retry after 2 seconds
+        },
+        { 
+          status: 503,
+          headers: {
+            'Retry-After': '2', // HTTP standard header for retry timing
+          }
+        }
+      );
+    }
+    
+    // For non-retryable errors, return standard error
     return NextResponse.json(
       { 
         error: 'Failed to proxy request to orchestrator',
         details: errorMessage,
         hint: 'Check if orchestrator service is running and ORCHESTRATOR_URL is correct',
-        code: 'ORCHESTRATOR_UNAVAILABLE',
+        code: 'ORCHESTRATOR_ERROR',
+        retryable: false,
       },
       { status: 503 }
     );
@@ -99,9 +192,10 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
-  const path = params.path.join('/');
+  const { path: pathArray } = await params;
+  const path = pathArray.join('/');
   const contentType = request.headers.get('content-type') || '';
 
   try {
@@ -129,7 +223,7 @@ export async function POST(
     const targetUrl = `${ORCHESTRATOR_URL}/${path}`;
     console.log(`[Proxy] POST ${targetUrl}`);
     
-    const response = await fetch(targetUrl, {
+    const response = await fetchWithRetry(targetUrl, {
       method: 'POST',
       headers,
       body,
@@ -159,14 +253,39 @@ export async function POST(
   } catch (error) {
     // Network errors, connection refused, etc.
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const isRetryable = isRetryableError(error);
+    
     console.error('Orchestrator proxy POST error:', errorMessage);
     console.error('Full error:', error);
+    
+    // For retryable errors, indicate it's temporary and suggest retry
+    if (isRetryable) {
+      return NextResponse.json(
+        { 
+          error: 'Orchestrator service is temporarily unavailable',
+          details: errorMessage,
+          hint: 'The orchestrator may be starting up. The request will be retried automatically.',
+          code: 'ORCHESTRATOR_UNAVAILABLE',
+          retryable: true,
+          retry_after: 2, // Suggest retry after 2 seconds
+        },
+        { 
+          status: 503,
+          headers: {
+            'Retry-After': '2', // HTTP standard header for retry timing
+          }
+        }
+      );
+    }
+    
+    // For non-retryable errors, return standard error
     return NextResponse.json(
       { 
         error: 'Failed to proxy request to orchestrator',
         details: errorMessage,
         hint: 'Check if orchestrator service is running and ORCHESTRATOR_URL is correct',
-        code: 'ORCHESTRATOR_UNAVAILABLE',
+        code: 'ORCHESTRATOR_ERROR',
+        retryable: false,
       },
       { status: 503 }
     );

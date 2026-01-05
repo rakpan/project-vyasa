@@ -250,6 +250,128 @@ if [[ "$COMMAND" != "stop" && "$COMMAND" != "down" && "$COMMAND" != "restart" &&
   fi
 fi
 
+# Ensure ARANGO_ROOT_PASSWORD is set (auto-generate if missing)
+# This password is used by both the graph container (for initialization) and orchestrator (for connection)
+ensure_arango_password() {
+  local var_name="ARANGO_ROOT_PASSWORD"
+  local comment="ArangoDB root password (used by graph container and orchestrator)"
+  
+  # Check if variable is already set in environment
+  eval "local current_value=\${${var_name}:-}"
+  if [ -n "$current_value" ]; then
+    return 0
+  fi
+  
+  # Check if it exists in .env file (uncommented)
+  if [ -f "$ENV_FILE" ]; then
+    local file_line
+    file_line=$(grep -E "^[[:space:]]*${var_name}=" "$ENV_FILE" | head -1 || true)
+    if [ -n "$file_line" ]; then
+      # Variable exists in file - extract and export it
+      local file_value
+      file_value=$(echo "$file_line" | cut -d'=' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '"' | tr -d "'" || true)
+      if [ -n "$file_value" ]; then
+        eval "export ${var_name}=\"${file_value}\""
+        return 0
+      fi
+    fi
+  fi
+  
+  # Need to generate it
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "Error: openssl not found. Cannot auto-generate ${var_name}." >&2
+    echo "       Please set ${var_name} in deploy/.env or deploy/.secrets.env" >&2
+    return 1
+  fi
+  
+  echo "Auto-generating ${var_name} (will be saved to deploy/.env)..."
+  local generated_value
+  generated_value=$(openssl rand -hex 16)
+  
+  # Append to .env file
+  if [ -f "$ENV_FILE" ]; then
+    echo "" >> "$ENV_FILE"
+    echo "# ${comment} (auto-generated)" >> "$ENV_FILE"
+    echo "${var_name}=${generated_value}" >> "$ENV_FILE"
+    echo "  ✓ Saved to $ENV_FILE"
+  else
+    # Create .env file
+    echo "# ${comment} (auto-generated)" > "$ENV_FILE"
+    echo "${var_name}=${generated_value}" >> "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    echo "  ✓ Created $ENV_FILE with ${var_name}"
+  fi
+  
+  eval "export ${var_name}=\"${generated_value}\""
+  return 0
+}
+
+# Ensure ARANGO_ROOT_PASSWORD is set (generate if needed)
+if ! ensure_arango_password; then
+  exit 1
+fi
+
+# Ensure QDRANT_API_KEY is set (auto-generate if missing)
+# This API key is used by the vector container (for authentication) and orchestrator/console (for connection)
+ensure_qdrant_api_key() {
+  local var_name="QDRANT_API_KEY"
+  local comment="Qdrant API key (used by vector container and orchestrator/console)"
+  
+  # Check if variable is already set in environment
+  eval "local current_value=\${${var_name}:-}"
+  if [ -n "$current_value" ]; then
+    return 0
+  fi
+  
+  # Check if it exists in .env file (uncommented)
+  if [ -f "$ENV_FILE" ]; then
+    local file_line
+    file_line=$(grep -E "^[[:space:]]*${var_name}=" "$ENV_FILE" | head -1 || true)
+    if [ -n "$file_line" ]; then
+      # Variable exists in file - extract and export it
+      local file_value
+      file_value=$(echo "$file_line" | cut -d'=' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '"' | tr -d "'" || true)
+      if [ -n "$file_value" ]; then
+        eval "export ${var_name}=\"${file_value}\""
+        return 0
+      fi
+    fi
+  fi
+  
+  # Need to generate it
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "Error: openssl not found. Cannot auto-generate ${var_name}." >&2
+    echo "       Please set ${var_name} in deploy/.env or deploy/.secrets.env" >&2
+    return 1
+  fi
+  
+  echo "Auto-generating ${var_name} (will be saved to deploy/.env)..."
+  local generated_value
+  generated_value=$(openssl rand -hex 16)
+  
+  # Append to .env file
+  if [ -f "$ENV_FILE" ]; then
+    echo "" >> "$ENV_FILE"
+    echo "# ${comment} (auto-generated)" >> "$ENV_FILE"
+    echo "${var_name}=${generated_value}" >> "$ENV_FILE"
+    echo "  ✓ Saved to $ENV_FILE"
+  else
+    # Create .env file
+    echo "# ${comment} (auto-generated)" > "$ENV_FILE"
+    echo "${var_name}=${generated_value}" >> "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    echo "  ✓ Created $ENV_FILE with ${var_name}"
+  fi
+  
+  eval "export ${var_name}=\"${generated_value}\""
+  return 0
+}
+
+# Ensure QDRANT_API_KEY is set (generate if needed)
+if ! ensure_qdrant_api_key; then
+  exit 1
+fi
+
 # Validate Opik environment variables and setup if Opik is enabled
 if $USE_OPIK; then
   # Auto-generate Opik secrets if they don't exist

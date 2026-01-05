@@ -83,8 +83,8 @@ export default function ProjectsPage() {
     }
   }, [viewMode])
 
-  // Fetch projects with hub view
-  const fetchProjects = async () => {
+  // Fetch projects with hub view (with auto-retry for temporary orchestrator unavailability)
+  const fetchProjects = async (retryCount = 0) => {
     setIsLoading(true)
     setError(null)
     try {
@@ -98,11 +98,35 @@ export default function ProjectsPage() {
         include_manifest: true, // Always include manifest for health indicators
       })
       setGrouping(result)
+      setError(null) // Clear any previous errors on success
+      setIsLoading(false)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to load projects"
+      
+      // Check if this is a retryable orchestrator error
+      const isRetryable = 
+        (err instanceof Error && (
+          errorMessage.includes('temporarily unavailable') ||
+          errorMessage.includes('ORCHESTRATOR_UNAVAILABLE') ||
+          errorMessage.includes('ECONNREFUSED') ||
+          errorMessage.includes('connection refused')
+        )) ||
+        (typeof err === 'object' && err !== null && 'retryable' in err && (err as any).retryable === true) ||
+        (typeof err === 'object' && err !== null && 'code' in err && (err as any).code === 'ORCHESTRATOR_UNAVAILABLE')
+      
+      if (isRetryable && retryCount < 5) {
+        // Show waiting message and auto-retry
+        setError('Orchestrator service is temporarily unavailable')
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 10000) // Exponential backoff, max 10s
+        console.log(`[Projects] Orchestrator unavailable, retrying in ${delay}ms (attempt ${retryCount + 1}/5)`)
+        setTimeout(() => fetchProjects(retryCount + 1), delay)
+        // Keep loading state true while retrying
+        return
+      }
+      
+      // Non-retryable error or max retries reached
       setError(errorMessage)
       console.error("Failed to fetch projects:", err)
-    } finally {
       setIsLoading(false)
     }
   }
@@ -112,8 +136,8 @@ export default function ProjectsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters])
 
-  const hasActiveProjects = grouping && grouping.active_research.length > 0
-  const hasArchivedProjects = grouping && grouping.archived_insights.length > 0
+  const hasActiveProjects = (grouping?.active_research?.length ?? 0) > 0
+  const hasArchivedProjects = (grouping?.archived_insights?.length ?? 0) > 0
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-7xl">
@@ -159,11 +183,30 @@ export default function ProjectsPage() {
         />
       </div>
 
-      {/* Error State */}
-      {error && (
+      {/* Error State - Only show non-retryable errors */}
+      {error && !error.includes('temporarily unavailable') && (
         <Card className="mb-6 border-destructive/50">
           <CardContent className="pt-6">
             <p className="text-sm text-destructive">{error}</p>
+          </CardContent>
+        </Card>
+      )}
+      
+      {/* Waiting State for Temporary Orchestrator Unavailability */}
+      {error && error.includes('temporarily unavailable') && (
+        <Card className="mb-6 border-blue-500/50 bg-blue-50/50 dark:bg-blue-950/20">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                  Waiting for orchestrator service...
+                </p>
+                <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+                  The orchestrator may be starting up. Retrying automatically...
+                </p>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -196,7 +239,7 @@ export default function ProjectsPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {grouping.active_research.map((project, index) => (
+                        {grouping?.active_research?.map((project, index) => (
                           <ProjectRow
                             key={project.project_id}
                             project={project}
@@ -209,7 +252,7 @@ export default function ProjectsPage() {
                 </Card>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {grouping.active_research.map((project) => (
+                  {grouping?.active_research?.map((project) => (
                     <ProjectCard key={project.project_id} project={project} />
                   ))}
                 </div>
@@ -250,7 +293,7 @@ export default function ProjectsPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {grouping.archived_insights.map((project, index) => (
+                        {grouping?.archived_insights?.map((project, index) => (
                           <ProjectRow
                             key={project.project_id}
                             project={project}
@@ -263,7 +306,7 @@ export default function ProjectsPage() {
                 </Card>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {grouping.archived_insights.map((project) => (
+                  {grouping?.archived_insights?.map((project) => (
                     <ProjectCard key={project.project_id} project={project} />
                   ))}
                 </div>

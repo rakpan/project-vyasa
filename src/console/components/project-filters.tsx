@@ -103,11 +103,11 @@ export function ProjectFiltersComponent({
 
       {/* Quick Filters */}
       <Select
-        value={filters.rigor || ""}
+        value={filters.rigor || "all"}
         onValueChange={(value) =>
           onFiltersChange({
             ...filters,
-            rigor: value ? (value as "exploratory" | "conservative") : null,
+            rigor: value === "all" ? null : (value as "exploratory" | "conservative"),
           })
         }
       >
@@ -115,20 +115,20 @@ export function ProjectFiltersComponent({
           <SelectValue placeholder="Rigor" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="">All Rigor</SelectItem>
+          <SelectItem value="all">All Rigor</SelectItem>
           <SelectItem value="exploratory">Exploratory</SelectItem>
           <SelectItem value="conservative">Conservative</SelectItem>
         </SelectContent>
       </Select>
 
       <Select
-        value={filters.status || ""}
+        value={filters.status || "all"}
         onValueChange={(value) =>
           onFiltersChange({
             ...filters,
-            status: value
-              ? (value as "Idle" | "Processing" | "AttentionNeeded")
-              : null,
+            status: value === "all"
+              ? null
+              : (value as "Idle" | "Processing" | "AttentionNeeded"),
           })
         }
       >
@@ -136,7 +136,7 @@ export function ProjectFiltersComponent({
           <SelectValue placeholder="Status" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="">All Status</SelectItem>
+          <SelectItem value="all">All Status</SelectItem>
           <SelectItem value="Idle">Idle</SelectItem>
           <SelectItem value="Processing">Processing</SelectItem>
           <SelectItem value="AttentionNeeded">Attention Needed</SelectItem>

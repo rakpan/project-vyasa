@@ -561,6 +561,55 @@ class RoleProfile(BaseModel):
         return f"{slug}_v{self.version}"
 
 
+class ForbiddenWord(BaseModel):
+    """Forbidden vocabulary entry stored in ArangoDB."""
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "word": "crisis",
+                "alternative": "significant challenge or material condition",
+                "version": 1,
+                "is_active": True,
+                "created_at": "2025-01-05T12:00:00Z",
+                "updated_at": "2025-01-05T12:00:00Z"
+            }
+        }
+    )
+    
+    id: Optional[str] = Field(None, alias="_id", description="ArangoDB document ID")
+    key: Optional[str] = Field(None, alias="_key", description="ArangoDB document key (word)")
+    word: str = Field(..., description="Forbidden word (lowercased, unique)")
+    alternative: Optional[str] = Field(
+        None, 
+        description="Suggested alternative(s) as string (e.g., 'significant challenge or material condition')"
+    )
+    version: int = Field(default=1, description="Version number for this word")
+    is_active: bool = Field(default=True, description="Whether this word is active")
+    created_at: str = Field(..., description="ISO timestamp when word was added")
+    updated_at: str = Field(..., description="ISO timestamp when word was last updated")
+    metadata: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Optional metadata (source, notes, category)"
+    )
+    
+    @field_validator('word')
+    @classmethod
+    def validate_word(cls, v: str) -> str:
+        """Validate word is non-empty and lowercased."""
+        if not v or not v.strip():
+            raise ValueError("Word must be non-empty")
+        return v.strip().lower()
+    
+    @field_validator('version')
+    @classmethod
+    def validate_version(cls, v: int) -> int:
+        """Validate version is >= 1."""
+        if v < 1:
+            raise ValueError("Version must be >= 1")
+        return v
+
+
 # ============================================
 # Out-of-Band (OOB) Research Ingestion Schemas
 # ============================================

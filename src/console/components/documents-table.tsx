@@ -222,10 +222,10 @@ export function DocumentsTable({ onTabChange }: DocumentsTableProps) {
                   <div className="flex items-center gap-2">
                     {getStatusIcon(doc.status)}
                     <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                      doc.status === 'Processed' ? 'bg-green-100 text-green-800 :
-                      doc.status === 'Processing' ? 'bg-yellow-100 text-yellow-800 :
-                      doc.status === 'Error' ? 'bg-red-100 text-red-800 :
-                      'bg-cyan-100 text-cyan-800
+                      doc.status === 'Processed' ? 'bg-green-100 text-green-800' :
+                      doc.status === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
+                      doc.status === 'Error' ? 'bg-red-100 text-red-800' :
+                      'bg-cyan-100 text-cyan-800'
                     }`}>{doc.status}</span>
                   </div>
                 </td>

@@ -9,8 +9,8 @@ export default auth((req) => {
   const { pathname } = req.nextUrl
   const isLoggedIn = !!req.auth
 
-  // Allow access to login page and auth API routes
-  if (pathname.startsWith("/login") || pathname.startsWith("/api/auth")) {
+  // Allow access to login page, auth API routes, and all API routes
+  if (pathname.startsWith("/login") || pathname.startsWith("/api/")) {
     return NextResponse.next()
   }
 
@@ -43,9 +43,10 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
+     * - api/* (API routes - excluded from middleware)
      * - public folder files
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 }
 
