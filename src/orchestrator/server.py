@@ -1238,11 +1238,11 @@ def submit_workflow():
                 # Still return response but log error
         
         # Response contract: always include ingestion_id (non-optional)
+        # Returns tracking IDs immediately for polling-based UX
         response = {
-            "project_id": project_id,
-            "job_id": job_id,
             "ingestion_id": ingestion_id,  # Required, non-optional
-            "status": JobStatus.QUEUED.value,
+            "job_id": job_id,
+            "status": "QUEUED",  # Use string literal for consistency with status endpoint
         }
         
         return jsonify(response), 202  # 202 Accepted

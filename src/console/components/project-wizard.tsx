@@ -27,6 +27,7 @@ import { toast } from "@/hooks/use-toast"
 import { createProject, listProjectTemplates } from "@/services/projectService"
 import { PROJECT_TEMPLATES, getTemplateById } from "@/data/project-templates"
 import { RigorImpactPreview } from "@/components/rigor-impact-preview"
+import { Check } from "lucide-react"
 import type { ProjectCreate, ProjectTemplate } from "@/types/project"
 
 interface WizardState {
@@ -45,6 +46,7 @@ interface ProjectWizardProps {
 
 export function ProjectWizard({ onComplete }: ProjectWizardProps) {
   const router = useRouter()
+  // Wizard step is 1-based for UX; keep it that way to match labels and prevent off-by-one errors.
   const [state, setState] = useState<WizardState>({
     step: 1,
     title: "",
@@ -82,7 +84,7 @@ export function ProjectWizard({ onComplete }: ProjectWizardProps) {
 
   // Apply template when selected
   useEffect(() => {
-    if (selectedTemplate) {
+    if (selectedTemplate && selectedTemplate !== "none" && selectedTemplate !== "loading") {
       const template = templates.find((t) => t.id === selectedTemplate) || getTemplateById(selectedTemplate)
       if (template) {
         setState((prev) => ({
@@ -103,6 +105,12 @@ export function ProjectWizard({ onComplete }: ProjectWizardProps) {
   const canProceedFromStep1 = state.title.trim() !== "" && state.thesis.trim() !== "" && state.research_questions.length > 0
   const canProceedFromStep2 = true // Step 2 is optional
   const canProceedFromStep3 = true // Step 3 always has a selection
+  const steps = [
+    { num: 1, label: "Definition" },
+    { num: 2, label: "Scope" },
+    { num: 3, label: "Rigor" },
+  ]
+  const currentStepIndex = steps.findIndex((step) => step.num === state.step)
 
   const handleAddRQ = () => {
     const trimmed = rqInput.trim()
@@ -203,37 +211,65 @@ export function ProjectWizard({ onComplete }: ProjectWizardProps) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8">
+    <div className="max-w-3xl mx-auto px-4 py-8 pb-20">
       {/* Stepper */}
       <div className="mb-8">
-        <div className="flex items-center justify-between">
-          {[1, 2, 3].map((stepNum) => (
-            <div key={stepNum} className="flex items-center flex-1">
-              <div
-                className={`flex items-center justify-center w-10 h-10 rounded-full border-2 transition-colors ${
-                  state.step === stepNum
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : state.step > stepNum
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-muted bg-background text-muted-foreground"
-                }`}
-              >
-                {stepNum}
-              </div>
-              {stepNum < 3 && (
-                <div
-                  className={`flex-1 h-0.5 mx-2 transition-colors ${
-                    state.step > stepNum ? "bg-primary" : "bg-muted"
-                  }`}
-                />
-              )}
-            </div>
-          ))}
-        </div>
-        <div className="flex justify-between mt-2 text-sm text-muted-foreground">
-          <span>Definition</span>
-          <span>Scope</span>
-          <span>Rigor</span>
+        <div className="relative">
+          {/* Connecting lines - positioned absolutely between circles */}
+          <div className="absolute top-5 left-0 right-0 h-0.5 flex items-center pointer-events-none z-0">
+            <div className="w-10 flex-shrink-0" /> {/* Space for first circle */}
+            <div
+              className={`flex-1 h-0.5 transition-colors ${
+                state.step > 1 ? "bg-primary" : "bg-muted"
+              }`}
+            />
+            <div className="w-10 flex-shrink-0" /> {/* Space for second circle */}
+            <div
+              className={`flex-1 h-0.5 transition-colors ${
+                state.step > 2 ? "bg-primary" : "bg-muted"
+              }`}
+            />
+            <div className="w-10 flex-shrink-0" /> {/* Space for third circle */}
+          </div>
+          
+          {/* Steps container - CSS Grid for equal column widths */}
+          <div className="grid grid-cols-3 relative z-10">
+            {steps.map((step, index) => {
+              const isActive = index === currentStepIndex
+              const isCompleted = index < currentStepIndex
+              const isUpcoming = index > currentStepIndex
+
+              return (
+                <div key={step.num} className="flex flex-col items-center relative z-10">
+                  {/* Circle - centered in its grid column */}
+                  <div
+                    className={`flex items-center justify-center w-10 h-10 rounded-full border-2 transition-colors relative z-10 ${
+                      isActive
+                        ? "border-emerald-600 bg-emerald-600 text-white shadow-md ring-2 ring-emerald-200"
+                        : isCompleted
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-slate-200 bg-background text-slate-400"
+                    }`}
+                  >
+                    {isCompleted ? <Check className="h-5 w-5" /> : step.num}
+                  </div>
+                  {/* Label - centered under circle */}
+                  <span
+                    className={`mt-2 text-sm text-center transition-colors ${
+                      isActive
+                        ? "text-emerald-700 font-semibold"
+                        : isCompleted
+                          ? "text-emerald-700"
+                          : "text-slate-500"
+                    }`}
+                  >
+                    {step.label}
+                  </span>
+                  {isUpcoming && <span className="sr-only">Upcoming step</span>}
+                </div>
+              )
+            })}
+          </div>
         </div>
       </div>
 
@@ -328,9 +364,9 @@ export function ProjectWizard({ onComplete }: ProjectWizardProps) {
                     <SelectValue placeholder="Select a template to pre-fill fields..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None (Start from scratch)</SelectItem>
+                    <SelectItem value="none">None (Start from scratch)</SelectItem>
                     {templatesLoading ? (
-                      <SelectItem value="" disabled>Loading templates...</SelectItem>
+                      <SelectItem value="loading" disabled>Loading templates...</SelectItem>
                     ) : (
                       templates.map((template) => (
                         <SelectItem key={template.id} value={template.id}>
@@ -340,7 +376,7 @@ export function ProjectWizard({ onComplete }: ProjectWizardProps) {
                     )}
                   </SelectContent>
                 </Select>
-                {selectedTemplate && (
+                {selectedTemplate && selectedTemplate !== "none" && selectedTemplate !== "loading" && (
                   <p className="text-xs text-muted-foreground">
                     Template applied. You can edit the fields below.
                   </p>
@@ -445,11 +481,12 @@ export function ProjectWizard({ onComplete }: ProjectWizardProps) {
       </Card>
 
       {/* Navigation */}
-      <div className="flex justify-between mt-6">
+      <div className="flex justify-between items-center mt-8 gap-4">
         <Button
           variant="outline"
           onClick={handleBack}
           disabled={state.step === 1 || isSubmitting}
+          className="flex-shrink-0"
         >
           <ChevronLeft className="h-4 w-4 mr-2" />
           Back
@@ -462,12 +499,25 @@ export function ProjectWizard({ onComplete }: ProjectWizardProps) {
               (state.step === 2 && !canProceedFromStep2) ||
               isSubmitting
             }
+            className={`flex-shrink-0 border border-slate-900 bg-slate-900 text-white hover:bg-slate-800 hover:border-slate-800 hover:text-white shadow-sm ${
+              (state.step === 1 && !canProceedFromStep1) ||
+              (state.step === 2 && !canProceedFromStep2) ||
+              isSubmitting
+                ? "opacity-50 cursor-not-allowed"
+                : ""
+            }`}
           >
             Next
             <ChevronRight className="h-4 w-4 ml-2" />
           </Button>
         ) : (
-          <Button onClick={handleSubmit} disabled={isSubmitting}>
+          <Button
+            onClick={handleSubmit}
+            disabled={isSubmitting}
+            className={`flex-shrink-0 border border-slate-900 bg-slate-900 text-white hover:bg-slate-800 hover:border-slate-800 hover:text-white shadow-sm ${
+              isSubmitting ? "opacity-50 cursor-not-allowed" : ""
+            }`}
+          >
             {isSubmitting ? "Creating..." : "Create Project"}
           </Button>
         )}
@@ -475,4 +525,3 @@ export function ProjectWizard({ onComplete }: ProjectWizardProps) {
     </div>
   )
 }
-

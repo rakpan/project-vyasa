@@ -20,13 +20,10 @@ export function NavProject() {
   const searchParams = useSearchParams()
   const { activeProjectId, activeProject } = useProjectStore()
 
-  // Don't render if no active project
-  if (!activeProjectId) {
-    return null
-  }
-
   // Construct workbench URL with project context
+  // Must call all hooks before any conditional returns (Rules of Hooks)
   const workbenchUrl = useMemo(() => {
+    if (!activeProjectId) return ""
     const jobId = searchParams.get("jobId")
     const pdfUrl = searchParams.get("pdfUrl")
     let url = `/research-workbench?projectId=${activeProjectId}`
@@ -38,6 +35,11 @@ export function NavProject() {
     }
     return url
   }, [activeProjectId, searchParams])
+
+  // Don't render if no active project (after all hooks)
+  if (!activeProjectId) {
+    return null
+  }
 
   const projectNavItems = [
     {

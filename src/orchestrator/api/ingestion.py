@@ -143,6 +143,124 @@ def _calculate_confidence_badge(job_result: Optional[Dict[str, Any]]) -> Optiona
         return "Low"
 
 
+@ingestion_bp.route("/<project_id>/files", methods=["GET"])
+def list_project_files(project_id: str):
+    """List files for a project, filtering out ghost records (files in seed_files but no IngestionRecord).
+    
+    Response:
+        {
+            "files": [
+                {
+                    "filename": str,
+                    "ingestion_id": str,
+                    "status": str,
+                    "created_at": str
+                }
+            ]
+        }
+    """
+    try:
+        ingestion_store = _get_ingestion_store()
+        if ingestion_store is None:
+            return jsonify({"error": "Database unavailable"}), 503
+        
+        # Get project to access seed_files
+        from ..server import get_project_service
+        project_service = get_project_service()
+        if project_service is None:
+            return jsonify({"error": "Database unavailable"}), 503
+        
+        try:
+            project = project_service.get_project(project_id)
+        except ValueError:
+            return jsonify({"error": "Project not found"}), 404
+        
+        seed_files = project.seed_files or []
+        
+        # Query all ingestion records for this project
+        query = """
+        FOR ing IN ingestions
+        FILTER ing.project_id == @project_id
+        RETURN ing
+        """
+        
+        cursor = ingestion_store.db.aql.execute(query, bind_vars={"project_id": project_id})
+        ingestion_records = list(cursor)
+        
+        # Build map of filename -> ingestion record
+        filename_to_record = {}
+        for record in ingestion_records:
+            filename = record.get("filename", "")
+            if filename:
+                filename_to_record[filename] = record
+        
+        # Filter seed_files to only include those with IngestionRecord
+        valid_files = []
+        for filename in seed_files:
+            if filename in filename_to_record:
+                record = filename_to_record[filename]
+                valid_files.append({
+                    "filename": filename,
+                    "ingestion_id": record.get("ingestion_id") or record.get("_key", ""),
+                    "status": record.get("status", "Unknown"),
+                    "created_at": record.get("created_at", ""),
+                })
+        
+        return jsonify({"files": valid_files}), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to list project files: {e}", exc_info=True)
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@ingestion_bp.route("/<project_id>/ingest/check", methods=["GET"])
+def check_ingestion_by_hash(project_id: str):
+    """Check if a file hash exists in ingestion records for this project.
+    
+    Query params:
+        hash: SHA256 hex digest (required)
+    
+    Response:
+        If found: 200 OK with { "exists": true, "ingestion_id": str, "status": str }
+        If not found: 200 OK with { "exists": false }
+    
+    This is a fast pre-flight validation endpoint for duplicate detection.
+    """
+    try:
+        file_hash = request.args.get("hash", "").strip()
+        
+        if not file_hash:
+            return jsonify({"error": "hash query parameter is required"}), 400
+        
+        # Validate hash format (SHA256 = 64 hex chars)
+        if len(file_hash) != 64 or not all(c in "0123456789abcdef" for c in file_hash.lower()):
+            return jsonify({"error": "Invalid hash format (expected SHA256 hex digest, 64 characters)"}), 400
+        
+        ingestion_store = _get_ingestion_store()
+        if ingestion_store is None:
+            return jsonify({"error": "Database unavailable"}), 503
+        
+        # Query for ingestion records with this hash in this project
+        records = ingestion_store.find_by_hash(file_hash, project_id=project_id)
+        
+        if records:
+            # Return the most recent record (by created_at)
+            latest = max(records, key=lambda r: r.created_at or "")
+            return jsonify({
+                "exists": True,
+                "ingestion_id": latest.ingestion_id,
+                "status": latest.status,
+            }), 200
+        else:
+            return jsonify({
+                "exists": False,
+            }), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to check ingestion by hash: {e}", exc_info=True)
+        return jsonify({"error": "Internal server error"}), 500
+
+
 @ingestion_bp.route("/<project_id>/ingest/check-duplicate", methods=["POST"])
 def check_duplicate(project_id: str):
     """Check if a file is a duplicate based on hash.
@@ -215,21 +333,18 @@ def check_duplicate(project_id: str):
 
 @ingestion_bp.route("/<project_id>/ingest/<ingestion_id>/status", methods=["GET"])
 def get_ingestion_status(project_id: str, ingestion_id: str):
-    """Get ingestion status with first glance summary.
+    """Get ingestion status with metadata for 'Watch it happen' UX.
     
     Response:
         {
-            "ingestion_id": str,
-            "status": "Queued" | "Extracting" | "Mapping" | "Verifying" | "Completed" | "Failed",
-            "progress_pct": float (0-100),
-            "error_message": str (if failed),
-            "first_glance": {
+            "status": "QUEUED" | "EXTRACTING" | "MAPPING" | "VERIFYING" | "COMPLETED" | "FAILED",
+            "progress": float (0.0-1.0),
+            "metadata": {
                 "pages": int,
-                "tables_detected": int,
-                "figures_detected": int,
+                "tables": int,
+                "figures": int,
                 "text_density": float
-            } (if available),
-            "confidence": "High" | "Medium" | "Low" (if available)
+            } (if available)
         }
     """
     try:
@@ -286,35 +401,30 @@ def get_ingestion_status(project_id: str, ingestion_id: str):
                         error_message=error_message,
                     )
         
+        # Convert status to uppercase for API response
+        status_upper = status.upper() if status else "QUEUED"
+        
+        # Convert progress_pct (0-100) to progress (0-1)
+        progress = (progress_pct / 100.0) if progress_pct is not None else 0.0
+        
+        # Build metadata from first_glance
+        metadata = None
+        if first_glance:
+            metadata = {
+                "pages": first_glance.get("pages", 0),
+                "tables": first_glance.get("tables_detected", 0),
+                "figures": first_glance.get("figures_detected", 0),
+                "text_density": first_glance.get("text_density", 0.0),
+            }
+        
         response: Dict[str, Any] = {
-            "ingestion_id": ingestion_id,
-            "status": status,  # Use 'status' for consistency with IngestionStatus enum
-            "progress_pct": progress_pct if progress_pct is not None else None,
+            "status": status_upper,
+            "progress": progress,
         }
         
-        # Include job_id if available
-        if record.job_id:
-            response["job_id"] = record.job_id
-        
-        # Only include error_message if Failed
-        if status == IngestionStatus.FAILED and error_message:
-            response["error_message"] = error_message
-        
-        # Only include first_glance when available
-        if first_glance:
-            response["first_glance"] = first_glance
-        
-        # Only include confidence after extraction (when badge is available)
-        if confidence_badge:
-            response["confidence"] = confidence_badge
-        
-        # Include Qdrant indexing status and chunk count
-        qdrant_indexed = getattr(record, "qdrant_indexed", False)
-        chunk_count = getattr(record, "chunk_count", None)
-        
-        response["qdrant_indexed"] = qdrant_indexed
-        if chunk_count is not None:
-            response["chunk_count"] = chunk_count
+        # Include metadata when available (allows UI to render 'First Glance' metrics)
+        if metadata:
+            response["metadata"] = metadata
         
         return jsonify(response), 200
         
