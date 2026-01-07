@@ -78,6 +78,8 @@ export function StrategicInterventionPanel({ jobId, projectId }: Props) {
         const params = new URLSearchParams({ jobId: newJobId, projectId })
         router.push(`/research-workbench?${params.toString()}`)
       } else {
+        // Note: Keep redirect here - this is workflow completion, not an error state.
+        // After accepting a reframe, if no new job ID is returned, navigate to projects.
         router.push("/projects")
       }
     } catch (e: any) {
@@ -102,6 +104,8 @@ export function StrategicInterventionPanel({ jobId, projectId }: Props) {
         throw new Error(msg || "Failed to reject reframe")
       }
       toast({ title: "Reframe rejected. Job marked as failed." })
+      // Note: Keep redirect here - this is workflow completion after rejecting a reframe.
+      // User has completed an action and should return to project list.
       router.push("/projects")
     } catch (e: any) {
       setError(e?.message || "Failed to reject reframe.")

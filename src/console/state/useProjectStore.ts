@@ -6,7 +6,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ProjectConfig, ProjectSummary, ProjectCreate } from '@/types/project';
+import type { ProjectConfig, ProjectSummary, ProjectCreate, ProjectHubSummary } from '@/types/project';
 import * as projectService from '@/services/projectService';
 import { ApiError } from '@/lib/api';
 
@@ -28,6 +28,7 @@ interface ProjectState {
   clearActiveJob: () => void;
   createProject: (payload: ProjectCreate) => Promise<ProjectConfig>;
   updateRigor: (rigor: "exploratory" | "conservative") => Promise<void>;
+  updateProject: (projectId: string, updates: Partial<ProjectConfig>) => Promise<ProjectConfig>;
   clearActiveProject: () => void;
   clearError: () => void;
 }
@@ -146,6 +147,62 @@ export const useProjectStore = create<ProjectState>()(
           const message = projectService.safeParseError(error);
           set({ error: message });
           console.error('Failed to update rigor level:', error);
+          throw error;
+        }
+      },
+
+      /**
+       * Update project fields (partial update).
+       * Updates:
+       * - activeProject if it matches the edited project
+       * - projects list if the project is in memory
+       * 
+       * @param projectId - Project UUID to update
+       * @param updates - Partial ProjectConfig with fields to update
+       * @returns Promise resolving to updated ProjectConfig
+       */
+      updateProject: async (projectId: string, updates: Partial<ProjectConfig>) => {
+        try {
+          const updated = await projectService.updateProject(projectId, updates);
+          const state = get();
+          
+          // Update activeProject if it matches
+          if (state.activeProjectId === projectId && state.activeProject) {
+            set({ activeProject: updated });
+          }
+          
+          // Update projects list if project is in memory
+          // Match by id (ProjectSummary uses 'id' field)
+          const projectIdToMatch = updated.id || updated.project_id || projectId;
+          const updatedProjects = state.projects.map((p) => {
+            // ProjectSummary.id should match projectId
+            if (p.id === projectIdToMatch || p.id === projectId) {
+              // Merge updated fields into summary (only fields that exist in ProjectSummary)
+              // ProjectSummary has: id, title, created_at, seed_files (optional)
+              return {
+                ...p,
+                title: updated.title || p.title,
+                // Note: ProjectSummary doesn't have rigor_level, tags, status, etc.
+                // Only update fields that exist in both types
+              };
+            }
+            return p;
+          });
+          
+          // Only update if we actually modified a project in the list
+          const hasChanges = updatedProjects.some((p, idx) => {
+            const old = state.projects[idx];
+            return old && (p.id !== old.id || p.title !== old.title);
+          });
+          if (hasChanges) {
+            set({ projects: updatedProjects });
+          }
+          
+          return updated;
+        } catch (error) {
+          const message = projectService.safeParseError(error);
+          set({ error: message });
+          console.error(`Failed to update project ${projectId}:`, error);
           throw error;
         }
       },

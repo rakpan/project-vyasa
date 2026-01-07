@@ -42,17 +42,18 @@ export function TopBar() {
 
   // Determine active pane from pathname
   const activePane = useMemo(() => {
-    if (pathname === "/research-workbench") return "Workbench"
+    if (pathname === "/research-workbench") return "Research Cockpit"
     if (pathname.includes("/manuscript")) return "Manuscript"
+    if (pathname.includes("/workbench")) return "Workbench"
     if (pathname.match(/^\/projects\/[^/]+$/)) return "Evidence Engine"
+    if (pathname.includes("/profile")) return "Project Profile"
     return null
   }, [pathname])
 
   // Build breadcrumbs synchronized with URL and store state
+  // Note: Removed duplicate "Projects" label - Home icon serves as Projects link
   const breadcrumbs = useMemo(() => {
-    const crumbs: Array<{ label: string; href?: string }> = [
-      { label: "Projects", href: "/projects" },
-    ]
+    const crumbs: Array<{ label: string; href?: string }> = []
 
     // Add project name if available (from store or URL)
     if (activeProjectId) {

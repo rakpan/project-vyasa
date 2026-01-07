@@ -39,7 +39,7 @@ from arango import ArangoClient
 
 from .pdf_processor import process_pdf
 from .workflow import build_workflow
-from .state import ResearchState, JobStatus, DEFAULT_REVISION_COUNT
+from .state import ResearchState, JobStatus, DEFAULT_REVISION_COUNT, PhaseEnum
 from .telemetry import get_telemetry_emitter
 from .job_manager import (
     create_job,
@@ -523,6 +523,17 @@ def create_project():
         # Ensure response echoes requested fields (tests expect payload values)
         resp["title"] = project_create.title
         resp["thesis"] = project_create.thesis
+        
+        # TODO: Persist creation-time metadata in a `createdWith` object at creation time.
+        # This would capture immutable creation context such as:
+        # - initial_rigor_level (snapshot of rigor_level at creation, even if later changed)
+        # - initial_status (snapshot of status at creation)
+        # - template_id (if project was created from a template)
+        # - seed_corpus_mode (if seed files were provided at creation)
+        # - created_by (user ID who created the project)
+        # This would enable the profile page to clearly answer "What was this project created with?"
+        # without relying on fields that can be edited post-creation.
+        
         return jsonify(resp), 201
         
     except ValueError as e:
@@ -749,19 +760,37 @@ def list_project_templates():
         return jsonify({"error": "Failed to retrieve project templates"}), 500
 
 
-@app.route("/api/projects/<project_id>", methods=["GET"])
-def get_project(project_id: str):
-    """Get a project by ID.
+@app.route("/api/projects/<project_id>", methods=["GET", "PATCH"])
+def get_or_update_project(project_id: str):
+    """Get or update a project by ID.
+    
+    GET: Returns ProjectConfig with full project details.
+    PATCH: Updates project fields (partial update).
     
     Args:
         project_id: UUID of the project.
     
+    Request body (PATCH):
+        Partial ProjectConfig with fields to update:
+        {
+            "title": str (optional),
+            "rigor_level": "exploratory" | "conservative" (optional),
+            "research_questions": List[str] (optional),
+            "thesis": str (optional),
+            "anti_scope": List[str] (optional),
+            "target_journal": str (optional),
+            "tags": List[str] (optional),
+            "status": "Idle" | "Processing" | "AttentionNeeded" (optional)
+        }
+    
     Response:
-        ProjectConfig with full project details.
+        ProjectConfig with updated fields.
     
     Errors:
         404: Project not found
+        400: Invalid update payload
         503: Database unavailable
+        500: Update failed
     """
     project_service = get_project_service()
     if project_service is None:
@@ -769,17 +798,101 @@ def get_project(project_id: str):
     
     try:
         project = project_service.get_project(project_id)
-        return jsonify(project.model_dump()), 200
-        
-    except ValueError as e:
-        # Project not found
+    except ValueError:
         return jsonify({"error": "Project not found"}), 404
-    except RuntimeError as e:
-        logger.error(f"Failed to get project {project_id}: {e}", exc_info=True)
-        return jsonify({"error": "Failed to get project"}), 503
-    except Exception as e:
-        logger.error(f"Unexpected error getting project {project_id}: {e}", exc_info=True)
-        return jsonify({"error": "Internal server error"}), 500
+    except Exception as exc:
+        logger.error(f"Failed to fetch project {project_id}: {exc}", exc_info=True)
+        return jsonify({"error": "Database unavailable"}), 503
+    
+    if request.method == "GET":
+        return jsonify(project.model_dump()), 200
+    
+    # PATCH: Update project
+    payload = request.json or {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Invalid request body"}), 400
+    
+    # Validate and build update dict
+    updates = {}
+    if "title" in payload:
+        title = (payload.get("title") or "").strip()
+        if title:
+            updates["title"] = title
+        else:
+            return jsonify({"error": "Title cannot be empty"}), 400
+    
+    if "rigor_level" in payload:
+        rigor = (payload.get("rigor_level") or "").strip().lower()
+        if rigor in ("conservative", "exploratory"):
+            updates["rigor_level"] = rigor
+        else:
+            return jsonify({"error": "rigor_level must be 'conservative' or 'exploratory'"}), 400
+    
+    if "research_questions" in payload:
+        rqs = payload.get("research_questions")
+        if isinstance(rqs, list) and len(rqs) > 0:
+            # Validate all RQs are non-empty strings
+            validated_rqs = []
+            for rq in rqs:
+                if isinstance(rq, str) and rq.strip():
+                    validated_rqs.append(rq.strip())
+            if len(validated_rqs) > 0:
+                updates["research_questions"] = validated_rqs
+            else:
+                return jsonify({"error": "At least one non-empty research question is required"}), 400
+        else:
+            return jsonify({"error": "research_questions must be a non-empty list"}), 400
+    
+    if "thesis" in payload:
+        thesis = (payload.get("thesis") or "").strip()
+        if thesis:
+            updates["thesis"] = thesis
+        else:
+            return jsonify({"error": "Thesis cannot be empty"}), 400
+    
+    if "anti_scope" in payload:
+        anti_scope = payload.get("anti_scope")
+        if anti_scope is None or (isinstance(anti_scope, list)):
+            updates["anti_scope"] = anti_scope if anti_scope else []
+    
+    if "target_journal" in payload:
+        target_journal = (payload.get("target_journal") or "").strip() or None
+        updates["target_journal"] = target_journal
+    
+    if "tags" in payload:
+        tags = payload.get("tags")
+        if isinstance(tags, list):
+            # Validate all tags are strings
+            validated_tags = [str(tag).strip() for tag in tags if str(tag).strip()]
+            updates["tags"] = validated_tags
+    
+    if "status" in payload:
+        status = (payload.get("status") or "").strip()
+        if status in ("Idle", "Processing", "AttentionNeeded"):
+            updates["status"] = status
+        else:
+            return jsonify({"error": "status must be 'Idle', 'Processing', or 'AttentionNeeded'"}), 400
+    
+    if not updates:
+        return jsonify({"error": "No valid fields to update"}), 400
+    
+    try:
+        from datetime import datetime, timezone
+        collection = project_service.db.collection(project_service.COLLECTION_NAME)
+        
+        # Add last_updated timestamp
+        updates["last_updated"] = datetime.now(timezone.utc).isoformat()
+        
+        # Update in database
+        collection.update({"_key": project_id, **updates})
+        
+        # Fetch updated project
+        updated_project = project_service.get_project(project_id)
+        logger.info(f"Updated project {project_id}: {list(updates.keys())}")
+        return jsonify(updated_project.model_dump()), 200
+    except Exception as exc:
+        logger.error(f"Failed to update project {project_id}: {exc}", exc_info=True)
+        return jsonify({"error": "Failed to update project"}), 500
 
 
 def _run_workflow_async(job_id: str, initial_state: ResearchState) -> None:
@@ -979,6 +1092,32 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
             store_quality_metrics(job_id, result)
             set_job_result(job_id, result)
             emit_reprocess_completion_telemetry(job_id, result)
+            
+            # Update ingestion record to COMPLETED when job succeeds
+            ingestion_id = initial_state.get("ingestion_id")
+            if ingestion_id:
+                try:
+                    from .ingestion_store import IngestionStore, IngestionStatus
+                    from .services.project_service import get_project_service
+                    project_service = get_project_service()
+                    if project_service:
+                        ingestion_store = IngestionStore(project_service.db)
+                        # Get triples count for metadata
+                        extracted = result.get("extracted_json", {})
+                        triples_count = len(extracted.get("triples", [])) if isinstance(extracted, dict) else 0
+                        ingestion_store.update_ingestion(
+                            ingestion_id,
+                            status=IngestionStatus.COMPLETED,  # Use constant to ensure consistency
+                            progress_pct=100.0,
+                            error_message=None,  # Clear any previous errors
+                        )
+                        logger.info(
+                            f"Updated ingestion {ingestion_id} to COMPLETED",
+                            extra={"payload": {"ingestion_id": ingestion_id, "triples_count": triples_count}}
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to update ingestion {ingestion_id} to COMPLETED: {e}", exc_info=True)
+                    # Don't fail the job if ingestion update fails
 
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Workflow execution failed for job {job_id}", exc_info=True)
@@ -1027,11 +1166,17 @@ def submit_workflow():
         pdf_path = ""
         payload_images: list[str] = []
         uploaded_filename = ""
+        ingestion_id: Optional[str] = None  # Initialize for file uploads
+        doc_hash: Optional[str] = None  # Initialize for file uploads
 
         # Handle file upload or JSON request
         is_multipart = request.content_type and "multipart/form-data" in request.content_type
         payload = request.json or {} if not is_multipart else {}
         project_id = request.form.get("project_id") if is_multipart else payload.get("project_id")
+        
+        # Initialize variables for file upload flow
+        ingestion_id = None
+        doc_hash = None
 
         if is_multipart:
             # Validate project_id before processing file to avoid wasted work on bad requests
@@ -1063,47 +1208,107 @@ def submit_workflow():
                         logger.error(f"Failed to fetch project {project_id}: {e}", exc_info=True)
                         return jsonify({"error": "Database unavailable"}), 503
 
-                    # Save to temp and extract text
-                    tmpdir = tempfile.mkdtemp(prefix="vyasa_pdf_")
-                    safe_name = secure_filename(uploaded.filename)
-                    pdf_path = str(Path(tmpdir) / safe_name)
-                    uploaded.save(pdf_path)
+                    # ============================================================
+                    # LANDING ZONE PATTERN: Land, Log, then Process
+                    # ============================================================
                     
-                    # Calculate file hash before processing (for duplicate detection)
-                    import hashlib
-                    with open(pdf_path, "rb") as f:
-                        file_content = f.read()
-                        doc_hash = hashlib.sha256(file_content).hexdigest()
-                    
+                    # STEP 1: LAND - Save file to persistent storage
+                    from .storage.local_file_store import LocalFileStore
+                    file_store = LocalFileStore()
                     try:
-                        # Extract markdown from PDF (keep images around)
-                        markdown, images_dir, image_paths = process_pdf(pdf_path)
-                        raw_text = markdown
+                        persistent_file_path = file_store.save_upload(uploaded, project_id)
+                        logger.info(
+                            f"File landed in persistent storage",
+                            extra={"payload": {"filename": uploaded_filename, "path": persistent_file_path}}
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to save file to landing zone: {e}", exc_info=True)
+                        return jsonify({"error": "Failed to save file to persistent storage"}), 500
+                    
+                    # STEP 2: Compute hash from persistent file
+                    # Use client-provided hash if available, otherwise compute it
+                    import hashlib
+                    client_hash = request.form.get("file_hash", "").strip()
+                    if client_hash and len(client_hash) == 64 and all(c in "0123456789abcdef" for c in client_hash.lower()):
+                        doc_hash = client_hash
+                        logger.debug(f"Using client-provided hash for {uploaded_filename}")
+                    else:
+                        # Calculate file hash from persistent file
+                        with open(persistent_file_path, "rb") as f:
+                            file_content = f.read()
+                            doc_hash = hashlib.sha256(file_content).hexdigest()
+                        logger.debug(f"Computed hash server-side for {uploaded_filename}")
+                    
+                    # STEP 3: LOG - Create IngestionRecord BEFORE processing
+                    # This ensures the file is tracked even if processing fails
+                    from .ingestion_store import IngestionStore
+                    ingestion_store = IngestionStore(project_service.db)
+                    
+                    # Compute first glance deterministically from PDF structure
+                    first_glance = None
+                    try:
+                        from .first_glance import compute_first_glance_from_path
+                        first_glance = compute_first_glance_from_path(persistent_file_path)
+                        logger.info(f"Computed first glance for {uploaded_filename}", extra={"payload": {"pages": first_glance.get("pages"), "tables": first_glance.get("tables_detected"), "figures": first_glance.get("figures_detected")}})
+                    except Exception as e:
+                        logger.warning(f"Failed to compute first glance for {uploaded_filename}: {e}", exc_info=True)
+                        # Continue without first_glance (will be computed later from job result)
+                    
+                    # Create new ingestion record with persistent file path
+                    ingestion_record = ingestion_store.create_ingestion(
+                        project_id=project_id,
+                        filename=uploaded_filename,
+                        file_hash=doc_hash,
+                        file_path=persistent_file_path,  # Store persistent path
+                        first_glance=first_glance,
+                    )
+                    ingestion_id = ingestion_record.ingestion_id  # Set for use in response
+                    
+                    # Add to seed files
+                    project_service.add_seed_file(project_id, uploaded_filename)
+                    
+                    # STEP 4: Extract text from persistent file (for initial state)
+                    # This is done synchronously to validate the file before queuing
+                    try:
+                        markdown, images_dir, image_paths = process_pdf(persistent_file_path)
+                        raw_text = markdown or ""
+                        if not raw_text or not raw_text.strip():
+                            logger.error(f"PDF processing returned empty text for {uploaded_filename}")
+                            # Update ingestion record with error
+                            ingestion_store.update_ingestion(
+                                ingestion_id,
+                                status="Failed",
+                                error_message="PDF file appears to be empty or unreadable",
+                            )
+                            return jsonify({"error": "PDF file appears to be empty or unreadable"}), 400
                     except Exception as e:
                         logger.error("Failed to process PDF", exc_info=True)
+                        # Update ingestion record with error
+                        ingestion_store.update_ingestion(
+                            ingestion_id,
+                            status="Failed",
+                            error_message=f"Invalid or unreadable PDF file: {str(e)}",
+                        )
                         return jsonify({"error": "Invalid or unreadable PDF file"}), 400
                     
                     # Cache PDF text layers for evidence verification
                     try:
                         from .pdf_text_cache import store_page_text
                         import pymupdf
-                        doc = pymupdf.open(pdf_path)
-                        for page_num in range(1, len(doc) + 1):
+                        doc = pymupdf.open(persistent_file_path)
+                        page_count = len(doc)  # Get page count before closing
+                        for page_num in range(1, page_count + 1):
                             page_obj = doc[page_num - 1]
                             page_text = page_obj.get_text()
-                            store_page_text(doc_hash, page_num, page_text, pdf_path=str(pdf_path))
+                            store_page_text(doc_hash, page_num, page_text, pdf_path=str(persistent_file_path))
                         doc.close()
-                        logger.info(f"Cached PDF text layers", extra={"payload": {"doc_hash": doc_hash[:16], "pages": len(doc)}})
+                        logger.info(f"Cached PDF text layers", extra={"payload": {"doc_hash": doc_hash[:16], "pages": page_count}})
                     except Exception as e:
                         logger.warning(f"Failed to cache PDF text layers: {e}", exc_info=True)
                         # Continue without caching (graceful degradation)
                     
-                    # Store PDF path for Qdrant ingestion (will be processed in workflow)
-                    # The pdf_path is already set above, and ingestion_id will be created below
-                    
-                    # Keep actual PDF path for Qdrant ingestion, but use filename for display
-                    pdf_path_display = uploaded.filename  # Use original filename for display
-                    pdf_path = pdf_path_for_qdrant  # Keep actual path for Qdrant
+                    # Use persistent file path for workflow
+                    pdf_path = persistent_file_path
                     payload_images = image_paths
         else:
             # JSON request
@@ -1133,47 +1338,10 @@ def submit_workflow():
                 logger.error(f"Failed to fetch project {project_id}: {e}", exc_info=True)
                 return jsonify({"error": "Database unavailable"}), 503
 
-        # Create ingestion record and seed corpus update when file is uploaded
-        ingestion_id = None
-        if uploaded_filename and is_multipart:
-            # Require file_hash for ingestion record (atomic creation)
-            if 'doc_hash' not in locals() or not doc_hash:
-                return jsonify({"error": "File hash is required for ingestion. Upload failed."}), 400
-            
-            try:
-                from .ingestion_store import IngestionStore
-                ingestion_store = IngestionStore(project_service.db)
-                
-                # Compute first glance deterministically from PDF structure (if PDF path available)
-                first_glance = None
-                if pdf_path:
-                    try:
-                        from .first_glance import compute_first_glance_from_path
-                        first_glance = compute_first_glance_from_path(pdf_path)
-                        logger.info(f"Computed first glance for {uploaded_filename}", extra={"payload": {"pages": first_glance.get("pages"), "tables": first_glance.get("tables_detected"), "figures": first_glance.get("figures_detected")}})
-                    except Exception as e:
-                        logger.warning(f"Failed to compute first glance for {uploaded_filename}: {e}", exc_info=True)
-                        # Continue without first_glance (will be computed later from job result)
-                
-                # Create ingestion record (atomic - fails if file_hash missing)
-                ingestion_record = ingestion_store.create_ingestion(
-                    project_id=project_id,
-                    filename=uploaded_filename,
-                    file_hash=doc_hash,
-                    first_glance=first_glance,  # Include if computed
-                )
-                ingestion_id = ingestion_record.ingestion_id
-                
-                # Add to seed files
-                project_service.add_seed_file(project_id, uploaded_filename)
-            except Exception as e:
-                logger.error(f"Failed to create ingestion record for {project_id}: {e}", exc_info=True)
-                # Security: Don't expose exception details to client to prevent information disclosure
-                return jsonify({"error": "Failed to create ingestion record"}), 500
+        # Ingestion record is already created in the multipart file handling section above
+        # ingestion_id is set in that section if a file was uploaded
 
         # Prepare initial state
-        from ..state import PhaseEnum
-        
         initial_state: ResearchState = {
             "raw_text": raw_text,
             "pdf_path": pdf_path or payload.get("pdf_path", ""),
@@ -1185,6 +1353,13 @@ def submit_workflow():
             "rigor_level": (project_context or {}).get("rigor_level") or "exploratory",
             "phase": PhaseEnum.MAPPING.value,  # Workflow starts with cartographer (mapping phase)
         }
+        
+        # Add ingestion_id and doc_hash for file uploads (required for Qdrant indexing and provenance)
+        if ingestion_id:
+            initial_state["ingestion_id"] = ingestion_id
+        if 'doc_hash' in locals() and doc_hash:
+            initial_state["doc_hash"] = doc_hash
+            initial_state["file_hash"] = doc_hash  # Also set file_hash for compatibility
         
         # Inject project context if available
         if project_context:
@@ -1826,8 +2001,6 @@ def run_workflow():
         logger.error(f"Failed to fetch project {project_id}: {e}", exc_info=True)
         return jsonify({"error": "Database unavailable"}), 503
 
-    from ..state import PhaseEnum
-    
     initial_state: ResearchState = {
         "raw_text": raw_text,
         "pdf_path": payload.get("pdf_path", ""),

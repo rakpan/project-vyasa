@@ -86,11 +86,11 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
-  const { path: pathArray } = await params;
-  const path = pathArray.join('/');
-  const url = new URL(request.url);
-  const queryString = url.search;
-  const isStream = path.includes('/stream');
+    const { path: pathArray } = await params;
+    const path = pathArray.join('/');
+    const url = new URL(request.url);
+    const queryString = url.search; // Already includes '?' if present
+    const isStream = path.includes('/stream');
 
   try {
     // Get session for authentication
@@ -105,7 +105,8 @@ export async function GET(
     // Note: For JWT-based auth, we would extract the token from the session
     // For cookie-based auth (NextAuth default), the session is validated server-side
     
-    const targetUrl = `${ORCHESTRATOR_URL}/${path}${queryString ? `?${queryString}` : ''}`;
+    // queryString already includes '?' if present, so just append it
+    const targetUrl = `${ORCHESTRATOR_URL}/${path}${queryString}`;
     console.log(`[Proxy] GET ${targetUrl}`);
     
     const response = await fetchWithRetry(targetUrl, {
@@ -259,6 +260,108 @@ export async function POST(
     console.error('Full error:', error);
     
     // For retryable errors, indicate it's temporary and suggest retry
+    if (isRetryable) {
+      return NextResponse.json(
+        { 
+          error: 'Orchestrator service is temporarily unavailable',
+          details: errorMessage,
+          hint: 'The orchestrator may be starting up. The request will be retried automatically.',
+          code: 'ORCHESTRATOR_UNAVAILABLE',
+          retryable: true,
+          retry_after: 2, // Suggest retry after 2 seconds
+        },
+        { 
+          status: 503,
+          headers: {
+            'Retry-After': '2', // HTTP standard header for retry timing
+          }
+        }
+      );
+    }
+    
+    // For non-retryable errors, return standard error
+    return NextResponse.json(
+      { 
+        error: 'Failed to proxy request to orchestrator',
+        details: errorMessage,
+        hint: 'Check if orchestrator service is running and ORCHESTRATOR_URL is correct',
+        code: 'ORCHESTRATOR_ERROR',
+        retryable: false,
+      },
+      { status: 503 }
+    );
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  const { path: pathArray } = await params;
+  const path = pathArray.join('/');
+  const contentType = request.headers.get('content-type') || 'application/json';
+
+  try {
+    // Get session for authentication
+    const { auth } = await import('@/auth');
+    const session = await auth();
+    
+    let body: BodyInit;
+    let headers: HeadersInit = {};
+
+    if (contentType.includes('multipart/form-data')) {
+      // Forward FormData as-is
+      body = await request.formData();
+      // Don't set Content-Type - fetch will set it with boundary
+    } else {
+      // JSON request
+      body = await request.text();
+      headers['Content-Type'] = 'application/json';
+    }
+    
+    // Include Authorization header if session exists
+    // Note: For JWT-based auth, we would extract the token from the session
+    // For cookie-based auth (NextAuth default), the session is validated server-side
+
+    const targetUrl = `${ORCHESTRATOR_URL}/${path}`;
+    console.log(`[Proxy] PATCH ${targetUrl}`);
+    
+    const response = await fetchWithRetry(targetUrl, {
+      method: 'PATCH',
+      headers,
+      body,
+      // Add timeout to prevent hanging
+      signal: AbortSignal.timeout(30000), // 30 second timeout
+    });
+
+    // Handle error responses from orchestrator
+    if (!response.ok) {
+      let errorData: any;
+      try {
+        errorData = await response.json();
+      } catch {
+        // If response is not JSON, get text
+        const errorText = await response.text();
+        errorData = { error: errorText || `Orchestrator returned ${response.status}` };
+      }
+      console.error(`Orchestrator proxy PATCH error (${response.status}):`, errorData);
+      return NextResponse.json(
+        { error: errorData.error || 'Orchestrator request failed', details: errorData },
+        { status: response.status }
+      );
+    }
+
+    const data = await response.json();
+    return NextResponse.json(data, { status: response.status });
+  } catch (error) {
+    // Network errors, connection refused, etc.
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isRetryable = isRetryableError(error);
+    
+    console.error('Orchestrator proxy PATCH error:', errorMessage);
+    console.error('Full error:', error);
+    
+    // For retryable errors, indicate it's temporarily unavailable
     if (isRetryable) {
       return NextResponse.json(
         { 

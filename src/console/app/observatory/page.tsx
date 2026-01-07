@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { AlertCircle } from "lucide-react"
+import { AgentHeartbeatPanel } from "@/components/agent-heartbeat-panel"
 
 type SeriesPoint = { timestamp: string; value: number }
 
@@ -240,6 +241,7 @@ export default function ObservatoryPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-4">
+        <AgentHeartbeatPanel />
         {/* Quality */}
         <Card className="md:col-span-2 lg:col-span-2 bg-card/80 border-border/60">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

@@ -53,6 +53,8 @@ function ReferenceReviewContent() {
     if (projectId) {
       router.push(`/projects/${projectId}`)
     } else {
+      // Note: Keep redirect here - this is explicit navigation action (back button),
+      // not an error state. If projectId is missing, fallback to projects list.
       router.push("/projects")
     }
   }

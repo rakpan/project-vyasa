@@ -81,13 +81,22 @@ class RoleRegistry:
             # Create indexes for fast lookups
             collection = self.db.collection(ROLES_COLLECTION)
             # Index on name+version for unique lookups
-            if not collection.has_index("idx_name_version"):
-                collection.add_index({"type": "persistent", "fields": ["name", "version"], "unique": True})
-                logger.info(f"Created index on 'name,version' in '{ROLES_COLLECTION}'")
+            # Check if index exists by looking at existing indexes
+            existing_indexes = collection.indexes()
+            index_names = {idx.get("name", "") for idx in existing_indexes}
+            if "idx_name_version" not in index_names:
+                try:
+                    collection.add_index({"type": "persistent", "fields": ["name", "version"], "unique": True, "name": "idx_name_version"})
+                    logger.info(f"Created index on 'name,version' in '{ROLES_COLLECTION}'")
+                except ArangoError:
+                    pass  # Index may have been created concurrently
             # Index on name for filtering
-            if not collection.has_index("idx_name"):
-                collection.add_index({"type": "persistent", "fields": ["name"]})
-                logger.info(f"Created index on 'name' in '{ROLES_COLLECTION}'")
+            if "idx_name" not in index_names:
+                try:
+                    collection.add_index({"type": "persistent", "fields": ["name"], "name": "idx_name"})
+                    logger.info(f"Created index on 'name' in '{ROLES_COLLECTION}'")
+                except ArangoError:
+                    pass  # Index may have been created concurrently
             
             logger.info(f"Role Registry initialized: {self.arango_url}/{self.arango_db_name}")
             

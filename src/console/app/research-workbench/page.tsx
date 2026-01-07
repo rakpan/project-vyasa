@@ -23,6 +23,7 @@ import { ManifestBar } from "@/components/manifest-bar"
 import { ManuscriptHealthTile } from "@/components/manuscript-health-tile"
 import { EmptyStateWorkbench } from "@/components/empty-state-workbench"
 import { BackendOffline } from "@/components/backend-offline"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 /**
  * Skeleton loader component for panes
@@ -69,7 +70,7 @@ function ResearchWorkbenchContent() {
   const [diag, setDiag] = useState<any>(null)
   const [isLoadingJob, setIsLoadingJob] = useState(true)
   const { focusMode, toggleFocusMode } = useResearchStore()
-  const { activeProjectId, setActiveProject, setActiveJobContext } = useProjectStore()
+  const { activeProjectId, activeProject, isLoading, error, setActiveProject, setActiveJobContext } = useProjectStore()
   const [waitingProposal, setWaitingProposal] = useState<any>(null)
   const neutralityScore = useMemo(() => {
     const flags = diag?.tone_flags ?? 0
@@ -86,6 +87,14 @@ function ResearchWorkbenchContent() {
     }
   }, [projectId, jobId, pdfUrl, threadId, activeProjectId, setActiveProject, setActiveJobContext])
 
+  // If no jobId but projectId exists, redirect to Project Profile
+  // Project Profile is the canonical place for viewing/editing project details
+  useEffect(() => {
+    if (!jobId && projectId) {
+      router.replace(`/projects/${projectId}/profile`)
+    }
+  }, [jobId, projectId, router])
+
   const handleRescan = async (coords: any) => {
     try {
       await fetch("/cortex/vision/rescan", {
@@ -98,15 +107,17 @@ function ResearchWorkbenchContent() {
     }
   }
 
-  // Single guard: redirect if job/project missing, verify job exists
+  // Single guard: show inline empty state if job/project missing, verify job exists
   useEffect(() => {
-    if (!jobId || !projectId) {
+    if (!projectId) {
       setGuarded(true)
-      router.push("/projects")
-      toast({
-        title: "Select a project/job",
-        description: "Workbench requires jobId and projectId. Redirected to Projects.",
-      })
+      setIsLoadingJob(false)
+      return
+    }
+
+    if (!jobId) {
+      setGuarded(false)
+      setIsLoadingJob(false)
       return
     }
 
@@ -120,24 +131,14 @@ function ResearchWorkbenchContent() {
         
         if (!response.ok) {
           if (response.status === 404) {
-            // Job not found
+            // Job not found - show inline empty state
             setGuarded(true)
-            router.push("/projects")
-            toast({
-              title: "Job not found",
-              description: "The requested job does not exist. Redirected to Projects.",
-              variant: "destructive",
-            })
+            setIsLoadingJob(false)
             return
           } else if (response.status === 403) {
-            // Project mismatch
+            // Project mismatch - show inline empty state
             setGuarded(true)
-            router.push("/projects")
-            toast({
-              title: "Job project mismatch",
-              description: "The job does not belong to the specified project. Redirected to Projects.",
-              variant: "destructive",
-            })
+            setIsLoadingJob(false)
             return
           }
           // Other errors - allow to proceed but log
@@ -210,6 +211,18 @@ function ResearchWorkbenchContent() {
     }
   }, [jobId])
 
+  // If no jobId but projectId exists, show redirect message
+  // (Redirect is handled in useEffect above)
+  if (!jobId && projectId) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center space-y-2">
+          <p className="text-sm text-muted-foreground">Redirecting to Project Profile...</p>
+        </div>
+      </div>
+    )
+  }
+
   // Listen for LangGraph interrupts via event stream
   useEffect(() => {
     if (!jobId) return
@@ -232,8 +245,45 @@ function ResearchWorkbenchContent() {
     }
   }, [jobId])
 
+  // Show inline empty state for missing project/job or validation errors
   if (guarded) {
-    return null
+    const errorType = !projectId 
+      ? "missing-project" 
+      : (jobStatus === "" && !isLoadingJob && jobId)
+        ? "job-not-found"
+        : "job-mismatch"
+    
+    return (
+      <div className="h-full flex items-center justify-center p-8">
+        <Card className="max-w-md w-full border-destructive/50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              {errorType === "missing-project" 
+                ? "Project Required"
+                : errorType === "job-not-found"
+                  ? "Job Not Found"
+                  : "Job Project Mismatch"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {errorType === "missing-project"
+                ? "Research Cockpit requires a project ID. Please select a project to continue."
+                : errorType === "job-not-found"
+                  ? "The requested job does not exist or has been deleted."
+                  : "The job does not belong to the specified project."}
+            </p>
+            <Button 
+              onClick={() => router.push("/projects")}
+              className="w-full"
+            >
+              Go to Projects
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   // Show empty state when no PDF and no job context

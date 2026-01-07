@@ -32,7 +32,7 @@ export function SparkPulseMini() {
         try {
           // Use abortable fetch to ensure cancellation on unmount
           const { promise } = createAbortableFetch<Pulse>(
-            "/system/pulse",
+            "/api/proxy/orchestrator/system/pulse",
             { signal }
           )
 

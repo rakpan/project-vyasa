@@ -199,11 +199,44 @@ def list_project_files(project_id: str):
         for filename in seed_files:
             if filename in filename_to_record:
                 record = filename_to_record[filename]
+                ingestion_id = record.get("ingestion_id") or record.get("_key", "")
+                job_id = record.get("job_id")
+                
+                # Try to get triples count from job result if job completed
+                triples_count = None
+                if job_id and record.get("status") == IngestionStatus.COMPLETED:
+                    try:
+                        from ..job_manager import get_job
+                        job = get_job(job_id)
+                        if job and job.get("result"):
+                            extracted = job.get("result", {}).get("extracted_json", {})
+                            if isinstance(extracted, dict):
+                                triples = extracted.get("triples", [])
+                                if isinstance(triples, list):
+                                    triples_count = len(triples)
+                    except Exception:
+                        pass  # Best-effort, don't fail if we can't get count
+                
+                # Get error message if status is FAILED
+                error_message = record.get("error_message")
+                if not error_message and record.get("status") == IngestionStatus.FAILED:
+                    # Try to get error from job if available
+                    if job_id:
+                        try:
+                            from ..job_manager import get_job
+                            job = get_job(job_id)
+                            if job:
+                                error_message = job.get("error")
+                        except Exception:
+                            pass
+                
                 valid_files.append({
                     "filename": filename,
-                    "ingestion_id": record.get("ingestion_id") or record.get("_key", ""),
+                    "ingestion_id": ingestion_id,
                     "status": record.get("status", "Unknown"),
                     "created_at": record.get("created_at", ""),
+                    "triples_count": triples_count,  # Number of triples extracted
+                    "error_message": error_message,  # Error message if processing failed
                 })
         
         return jsonify({"files": valid_files}), 200
@@ -392,13 +425,17 @@ def get_ingestion_status(project_id: str, ingestion_id: str):
                         first_glance=first_glance,
                         confidence_badge=confidence_badge,
                     )
-                elif status != record.status or progress_pct != record.progress_pct:
+                elif status != record.status or progress_pct != record.progress_pct or error_message != record.error_message:
                     # Update status/progress if changed
                     ingestion_store.update_ingestion(
                         ingestion_id,
                         status=status,
                         progress_pct=progress_pct,
                         error_message=error_message,
+                    )
+                    logger.debug(
+                        f"Updated ingestion {ingestion_id} status from {record.status} to {status}",
+                        extra={"payload": {"ingestion_id": ingestion_id, "old_status": record.status, "new_status": status, "progress_pct": progress_pct}}
                     )
         
         # Convert status to uppercase for API response
@@ -425,6 +462,10 @@ def get_ingestion_status(project_id: str, ingestion_id: str):
         # Include metadata when available (allows UI to render 'First Glance' metrics)
         if metadata:
             response["metadata"] = metadata
+        
+        # Include error_message when present (allows UI to show processing errors at any stage)
+        if error_message:
+            response["error_message"] = error_message
         
         return jsonify(response), 200
         

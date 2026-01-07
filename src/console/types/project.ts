@@ -15,6 +15,7 @@ export interface ProjectCreate {
 
 export interface ProjectConfig {
   id: string;
+  project_id?: string; // Alias for id (some responses use project_id)
   title: string;
   thesis: string;
   research_questions: string[];
@@ -22,7 +23,11 @@ export interface ProjectConfig {
   target_journal?: string | null;
   seed_files: string[];
   created_at: string; // ISO format timestamp
+  last_updated?: string; // ISO format timestamp
+  created_by?: string; // User ID who created the project
   rigor_level?: "exploratory" | "conservative";
+  status?: "Idle" | "Processing" | "AttentionNeeded";
+  tags?: string[];
 }
 
 export interface ProjectSummary {

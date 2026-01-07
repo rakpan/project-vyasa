@@ -10,7 +10,6 @@ import { FolderKanban, BookText, Activity, Settings } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { ProjectLogo } from "@/components/project-logo"
 import { cn } from "@/lib/utils"
-import { NavFooter } from "./nav-footer"
 import { StatusStrip } from "./status-strip"
 import { ObservatoryTooltipContent } from "./observatory-tooltip"
 
@@ -82,7 +81,10 @@ export function NavMain() {
                   </Link>
                 </TooltipTrigger>
                 {isObservatory ? (
-                  <TooltipContent side="right" className="p-0 border-0 bg-transparent shadow-none">
+                  <TooltipContent
+                    side="right"
+                    className="p-0 border border-border bg-card text-card-foreground shadow-md"
+                  >
                     <ObservatoryTooltipContent />
                   </TooltipContent>
                 ) : (
@@ -99,8 +101,6 @@ export function NavMain() {
       {/* Status Strip - Thread ID and Checkpoint Info */}
       <StatusStrip />
 
-      {/* Agent Heartbeat Footer */}
-      <NavFooter />
     </aside>
   )
 }

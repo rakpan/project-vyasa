@@ -11,6 +11,9 @@ if [ ! -f "$REQUIREMENTS_FILE" ]; then
   REQUIREMENTS_FILE="requirements.txt"
 fi
 
+# Upgrade pip to latest version to avoid upgrade notices
+pip install --quiet --upgrade pip
+
 # Install Python dependencies
 pip install --no-cache-dir -r "$REQUIREMENTS_FILE"
 

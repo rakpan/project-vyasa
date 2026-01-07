@@ -1,13 +1,16 @@
 "use client"
 
 /**
- * 3-Pane Research Workbench
+ * Project Workbench - 3-Pane Research Interface
  * 
- * Pane 1 (Left): Source/Evidence - PDF Viewer or Text Extraction
- * Pane 2 (Center): Synthesis Editor with pinned Manifest Bar
- * Pane 3 (Right): Context/Knowledge Graph
+ * Full-featured workbench for active research jobs:
+ * - Pane 1 (Left): Source/Evidence - PDF Viewer or Text Extraction
+ * - Pane 2 (Center): Synthesis Editor with pinned Manifest Bar
+ * - Pane 3 (Right): Context/Knowledge Graph with Web Search
  * 
- * Uses react-resizable-panels for resizable layout with accessibility support
+ * Requires jobId for full functionality. Uses react-resizable-panels for resizable layout.
+ * 
+ * For the simpler 2-pane evidence + knowledge view, see /projects/[id]
  */
 
 import { useMemo, useEffect, useState, Suspense } from "react"

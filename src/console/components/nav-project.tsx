@@ -7,7 +7,7 @@
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { useProjectStore } from "@/state/useProjectStore"
-import { FileText, Network, BookOpen } from "lucide-react"
+import { FileText, Network, BookOpen, Folder, LayoutGrid } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useMemo } from "react"
 
@@ -20,21 +20,28 @@ export function NavProject() {
   const searchParams = useSearchParams()
   const { activeProjectId, activeProject } = useProjectStore()
 
-  // Construct workbench URL with project context
-  // Must call all hooks before any conditional returns (Rules of Hooks)
-  const workbenchUrl = useMemo(() => {
+  // Construct Research Cockpit URL - only show when job context exists
+  // Research Cockpit is now job-only; project details are in Project Profile
+  const researchCockpitUrl = useMemo(() => {
     if (!activeProjectId) return ""
-    const jobId = searchParams.get("jobId")
-    const pdfUrl = searchParams.get("pdfUrl")
-    let url = `/research-workbench?projectId=${activeProjectId}`
-    if (jobId) {
-      url += `&jobId=${jobId}`
+    
+    // Only show Research Cockpit link if we're currently on a job-driven page
+    // (i.e., we have jobId in the URL)
+    const isCurrentlyOnJobDrivenPage = pathname === "/research-workbench"
+    if (isCurrentlyOnJobDrivenPage) {
+      const jobId = searchParams.get("jobId")
+      const pdfUrl = searchParams.get("pdfUrl")
+      if (jobId) {
+        let url = `/research-workbench?jobId=${jobId}&projectId=${activeProjectId}`
+        if (pdfUrl) {
+          url += `&pdfUrl=${encodeURIComponent(pdfUrl)}`
+        }
+        return url
+      }
     }
-    if (pdfUrl) {
-      url += `&pdfUrl=${encodeURIComponent(pdfUrl)}`
-    }
-    return url
-  }, [activeProjectId, searchParams])
+    // No job context - don't show Research Cockpit link
+    return ""
+  }, [activeProjectId, pathname, searchParams])
 
   // Don't render if no active project (after all hooks)
   if (!activeProjectId) {
@@ -43,10 +50,10 @@ export function NavProject() {
 
   const projectNavItems = [
     {
-      title: "Workbench",
-      href: workbenchUrl,
-      icon: FileText,
-      isActive: pathname === "/research-workbench",
+      title: "Project Profile",
+      href: `/projects/${activeProjectId}/profile`,
+      icon: Folder,
+      isActive: pathname === `/projects/${activeProjectId}/profile`,
     },
     {
       title: "Evidence Engine",
@@ -55,11 +62,24 @@ export function NavProject() {
       isActive: pathname === `/projects/${activeProjectId}`,
     },
     {
+      title: "Workbench",
+      href: `/projects/${activeProjectId}/workbench`,
+      icon: LayoutGrid,
+      isActive: pathname === `/projects/${activeProjectId}/workbench`,
+    },
+    {
       title: "Manuscript",
       href: `/projects/${activeProjectId}/manuscript`,
       icon: BookOpen,
       isActive: pathname === `/projects/${activeProjectId}/manuscript`,
     },
+    // Only show Research Cockpit when job context exists
+    ...(researchCockpitUrl ? [{
+      title: "Research Cockpit",
+      href: researchCockpitUrl,
+      icon: FileText,
+      isActive: pathname === "/research-workbench",
+    }] : []),
   ]
 
   return (

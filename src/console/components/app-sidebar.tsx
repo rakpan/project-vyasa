@@ -6,8 +6,8 @@
 
 import { useMemo } from "react"
 import Link from "next/link"
-import { usePathname, useSearchParams, useRouter } from "next/navigation"
-import { FileText, Network, FolderKanban, Activity } from "lucide-react"
+import { usePathname, useSearchParams } from "next/navigation"
+import { FileText, Network, FolderKanban, Activity, AlertCircle } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -21,15 +21,15 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar"
 import { useProjectStore } from "@/state/useProjectStore"
-import { toast } from "@/hooks/use-toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
 export function AppSidebar() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const router = useRouter()
   const { activeProject, activeProjectId, activeJobId, activePdfUrl } = useProjectStore()
 
   // Extract job context from URL if on workbench page
@@ -54,9 +54,10 @@ export function AppSidebar() {
     return null
   }, [pathname, searchParams])
 
-  // Construct workbench URL if we have context (prefer URL/store)
-  const workbenchUrl = useMemo(() => {
-    // Prefer URL params if on workbench page
+  // Construct Research Cockpit URL - only show when job context exists
+  // Research Cockpit is now job-only; project details are in Project Profile
+  const researchCockpitUrl = useMemo(() => {
+    // Prefer URL params if on research-workbench page
     if (workbenchJobId && workbenchProjectId) {
       let url = `/research-workbench?jobId=${workbenchJobId}&projectId=${workbenchProjectId}`
       if (workbenchPdfUrl) {
@@ -71,29 +72,16 @@ export function AppSidebar() {
       }
       return url
     }
+    // No job context - Research Cockpit not available
+    // Project details should be accessed via Project Profile
     return null
   }, [workbenchJobId, workbenchProjectId, workbenchPdfUrl, activeJobId, activeProjectId, activePdfUrl])
 
-  // Handle workbench navigation - context-aware
-  const handleWorkbenchClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-    e.preventDefault()
-    router.push("/projects")
-    toast({
-      title: "Select a project or job",
-      description: "Select a project/job to open the Workbench.",
-      variant: "default",
-    })
-  }
 
   type NavItem = {
     title: string
     icon: React.ComponentType<{ className?: string }>
     href: string
-  } | {
-    title: string
-    icon: React.ComponentType<{ className?: string }>
-    href: string
-    onClick: (e: React.MouseEvent<HTMLButtonElement>) => void
   }
 
   const navigationItems: NavItem[] = [
@@ -102,18 +90,15 @@ export function AppSidebar() {
       icon: FileText,
       href: "/projects",
     },
-    workbenchUrl
-      ? {
-          title: "Research Workbench",
-          icon: Network,
-          href: workbenchUrl,
-        }
-      : {
-          title: "Research Workbench",
-          icon: Network,
-          href: "#",
-          onClick: handleWorkbenchClick,
-        },
+    ...(researchCockpitUrl
+      ? [
+          {
+            title: "Research Cockpit",
+            icon: Network,
+            href: researchCockpitUrl,
+          } as NavItem,
+        ]
+      : []),
   ]
 
   // Determine current project/job for context display
@@ -193,61 +178,63 @@ export function AppSidebar() {
 
                 return (
                   <SidebarMenuItem key={`${item.href}-${index}`}>
-                    {"onClick" in item ? (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <SidebarMenuButton
-                              onClick={item.onClick}
-                              isActive={pathname === "/research-workbench"}
-                              className={cn(
-                                "h-8 px-2 cursor-not-allowed opacity-60",
-                                "group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:px-0"
-                              )}
-                              aria-disabled
-                            >
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <SidebarMenuButton
+                            asChild
+                            isActive={isActive}
+                            className={cn(
+                              "h-8 px-2",
+                              "group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:px-0"
+                            )}
+                          >
+                            <Link href={item.href}>
                               <item.icon className="h-4 w-4 shrink-0" />
                               <span className="text-[12px] group-data-[collapsible=icon]:hidden">{item.title}</span>
-                            </SidebarMenuButton>
-                          </TooltipTrigger>
-                          <TooltipContent side="right" className="group-data-[collapsible=icon]:block hidden">
-                            <div className="text-xs">{item.title}</div>
-                            <div className="text-[10px] text-muted-foreground mt-0.5">
-                              Select a project/job to open workbench
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    ) : (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <SidebarMenuButton
-                              asChild
-                              isActive={isActive}
-                              className={cn(
-                                "h-8 px-2",
-                                "group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:px-0"
-                              )}
-                            >
-                              <Link href={item.href}>
-                                <item.icon className="h-4 w-4 shrink-0" />
-                                <span className="text-[12px] group-data-[collapsible=icon]:hidden">{item.title}</span>
-                              </Link>
-                            </SidebarMenuButton>
-                          </TooltipTrigger>
-                          <TooltipContent side="right" className="group-data-[collapsible=icon]:block hidden">
-                            <div className="text-xs">{item.title}</div>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
+                            </Link>
+                          </SidebarMenuButton>
+                        </TooltipTrigger>
+                        <TooltipContent side="right" className="group-data-[collapsible=icon]:block hidden">
+                          <div className="text-xs">{item.title}</div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </SidebarMenuItem>
                 )
               })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {/* Inline empty state for Research Cockpit when no context exists */}
+        {!researchCockpitUrl && (
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <Card className="m-2 border-muted">
+                <CardHeader className="p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertCircle className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <CardTitle className="text-xs font-semibold">Research Cockpit</CardTitle>
+                  </div>
+                  <CardDescription className="text-[10px] text-muted-foreground">
+                    Select a project to open the Research Cockpit or start a job.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-3 pt-0">
+                  <Button
+                    asChild
+                    size="sm"
+                    variant="outline"
+                    className="w-full text-xs h-7"
+                  >
+                    <Link href="/projects">Go to Projects</Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
     </Sidebar>
   )

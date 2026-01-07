@@ -41,7 +41,7 @@ export function InfoModal() {
               <Sparkles className="h-5 w-5 text-primary" />
             </div>
             <DialogTitle className="text-2xl font-bold text-foreground nvidia-build-gradient-text">
-              Research Workbench
+              Research Cockpit
             </DialogTitle>
           </div>
           <DialogDescription className="text-base text-muted-foreground leading-relaxed">

@@ -25,6 +25,7 @@ interface IngestionStatus {
     figures?: number
     text_density?: number
   }
+  error_message?: string  // Backend processing error
 }
 
 interface StagedFile {
@@ -43,7 +44,7 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
   const { activeProject } = useProjectStore()
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([])
   const [searchQuery, setSearchQuery] = useState("")
-  const [corpusFiles, setCorpusFiles] = useState<Array<{ filename: string; claims_count?: number; status?: string }>>([])
+  const [corpusFiles, setCorpusFiles] = useState<Array<{ filename: string; claims_count?: number; status?: string; error_message?: string }>>([])
 
   // Poll ingestion status
   const pollIngestionStatus = useCallback(async (ingestionId: string) => {
@@ -58,6 +59,7 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
         status: data.status,
         progress: data.progress || 0,
         metadata: data.metadata,
+        error_message: data.error_message,  // Include backend error message
       } as IngestionStatus
     } catch (error) {
       console.error("Failed to poll ingestion status:", error)
@@ -74,11 +76,60 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
           if (!file.ingestion_id) return
           const status = await pollIngestionStatus(file.ingestion_id)
           if (status) {
-            setStagedFiles((prev) =>
-              prev.map((f) =>
-                f.ingestion_id === file.ingestion_id ? { ...f, status } : f
+            setStagedFiles((prev) => {
+              const updated = prev.map((f) =>
+                f.ingestion_id === file.ingestion_id
+                  ? {
+                      ...f,
+                      status,
+                      // Clear error message when status becomes COMPLETED
+                      error: status.status === "COMPLETED" ? undefined : f.error,
+                    }
+                  : f
               )
-            )
+              
+              // If status is COMPLETED, remove from staging queue (it will appear in corpus)
+              // Keep FAILED files in queue so user can retry/remove them
+              if (status.status === "COMPLETED") {
+                // Remove completed file from staging queue
+                return updated.filter((f) => f.ingestion_id !== file.ingestion_id)
+              }
+              
+              return updated
+            })
+            
+            // Reload corpus files when a file completes to show it in corpus
+            if (status.status === "COMPLETED") {
+              // Trigger corpus reload
+              const loadCorpusFiles = async () => {
+                if (!activeProject?.seed_files || activeProject.seed_files.length === 0) {
+                  setCorpusFiles([])
+                  return
+                }
+                
+                try {
+                  const response = await fetch(
+                    `/api/proxy/orchestrator/api/projects/${projectId}/files`
+                  )
+                  if (response.ok) {
+                    const data = await response.json()
+                    const files = Array.isArray(data.files) ? data.files : []
+                    setCorpusFiles(
+                      files.map((f: any) => ({
+                        filename: typeof f === 'string' ? f : f.filename,
+                        claims_count: typeof f === 'object' ? f.triples_count : undefined,
+                        status: typeof f === 'object' ? f.status : "COMPLETED",
+                        error_message: typeof f === 'object' ? f.error_message : undefined,
+                      }))
+                    )
+                  }
+                } catch (error) {
+                  console.error("Failed to reload corpus files:", error)
+                }
+              }
+              loadCorpusFiles()
+            }
+            
             // Stop polling if completed or failed
             if (status.status === "COMPLETED" || status.status === "FAILED") {
               clearInterval(interval)
@@ -91,7 +142,7 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
     return () => {
       pollers.forEach(clearInterval)
     }
-  }, [stagedFiles, pollIngestionStatus])
+  }, [stagedFiles, pollIngestionStatus, projectId, activeProject])
 
   // Load corpus files from project (filter ghost records)
   useEffect(() => {
@@ -104,7 +155,7 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
       try {
         // Fetch files from endpoint that filters ghost records
         const response = await fetch(
-          `/api/proxy/orchestrator/api/projects/${projectId}/ingest/files`
+          `/api/proxy/orchestrator/api/projects/${projectId}/files`
         )
         if (response.ok) {
           const data = await response.json()
@@ -123,6 +174,7 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
               filename,
               claims_count: undefined,
               status: "UNKNOWN", // May be ghost record
+              error_message: undefined,
             }))
           )
         }
@@ -134,6 +186,7 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
             filename,
             claims_count: undefined,
             status: "UNKNOWN",
+            error_message: undefined,
           }))
         )
       }
@@ -206,15 +259,21 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
                     status: status || "QUEUED",
                     progress: 0,
                   },
+                  // Clear any previous error on successful submission
+                  error: undefined,
                 }
               : f
           )
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : "Upload failed"
+        // Remove file from staging if upload fails - don't keep it as "staged"
         setStagedFiles((prev) =>
-          prev.map((f) => (f.file === staged.file ? { ...f, error: message } : f))
+          prev.filter((f) => f.file !== staged.file)
         )
+        // Show error message to user
+        console.error(`Failed to upload ${staged.file.name}:`, message)
+        // Optionally show a toast/notification here
       }
     }
   }
@@ -245,10 +304,18 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
                   className="flex items-center justify-between text-xs p-2 bg-white rounded border border-amber-200"
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="truncate font-medium">{staged.file.name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="truncate font-medium">{staged.file.name}</p>
+                      {staged.status?.status === "COMPLETED" && (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                      )}
+                      {staged.status?.status === "FAILED" && (
+                        <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />
+                      )}
+                    </div>
                     {staged.status && (
                       <div className="mt-1 space-y-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <Badge
                             variant={
                               staged.status.status === "COMPLETED"
@@ -261,8 +328,18 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
                           >
                             {staged.status.status}
                           </Badge>
+                          {staged.status.status === "COMPLETED" && (
+                            <span className="text-emerald-700 text-[10px] font-medium">
+                              ✓ Successfully processed
+                            </span>
+                          )}
+                          {staged.status.status === "FAILED" && (
+                            <span className="text-red-700 text-[10px] font-medium">
+                              ✗ Processing failed
+                            </span>
+                          )}
                           {staged.status.metadata?.pages && (
-                            <span className="text-muted-foreground">
+                            <span className="text-muted-foreground text-[10px]">
                               {staged.status.metadata.pages} pages
                             </span>
                           )}
@@ -286,8 +363,19 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
                         )}
                       </div>
                     )}
-                    {staged.error && (
-                      <p className="text-destructive text-[10px] mt-1">{staged.error}</p>
+                    {/* Show backend error message from status polling */}
+                    {staged.status?.error_message && (
+                      <div className="mt-2 p-2 bg-red-100 border border-red-300 rounded text-[10px] text-red-800">
+                        <p className="font-medium mb-1">Processing Error:</p>
+                        <p className="whitespace-pre-wrap break-words">{staged.status.error_message}</p>
+                      </div>
+                    )}
+                    {/* Show client-side upload error (fallback) */}
+                    {staged.error && !staged.status?.error_message && (
+                      <div className="mt-2 p-2 bg-red-100 border border-red-300 rounded text-[10px] text-red-800">
+                        <p className="font-medium mb-1">Upload Error:</p>
+                        <p className="whitespace-pre-wrap break-words">{staged.error}</p>
+                      </div>
                     )}
                   </div>
                   {staged.status?.status === "COMPLETED" && (
@@ -333,26 +421,76 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
             </div>
           ) : (
             <div className="space-y-1">
-              {filteredCorpus.map((file, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between p-2 rounded border border-slate-200 bg-white hover:bg-slate-50 text-xs"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate font-medium">{file.filename}</p>
-                    <div className="flex items-center gap-2 mt-1 text-muted-foreground">
-                      {file.claims_count !== undefined && (
-                        <span>{file.claims_count} claims</span>
-                      )}
-                      {file.status && (
-                        <Badge variant="outline" className="text-[10px]">
-                          {file.status}
-                        </Badge>
+              {filteredCorpus.map((file, idx) => {
+                const statusUpper = file.status?.toUpperCase() || ""
+                const isCompleted = statusUpper === "COMPLETED"
+                const isFailed = statusUpper === "FAILED"
+                const isProcessing = statusUpper && !isCompleted && !isFailed && statusUpper !== "UNKNOWN"
+                
+                return (
+                  <div
+                    key={idx}
+                    className={`flex items-start justify-between p-2 rounded border text-xs ${
+                      isFailed
+                        ? "border-red-200 bg-red-50"
+                        : isCompleted
+                          ? "border-green-200 bg-green-50"
+                          : isProcessing
+                            ? "border-amber-200 bg-amber-50"
+                            : "border-slate-200 bg-white"
+                    } hover:opacity-90 transition-colors`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate font-medium">{file.filename}</p>
+                        {isCompleted && (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                        )}
+                        {isFailed && (
+                          <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />
+                        )}
+                        {isProcessing && (
+                          <Loader2 className="h-3.5 w-3.5 text-amber-600 shrink-0 animate-spin" />
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        {isCompleted && file.claims_count !== undefined && (
+                          <span className="text-emerald-700 font-medium">
+                            ✓ {file.claims_count} claims extracted
+                          </span>
+                        )}
+                        {isFailed && (
+                          <span className="text-red-700 font-medium">✗ Processing failed</span>
+                        )}
+                        {isProcessing && (
+                          <span className="text-amber-700">Processing...</span>
+                        )}
+                        {file.status && (
+                          <Badge
+                            variant={
+                              isCompleted
+                                ? "default"
+                                : isFailed
+                                  ? "destructive"
+                                  : "secondary"
+                            }
+                            className="text-[10px]"
+                          >
+                            {file.status}
+                          </Badge>
+                        )}
+                      </div>
+                      {/* Show error message for failed files */}
+                      {isFailed && file.error_message && (
+                        <div className="mt-2 p-2 bg-red-100 border border-red-300 rounded text-[10px] text-red-800">
+                          <p className="font-medium mb-1">Error:</p>
+                          <p className="whitespace-pre-wrap break-words">{file.error_message}</p>
+                        </div>
                       )}
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

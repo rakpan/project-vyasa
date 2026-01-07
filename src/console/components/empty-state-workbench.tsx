@@ -22,6 +22,7 @@ export function EmptyStateWorkbench() {
     if (activeProjectId) {
       router.push(`/projects/${activeProjectId}?tab=upload`)
     } else {
+      // No active project - navigate to projects to select/create one
       router.push("/projects")
     }
   }

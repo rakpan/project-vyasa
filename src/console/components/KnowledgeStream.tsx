@@ -59,7 +59,7 @@ export function KnowledgeStream({ projectId }: KnowledgeStreamProps) {
   }
 
   return (
-    <div className="flex flex-col h-full border-r border-slate-200">
+    <div className="flex flex-col h-full w-full">
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "feed" | "graph")} className="flex-1 flex flex-col">
         <div className="flex-shrink-0 border-b border-slate-200 px-4 pt-4">
           <TabsList className="grid w-full grid-cols-2">

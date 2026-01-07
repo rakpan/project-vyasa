@@ -2,7 +2,8 @@
 
 /**
  * File Uploader Component for Project Vyasa.
- * Accepts a required projectId prop and uploads files to /ingest/pdf with project association.
+ * Accepts a required projectId prop and uploads files to /workflow/submit with project association.
+ * Note: This component is used in compact mode within EvidenceDock, which handles the actual upload.
  */
 
 import { useState } from "react"
@@ -258,9 +259,14 @@ export function FileUploader({
             <p className="text-[10px] text-muted-foreground">or click to browse</p>
           </div>
         </div>
-        {pendingFiles.length > 0 && (
+        {pendingFiles.length > 0 && pendingFiles.every((f) => f.status !== "error") && (
           <div className="text-xs text-muted-foreground">
             {pendingFiles.length} file{pendingFiles.length > 1 ? "s" : ""} staged
+          </div>
+        )}
+        {pendingFiles.some((f) => f.status === "error") && (
+          <div className="text-xs text-destructive">
+            {pendingFiles.filter((f) => f.status === "error").length} file{pendingFiles.filter((f) => f.status === "error").length > 1 ? "s" : ""} failed to stage
           </div>
         )}
       </div>

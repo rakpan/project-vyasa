@@ -185,6 +185,27 @@ export async function updateRigor(id: string, rigor: "exploratory" | "conservati
 }
 
 /**
+ * Update project fields (partial update).
+ * 
+ * @param id - Project UUID
+ * @param updates - Partial ProjectConfig with fields to update
+ * @returns Promise resolving to updated ProjectConfig
+ * @throws ApiError if request fails
+ */
+export async function updateProject(id: string, updates: Partial<ProjectConfig>): Promise<ProjectConfig> {
+  try {
+    return await apiFetch<ProjectConfig>(`${API_BASE}/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+  } catch (error) {
+    const message = safeParseError(error);
+    throw new ApiError(message, error instanceof ApiError ? error.status : 500, error);
+  }
+}
+
+/**
  * List projects with hub view (grouping, filtering, summaries).
  * 
  * @param filters - Filter parameters

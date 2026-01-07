@@ -25,8 +25,9 @@ export function useProjectFiles(projectId: string | null): UseProjectFilesResult
     setError(null)
     try {
       // Use the new endpoint that filters ghost records
+      // Note: The endpoint is /api/projects/<project_id>/files (not /ingest/files)
       const response = await fetch(
-        `/api/proxy/orchestrator/api/projects/${projectId}/ingest/files`,
+        `/api/proxy/orchestrator/api/projects/${projectId}/files`,
         { signal: controller.signal }
       )
       if (!response.ok) {

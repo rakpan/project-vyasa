@@ -117,7 +117,19 @@ def saver_node(state: ResearchState) -> ResearchState:
             "saved_at": get_utc_now().isoformat(),
             "status": "SAVED",
         }
-        logger.info("Saved extraction to ArangoDB", extra={"payload": {"status": doc["status"], "key": receipt.get("_key")}})
+        # Log triples count for verification
+        triples_count = len(extracted.get("triples", [])) if isinstance(extracted, dict) else 0
+        logger.info(
+            "Saved extraction to ArangoDB",
+            extra={
+                "payload": {
+                    "status": doc["status"],
+                    "key": receipt.get("_key"),
+                    "project_id": project_id,
+                    "triples_count": triples_count,
+                }
+            }
+        )
 
         # Persist manuscript blocks with versioning and citation guard (Librarian Key-Guard)
         if manuscript_blocks and project_id:

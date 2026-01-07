@@ -1,8 +1,11 @@
 "use client"
 
 /**
- * Project Workbench Page - 3-Pane Research Interface
- * Evidence (Left) → Processing (Center) → Product (Right)
+ * Evidence Engine - 2-Pane Research Interface
+ * Evidence (Left) → Knowledge Graph View (Right)
+ * 
+ * This is the main in-project workspace for viewing evidence and knowledge.
+ * For the full 3-pane workbench with PDF viewer and manuscript editor, see /projects/[id]/workbench
  */
 
 import { useEffect } from "react"
@@ -11,7 +14,6 @@ import { Loader2 } from "lucide-react"
 import { useProjectStore } from "@/state/useProjectStore"
 import { EvidenceDock } from "@/components/EvidenceDock"
 import { KnowledgeStream } from "@/components/KnowledgeStream"
-import { ManuscriptLab } from "@/components/ManuscriptLab"
 import { Card, CardContent } from "@/components/ui/card"
 
 export default function ProjectWorkbenchPage() {
@@ -58,20 +60,15 @@ export default function ProjectWorkbenchPage() {
   }
 
   return (
-    <div className="grid grid-cols-12 h-[calc(100vh-64px)] overflow-hidden">
+    <div className="flex h-[calc(100vh-64px)] overflow-hidden">
       {/* Left Pane: Evidence Dock (25%) */}
-      <div className="col-span-3">
+      <div className="w-1/4 flex-shrink-0">
         <EvidenceDock projectId={projectId} />
       </div>
 
-      {/* Center Pane: Knowledge Stream (42%) */}
-      <div className="col-span-5">
+      {/* Right Pane: Knowledge Stream (Graph View) - Expanded to fill remaining space */}
+      <div className="flex-1 min-w-0">
         <KnowledgeStream projectId={projectId} />
-      </div>
-
-      {/* Right Pane: Manuscript Lab (33%) */}
-      <div className="col-span-4">
-        <ManuscriptLab projectId={projectId} />
       </div>
     </div>
   )

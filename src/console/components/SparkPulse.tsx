@@ -25,7 +25,7 @@ export function SparkPulse() {
     let mounted = true
     const fetchPulse = async () => {
       try {
-        const res = await fetch("/system/pulse")
+        const res = await fetch("/api/proxy/orchestrator/system/pulse")
         if (!res.ok) throw new Error("Failed to fetch pulse")
         const json = (await res.json()) as Pulse
         if (mounted) {

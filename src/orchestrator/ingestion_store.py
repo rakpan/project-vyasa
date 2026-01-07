@@ -47,6 +47,7 @@ class IngestionRecord:
         progress_pct: float = 0.0,
         first_glance: Optional[Dict[str, Any]] = None,
         confidence_badge: Optional[str] = None,
+        file_path: Optional[str] = None,
         created_at: Optional[str] = None,
         updated_at: Optional[str] = None,
     ):
@@ -60,6 +61,7 @@ class IngestionRecord:
         self.progress_pct = progress_pct
         self.first_glance = first_glance or {}
         self.confidence_badge = confidence_badge
+        self.file_path = file_path  # Persistent file path in landing zone
         self.created_at = created_at or datetime.now(timezone.utc).isoformat()
         self.updated_at = updated_at or datetime.now(timezone.utc).isoformat()
     
@@ -77,6 +79,7 @@ class IngestionRecord:
             "progress_pct": self.progress_pct,
             "first_glance": self.first_glance,
             "confidence_badge": self.confidence_badge,
+            "file_path": self.file_path,
             "qdrant_indexed": getattr(self, "qdrant_indexed", False),
             "chunk_count": getattr(self, "chunk_count", None),
             "indexed_at": getattr(self, "indexed_at", None),
@@ -87,7 +90,7 @@ class IngestionRecord:
     @classmethod
     def from_dict(cls, doc: Dict[str, Any]) -> "IngestionRecord":
         """Create from ArangoDB document."""
-        return cls(
+        record = cls(
             ingestion_id=doc.get("ingestion_id") or doc.get("_key", ""),
             project_id=doc.get("project_id", ""),
             filename=doc.get("filename", ""),
@@ -98,6 +101,7 @@ class IngestionRecord:
             progress_pct=doc.get("progress_pct", 0.0),
             first_glance=doc.get("first_glance", {}),
             confidence_badge=doc.get("confidence_badge"),
+            file_path=doc.get("file_path"),
             created_at=doc.get("created_at"),
             updated_at=doc.get("updated_at"),
         )
@@ -131,11 +135,21 @@ class IngestionStore:
             
             collection = self.db.collection(INGESTION_COLLECTION)
             # Index on file_hash for duplicate detection
-            collection.ensure_persistent_index(["file_hash"])
+            # Use add_index instead of ensure_persistent_index (python-arango API)
+            try:
+                collection.add_index({"type": "persistent", "fields": ["file_hash"]})
+            except ArangoError:
+                pass  # Index may already exist
             # Index on project_id for project queries
-            collection.ensure_persistent_index(["project_id"])
+            try:
+                collection.add_index({"type": "persistent", "fields": ["project_id"]})
+            except ArangoError:
+                pass  # Index may already exist
             # Index on job_id for job lookups
-            collection.ensure_persistent_index(["job_id"])
+            try:
+                collection.add_index({"type": "persistent", "fields": ["job_id"]})
+            except ArangoError:
+                pass  # Index may already exist
             logger.debug(f"Ensured indexes in '{INGESTION_COLLECTION}'")
         except ArangoError as e:
             logger.error(f"Failed to ensure schema for '{INGESTION_COLLECTION}': {e}", exc_info=True)
@@ -149,6 +163,7 @@ class IngestionStore:
         job_id: Optional[str] = None,
         allow_empty_hash: bool = False,
         first_glance: Optional[Dict[str, Any]] = None,
+        file_path: Optional[str] = None,
     ) -> IngestionRecord:
         """Create a new ingestion record (atomic).
         
@@ -179,6 +194,7 @@ class IngestionStore:
             status=IngestionStatus.QUEUED,
             job_id=job_id,
             first_glance=first_glance,
+            file_path=file_path,
         )
         
         try:
@@ -220,6 +236,8 @@ class IngestionStore:
         confidence_badge: Optional[str] = None,
         chunk_count: Optional[int] = None,
         indexed_at: Optional[str] = None,
+        file_hash: Optional[str] = None,
+        file_path: Optional[str] = None,
     ) -> bool:
         """Update ingestion record.
         
@@ -261,8 +279,12 @@ class IngestionStore:
                 updates["chunk_count"] = chunk_count
             if indexed_at is not None:
                 updates["indexed_at"] = indexed_at
+            if file_hash is not None:
+                updates["file_hash"] = file_hash
+            if file_path is not None:
+                updates["file_path"] = file_path
             
-            collection.update(ingestion_id, updates)
+            collection.update({"_key": ingestion_id, **updates})
             logger.debug(f"Updated ingestion {ingestion_id}")
             return True
         except ArangoError as e:
@@ -383,4 +405,32 @@ class IngestionStore:
         except ArangoError as e:
             logger.error(f"Failed to get ingestion by job_id {job_id}: {e}", exc_info=True)
             return None
+    
+    def list_by_project(self, project_id: str) -> List[IngestionRecord]:
+        """List all ingestion records for a project.
+        
+        Args:
+            project_id: Project identifier.
+        
+        Returns:
+            List of IngestionRecord objects, ordered by created_at descending.
+        """
+        try:
+            query = """
+            FOR ing IN @@col
+            FILTER ing.project_id == @project_id
+            SORT ing.created_at DESC
+            RETURN ing
+            """
+            cursor = self.db.aql.execute(
+                query,
+                bind_vars={
+                    "@col": INGESTION_COLLECTION,
+                    "project_id": project_id,
+                }
+            )
+            return [IngestionRecord.from_dict(doc) for doc in list(cursor)]
+        except ArangoError as e:
+            logger.error(f"Failed to list ingestion records for project {project_id}: {e}", exc_info=True)
+            return []
 
