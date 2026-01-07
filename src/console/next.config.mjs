@@ -1,3 +1,11 @@
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+
+// Get __dirname equivalent in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const canvasStubPath = resolve(__dirname, 'webpack-canvas-stub.js');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   eslint: {
@@ -14,7 +22,7 @@ const nextConfig = {
     position: 'top-right',
   },
   // Configure external packages for server components
-  serverExternalPackages: ['@langchain/community'],
+  serverExternalPackages: ['@langchain/community', 'canvas'],
   experimental: {
     // webpackBuildWorker: true,
     // Disable CSS optimization to allow PostCSS processing
@@ -36,12 +44,42 @@ const nextConfig = {
     maxDuration: 0,
   },
   // Avoid installing native canvas for pdfjs-dist (@react-pdf-viewer) during SSR bundling
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, webpack }) => {
     config.resolve = config.resolve || {};
     config.resolve.fallback = {
       ...(config.resolve.fallback || {}),
       canvas: false,
     };
+    
+    // Exclude canvas from being bundled on server
+    if (isServer) {
+      config.externals = config.externals || [];
+      if (typeof config.externals === 'function') {
+        const originalExternals = config.externals;
+        config.externals = [
+          ...(Array.isArray(originalExternals) ? originalExternals : []),
+          'canvas',
+        ];
+      } else if (Array.isArray(config.externals)) {
+        config.externals.push('canvas');
+      } else {
+        config.externals = [config.externals, 'canvas'];
+      }
+    }
+    
+    // Replace canvas module with stub during bundling
+    // Canvas is only needed for Node.js server-side PDF rendering, not for browser
+    config.resolve.alias = config.resolve.alias || {};
+    config.resolve.alias['canvas'] = canvasStubPath;
+    
+    // Also use NormalModuleReplacementPlugin as a fallback
+    config.plugins = config.plugins || [];
+    config.plugins.push(
+      new webpack.NormalModuleReplacementPlugin(
+        /^canvas$/,
+        canvasStubPath
+      )
+    );
     
     // Fix for Next.js 15 CSS processing: Ensure PostCSS runs before flight CSS loader
     if (!isServer) {
