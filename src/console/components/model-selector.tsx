@@ -22,22 +22,16 @@ import { ChevronDown, Sparkles, Cpu, Server } from "lucide-react"
 import { OllamaIcon } from "@/components/ui/ollama-icon"
 
 // Base models - Project Vyasa Committee of Experts Architecture
+// Uses canonical model IDs: TEXT_MODEL_ID, VISION_MODEL_ID
+// Both Brain and Worker use TEXT_MODEL_ID (same model, different services for redundancy)
 const baseModels = [
   {
-    id: "worker-qwen",
-    name: "Qwen 2.5 (Worker)",
-    icon: <Cpu className="h-4 w-4 text-green-500" />,
-    description: "Worker service - Structured JSON extraction and tagging",
-    // Technical fallback: HuggingFace model path (should be overridden via NEXT_PUBLIC_WORKER_MODEL_NAME)
-    model: process.env.NEXT_PUBLIC_WORKER_MODEL_NAME || "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
-    baseURL: process.env.NEXT_PUBLIC_WORKER_URL || "http://cortex-worker:30001",
-  },
-  {
-    id: "brain-llama",
-    name: "Llama 3.3 (Brain)",
+    id: "text-model",
+    name: "Text Model (Brain/Worker)",
     icon: <Cpu className="h-4 w-4 text-blue-500" />,
-    description: "Brain service - High-level reasoning and validation",
-    model: process.env.NEXT_PUBLIC_BRAIN_MODEL_NAME || "meta-llama/Llama-3.3-70B-Instruct",
+    description: "Text model - Used by both Brain (reasoning) and Worker (extraction) services",
+    // Canonical variable: NEXT_PUBLIC_TEXT_MODEL_ID
+    model: process.env.NEXT_PUBLIC_TEXT_MODEL_ID || process.env.NEXT_PUBLIC_BRAIN_MODEL_PATH || process.env.NEXT_PUBLIC_WORKER_MODEL_PATH || "meta-llama/Llama-3.3-70B-Instruct",
     baseURL: process.env.NEXT_PUBLIC_BRAIN_URL || "http://cortex-brain:30000",
   },
   {
@@ -45,7 +39,8 @@ const baseModels = [
     name: "Qwen 2 VL (Vision)",
     icon: <Cpu className="h-4 w-4 text-purple-500" />,
     description: "Vision service - Figure/table/chart interpretation",
-    model: process.env.NEXT_PUBLIC_VISION_MODEL_NAME || "Qwen/Qwen2-VL-72B-Instruct",
+    // Canonical variable: NEXT_PUBLIC_VISION_MODEL_ID
+    model: process.env.NEXT_PUBLIC_VISION_MODEL_ID || process.env.NEXT_PUBLIC_VISION_MODEL_PATH || "Qwen/Qwen2-VL-7B-Instruct",
     baseURL: process.env.NEXT_PUBLIC_VISION_URL || "http://cortex-vision:30002",
   },
   // Preset Ollama model

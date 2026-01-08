@@ -52,6 +52,8 @@ from .job_manager import (
 from .job_store import get_job_record, store_reframing_proposal
 from .normalize import normalize_extracted_json
 from .observability import get_system_pulse
+from .startup_validation import validate_qdrant_collections, get_dimension_validation_status
+from ..shared.config import EMBEDDING_DIMENSION
 from .export_service import write_exports, export_markdown, export_jsonld, export_bibtex
 from .api.observatory import router as observatory_router, metrics_service as observatory_metrics_service
 from .api.knowledge import knowledge_bp
@@ -409,6 +411,23 @@ def health():
     # Deep check: verify dependencies
     dependencies = {}
     all_healthy = True
+    
+    # Check Qdrant collection dimensions (CRITICAL: must pass before ingestion)
+    try:
+        is_valid, errors = validate_qdrant_collections()
+        if is_valid:
+            dependencies["qdrant_dimensions"] = "ok"
+        else:
+            dependencies["qdrant_dimensions"] = "error"
+            all_healthy = False
+            logger.critical(
+                "Health check failed: Qdrant collection dimension mismatch",
+                extra={"payload": {"errors": errors}}
+            )
+    except Exception as e:
+        logger.error(f"Qdrant dimension validation error: {e}", exc_info=True)
+        dependencies["qdrant_dimensions"] = "error"
+        all_healthy = False
     
     # Check ArangoDB connectivity (do not create DBs here)
     try:
@@ -1272,31 +1291,37 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
 
 @app.route("/workflow/submit", methods=["POST"])
 def submit_workflow():
-    """Submit a workflow job for asynchronous processing.
+    """Submit a workflow job with optional file upload.
     
-    Accepts raw text or PDF file and returns a job_id for status polling.
-    Requires project_id to enforce project-first invariant.
-    
-    Request body (JSON):
-        {
-            "raw_text": str (required if no file),
-            "pdf_path": str (optional),
-            "extracted_json": dict (optional, for manual override),
-            "critiques": list (optional),
-            "revision_count": int (optional),
-            "project_id": str (required),
-            "idempotency_key": str (optional)
-        }
-    
-    Request body (multipart/form-data):
-        file: PDF file (optional, if provided, will extract text first)
-    
-    Response:
-        {
-            "job_id": "uuid-string",
-            "status": "PENDING"
-        }
+    Validates Qdrant collection dimensions before allowing ingestion.
     """
+    # CRITICAL: Validate Qdrant dimensions BEFORE processing any ingestion
+    try:
+        is_valid, errors = validate_qdrant_collections()
+        if not is_valid:
+            error_msg = (
+                f"Qdrant collection dimension mismatch detected. "
+                f"Expected dimension: {EMBEDDING_DIMENSION}. "
+                f"Errors: {'; '.join(errors)}. "
+                f"Please run 'scripts/reindex_corpus.sh' to migrate to the new embedding model, "
+                f"or update Qdrant collections to match the configured EMBEDDING_DIMENSION."
+            )
+            logger.critical(
+                "Workflow submission blocked due to dimension mismatch",
+                extra={"payload": {"errors": errors, "expected_dimension": EMBEDDING_DIMENSION}}
+            )
+            return jsonify({
+                "error": error_msg,
+                "code": "DIMENSION_MISMATCH",
+                "expected_dimension": EMBEDDING_DIMENSION,
+                "errors": errors,
+            }), 503
+    except Exception as e:
+        logger.error(f"Failed to validate Qdrant dimensions: {e}", exc_info=True)
+        # Don't block on validation errors (connection issues), but log them
+        # Dimension check in QdrantStorage will catch it during actual ingestion
+    
+    # Continue with workflow submission
     try:
         # Handle file upload
         raw_text = ""

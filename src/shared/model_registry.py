@@ -10,26 +10,39 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from .config import (
-    BRAIN_MODEL_NAME,
-    WORKER_MODEL_NAME,
-    VISION_MODEL_NAME,
+    TEXT_MODEL_ID,
+    VISION_MODEL_ID,
+    EMBEDDER_MODEL_ID,
     ARANGODB_DB,
 )
 
 
 @dataclass(frozen=True)
 class ModelConfig:
-    """Typed model configuration."""
+    """Typed model configuration.
+    
+    The registry is authoritative for:
+    - model_id: Which model to load (HuggingFace path or local path)
+    - purpose: Semantic purpose of the model
+    - provider: Runtime provider (sglang, ollama, sentence-transformers)
+    - endpoint_env: Which service endpoint to call
+    
+    The registry is NOT authoritative for deployment optimizations:
+    - quantization, kv_policy: These are deployment hints only (non-authoritative)
+      Actual values are configured in deploy/docker-compose.yml command flags
+    - default_context, max_context: These are hints only (non-authoritative)
+      Actual context limits are configured in deploy/docker-compose.yml
+    """
 
     key: str
-    model_id: str
-    provider: str
-    purpose: str
-    default_context: Optional[int] = None
-    max_context: Optional[int] = None
-    kv_policy: Optional[str] = None
-    quantization: Optional[str] = None
-    endpoint_env: Optional[str] = None
+    model_id: str  # Authoritative: which model to load
+    provider: str  # Authoritative: runtime provider
+    purpose: str  # Authoritative: semantic purpose
+    default_context: Optional[int] = None  # Non-authoritative: deployment hint only
+    max_context: Optional[int] = None  # Non-authoritative: deployment hint only
+    kv_policy: Optional[str] = None  # Non-authoritative: deployment hint only (see docker-compose.yml)
+    quantization: Optional[str] = None  # Non-authoritative: deployment hint only (see docker-compose.yml)
+    endpoint_env: Optional[str] = None  # Authoritative: which endpoint to call
 
     def validate(self) -> None:
         """Basic validation to catch misconfiguration early."""
@@ -45,25 +58,26 @@ class ModelConfig:
             )
 
 
-# Registry seeded from existing env-configured defaults; no behavior changes.
+# Registry uses canonical model IDs: TEXT_MODEL_ID, VISION_MODEL_ID, EMBEDDER_MODEL_ID
+# Both Brain and Worker use TEXT_MODEL_ID (same model, different services for redundancy)
 _MODEL_REGISTRY: Dict[str, ModelConfig] = {
     "brain": ModelConfig(
         key="brain",
-        model_id=BRAIN_MODEL_NAME,
+        model_id=TEXT_MODEL_ID,  # Uses canonical TEXT_MODEL_ID
         provider="sglang",
         purpose="critic / high-level reasoning",
         default_context=None,
         max_context=None,
-        kv_policy="mem-fraction-static (compose)",
-        quantization="mxfp4 (compose)",
+        kv_policy="mem-fraction-static (compose)",  # Non-authoritative: actual value in docker-compose.yml
+        quantization="int8 (compose)",  # Non-authoritative: actual value in docker-compose.yml
         endpoint_env="BRAIN_URL",
     ),
     "worker": ModelConfig(
         key="worker",
-        model_id=WORKER_MODEL_NAME,
+        model_id=TEXT_MODEL_ID,  # Uses canonical TEXT_MODEL_ID (same as Brain)
         provider="sglang",
         purpose="extraction / cartographer",
-        default_context=16384,
+        default_context=16384,  # Non-authoritative: actual value in docker-compose.yml --context-length flag
         max_context=None,
         kv_policy="mem-fraction-static (compose)",
         quantization="fp4 (compose)",
@@ -71,18 +85,18 @@ _MODEL_REGISTRY: Dict[str, ModelConfig] = {
     ),
     "vision": ModelConfig(
         key="vision",
-        model_id=VISION_MODEL_NAME,
+        model_id=VISION_MODEL_ID,  # Uses canonical VISION_MODEL_ID
         provider="sglang",
         purpose="vision / OCR",
         default_context=None,
         max_context=None,
-        kv_policy="mem-fraction-static (compose)",
-        quantization="int8 (compose)",
+        kv_policy="mem-fraction-static (compose)",  # Non-authoritative: actual value in docker-compose.yml
+        quantization="int8 (compose)",  # Non-authoritative: actual value in docker-compose.yml
         endpoint_env="VISION_URL",
     ),
     "embedder": ModelConfig(
         key="embedder",
-        model_id="all-MiniLM-L6-v2",
+        model_id=EMBEDDER_MODEL_ID,  # Uses canonical EMBEDDER_MODEL_ID (removed hardcoded all-MiniLM-L6-v2)
         provider="sentence-transformers",
         purpose="embeddings",
         default_context=None,

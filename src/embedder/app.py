@@ -27,15 +27,21 @@ BASE_DIR = Path(__file__).resolve().parent
 sys.path.append(str(BASE_DIR.parent))
 
 from shared.logger import get_logger  # noqa: E402
-from shared.config import EMBEDDING_MODEL_PATH, HF_TOKEN  # noqa: E402
+from shared.config import EMBEDDER_MODEL_ID, EMBEDDING_DIMENSION, HF_TOKEN  # noqa: E402
 
 logger = get_logger("embedder", __name__)
 
 app = Flask(__name__)
 
-# Get model path from shared config
-model_name = EMBEDDING_MODEL_PATH
-logger.info(f"Loading embedding model: {model_name}")
+# Get model path from shared config (canonical variable)
+# Embedder service: Simple and deterministic
+# - Model: nvidia/nv-embedqa-e5-v5 (1024-dimensional embeddings)
+# - Dimension guardrail: EMBEDDING_DIMENSION=1024 enforced by orchestrator startup validation
+# - Chunking responsibility: Upstream services (orchestrator) must chunk text before embedding
+# - No quantization or performance tuning: Service remains simple and deterministic
+model_name = EMBEDDER_MODEL_ID
+expected_dimension = EMBEDDING_DIMENSION
+logger.info(f"Loading embedding model: {model_name} (expected dimension: {expected_dimension})")
 
 # Force CUDA on GB10; fallback handled on error
 device = "cuda"

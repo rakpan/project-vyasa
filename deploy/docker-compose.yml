@@ -1,12 +1,14 @@
 services:
   # SGLang - Brain (logic/routing)
-  # Stabilized configuration for DGX Spark:
-  # - Small non-gated model (Llama-3.1-8B-Instruct) for reliability
-  # - Conservative memory settings (mem-fraction ≤0.5) to prevent OOM
-  # - Single tensor parallelism (tp-size=1) for stability
-  # - INT8 quantization for balanced precision/performance
-  # - FlashInfer attention backend for efficient memory usage
-  # - GPU runtime properly configured for NVIDIA containers
+  # Unified TEXT_MODEL configuration (same model as Worker, service-level redundancy)
+  # Conservative baseline for meta-llama/Llama-3.3-70B-Instruct:
+  # - INT8 quantization: Balanced precision/performance, more stable than FP4
+  # - mem-fraction-static 0.45: Conservative to prevent OOM, leaves headroom for OS/ArangoDB/Qdrant
+  # - max-running-requests 2: Low concurrency to avoid KV cache blowups
+  # - tp-size 1: Single tensor parallelism for stability
+  # - context-length: Uses SGLang default (no explicit limit)
+  # Tuning guidance: Monitor KV cache utilization and UMA pressure via observability endpoints.
+  # Adjust mem-fraction-static and max-running-requests based on actual workload patterns.
   cortex-brain:
     image: ${CORTEX_IMAGE}
     runtime: nvidia
@@ -17,7 +19,7 @@ services:
             - driver: nvidia
               device_ids: ['0']
               capabilities: [gpu]
-    command: python3 -m sglang.launch_server --model-path ${BRAIN_MODEL_PATH:-meta-llama/Llama-3.1-8B-Instruct} --host 0.0.0.0 --port 30000 --tp-size 1 --quantization int8 --mem-fraction-static 0.45 --max-running-requests 2
+    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${BRAIN_MODEL_PATH:-meta-llama/Llama-3.3-70B-Instruct}} --host 0.0.0.0 --port 30000 --tp-size 1 --quantization int8 --mem-fraction-static 0.45 --max-running-requests 2
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
       - CUDA_VISIBLE_DEVICES=0
@@ -41,13 +43,19 @@ services:
       retries: 3
       start_period: 30s
 
-  # SGLang - Worker (general tasks)
-  # FP4 quantization maximizes memory efficiency for extraction tasks
-  # Increased KV cache capacity due to reduced weight size
-  # Lowered mem-fraction to ensure 24GB headroom for OS/ArangoDB/Qdrant
+  # SGLang - Worker (extraction/cartographer)
+  # Unified TEXT_MODEL configuration (same model as Brain, service-level redundancy)
+  # Conservative baseline for meta-llama/Llama-3.3-70B-Instruct:
+  # - INT8 quantization: Balanced precision/performance, more stable than FP4
+  # - mem-fraction-static 0.45: Conservative to prevent OOM, leaves headroom for OS/ArangoDB/Qdrant
+  # - max-running-requests 2: Low concurrency to avoid KV cache blowups
+  # - tp-size 1: Single tensor parallelism for stability
+  # - context-length: Uses SGLang default (no explicit limit, same as Brain)
+  # Tuning guidance: Monitor KV cache utilization and UMA pressure via observability endpoints.
+  # Adjust mem-fraction-static and max-running-requests based on actual workload patterns.
   cortex-worker:
     image: ${CORTEX_IMAGE}
-    command: python3 -m sglang.launch_server --model-path ${WORKER_MODEL_PATH} --host 0.0.0.0 --port 30001 --tp-size 1 --quantization fp4 --mem-fraction-static 0.70 --max-running-requests 4 --context-length 16384
+    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${WORKER_MODEL_PATH:-meta-llama/Llama-3.3-70B-Instruct}} --host 0.0.0.0 --port 30001 --tp-size 1 --quantization int8 --mem-fraction-static 0.45 --max-running-requests 2
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - CUDA_VISIBLE_DEVICES=1
@@ -74,9 +82,11 @@ services:
   # SGLang - Vision
   # INT8 quantization for vision models (balanced precision/performance)
   # Memory guardrails: bounded footprint to prevent UMA spikes
+  # Safety limit: context-length 8192 prevents pathological OCR-heavy or high-resolution page workloads
+  # This cap ensures Vision service remains stable when processing dense visual content
   cortex-vision:
     image: ${CORTEX_IMAGE}
-    command: python3 -m sglang.launch_server --model-path ${VISION_MODEL_PATH} --host 0.0.0.0 --port 30002 --tp-size 2 --quantization int8 --mem-fraction-static 0.75 --max-running-requests 2
+    command: python3 -m sglang.launch_server --model-path ${VISION_MODEL_ID:-${VISION_MODEL_PATH:-Qwen/Qwen2-VL-7B-Instruct}} --host 0.0.0.0 --port 30002 --tp-size 2 --quantization int8 --mem-fraction-static 0.75 --max-running-requests 2 --context-length 8192
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - CUDA_VISIBLE_DEVICES=${VISION_GPU_IDS}
@@ -209,7 +219,12 @@ services:
     networks:
       - vyasa-net
 
-  # Embedder
+  # Embedder (Sentence Transformers)
+  # Simple and deterministic embedding service:
+  # - Model: nvidia/nv-embedqa-e5-v5 (1024-dimensional embeddings)
+  # - Dimension guardrail: EMBEDDING_DIMENSION=1024 enforced by orchestrator startup validation
+  # - Chunking responsibility: Upstream services (orchestrator) must chunk text before embedding
+  # - No quantization or performance tuning: Service remains simple and deterministic
   # Pinned to efficiency cores for management tasks
   embedder:
     build:
@@ -219,7 +234,8 @@ services:
     ports:
       - "${PORT_EMBEDDER}:30010"
     environment:
-      - EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH:-BAAI/bge-large-en-v1.5}
+      - EMBEDDER_MODEL_ID=${EMBEDDER_MODEL_ID:-${EMBEDDING_MODEL_PATH:-nvidia/nv-embedqa-e5-v5}}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1024}
       - HF_TOKEN=${HF_TOKEN}
       - CUDA_VISIBLE_DEVICES=1
       - HF_HOME=/raid/vyasa/hf_cache

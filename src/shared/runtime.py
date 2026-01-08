@@ -41,12 +41,17 @@ def detect_runtime(provider: str) -> str:
 
 
 def kv_policy_for(model: ModelConfig) -> Optional[str]:
-    """Return kv policy hint; uses existing registry kv_policy if set."""
+    """Return kv policy hint (non-authoritative).
+    
+    Uses registry kv_policy field as a hint only. Actual KV policy is configured
+    in deploy/docker-compose.yml command flags (e.g., --mem-fraction-static).
+    This function is for informational/reference purposes only.
+    """
     if model.kv_policy:
-        return model.kv_policy
+        return model.kv_policy  # Non-authoritative hint from registry
     runtime = detect_runtime(model.provider)
     if runtime == "sglang":
-        # SGLang supports mem-fraction-static; quantization flags set in compose
+        # SGLang supports mem-fraction-static; actual value set in docker-compose.yml
         return "mem-fraction-static (compose)"
     if runtime == "ollama":
         return None

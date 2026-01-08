@@ -78,23 +78,82 @@ def get_worker_url() -> str:
 # ============================================
 
 # Cortex Services - Committee of Experts Architecture
-# Brain (Logic) - High-level reasoning and JSON planning
-# Default model: Llama-3.1-8B-Instruct (non-gated, small, stable for DGX Spark)
 CORTEX_BRAIN_URL: str = _env("CORTEX_BRAIN_URL", "http://cortex-brain:30000")
 BRAIN_URL: str = _env("BRAIN_URL", CORTEX_BRAIN_URL)
-BRAIN_MODEL_NAME: str = _env("BRAIN_MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
-
-# Worker (Extraction) - Strict JSON extraction (cheap model)
 CORTEX_WORKER_URL: str = _env("CORTEX_WORKER_URL", "http://cortex-worker:30001")
 WORKER_URL: str = _env("WORKER_URL", CORTEX_WORKER_URL)
-# Worker (Extraction) - Qwen 2.5 49B model path
-# Note: Default HuggingFace path uses legacy naming; override via WORKER_MODEL_NAME env var
-WORKER_MODEL_NAME: str = _env("WORKER_MODEL_NAME", "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5")
-
-# Vision (Eye) - Description and data point extraction
 CORTEX_VISION_URL: str = _env("CORTEX_VISION_URL", "http://cortex-vision:30002")
 VISION_URL: str = _env("VISION_URL", CORTEX_VISION_URL)
-VISION_MODEL_NAME: str = _env("VISION_MODEL_NAME", "Qwen/Qwen2-VL-72B-Instruct")
+
+# ============================================
+# Canonical Model Configuration (Consolidated)
+# ============================================
+# Use TEXT_MODEL_ID, VISION_MODEL_ID, EMBEDDER_MODEL_ID for all model configuration.
+# Legacy vars (BRAIN_MODEL_PATH, WORKER_MODEL_PATH, etc.) are supported for one release with deprecation warnings.
+
+# Text model (used by both Brain and Worker services)
+# Default: meta-llama/Llama-3.3-70B-Instruct (target consolidation model)
+TEXT_MODEL_ID: str = _env(
+    "TEXT_MODEL_ID",
+    _env("BRAIN_MODEL_PATH", _env("WORKER_MODEL_PATH", "meta-llama/Llama-3.3-70B-Instruct"))
+)
+
+# Vision model (used by Vision service)
+# Default: Qwen/Qwen2-VL-7B-Instruct (target consolidation model)
+VISION_MODEL_ID: str = _env(
+    "VISION_MODEL_ID",
+    _env("VISION_MODEL_PATH", "Qwen/Qwen2-VL-7B-Instruct")
+)
+
+# Embedder model (used by Embedder service)
+# Default: nvidia/nv-embedqa-e5-v5 (target consolidation model)
+# Note: EMBEDDING_MODEL_PATH is checked as fallback for backward compatibility
+_embedding_model_path_fallback = os.getenv("EMBEDDING_MODEL_PATH")
+EMBEDDER_MODEL_ID: str = _env(
+    "EMBEDDER_MODEL_ID",
+    _embedding_model_path_fallback if _embedding_model_path_fallback else "nvidia/nv-embedqa-e5-v5"
+)
+
+# Backward compatibility: Emit deprecation warnings if legacy vars are used
+# Only warn if legacy var is set AND canonical var is NOT set (user is relying on legacy)
+import warnings
+if os.getenv("BRAIN_MODEL_PATH") and not os.getenv("TEXT_MODEL_ID"):
+    warnings.warn(
+        "BRAIN_MODEL_PATH is deprecated. Use TEXT_MODEL_ID instead. "
+        "BRAIN_MODEL_PATH will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+if os.getenv("WORKER_MODEL_PATH") and not os.getenv("TEXT_MODEL_ID"):
+    warnings.warn(
+        "WORKER_MODEL_PATH is deprecated. Use TEXT_MODEL_ID instead. "
+        "WORKER_MODEL_PATH will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+if os.getenv("VISION_MODEL_PATH") and not os.getenv("VISION_MODEL_ID"):
+    warnings.warn(
+        "VISION_MODEL_PATH is deprecated. Use VISION_MODEL_ID instead. "
+        "VISION_MODEL_PATH will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+if os.getenv("EMBEDDING_MODEL_PATH") and not os.getenv("EMBEDDER_MODEL_ID"):
+    warnings.warn(
+        "EMBEDDING_MODEL_PATH is deprecated. Use EMBEDDER_MODEL_ID instead. "
+        "EMBEDDING_MODEL_PATH will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
+# Legacy aliases for backward compatibility (one release)
+BRAIN_MODEL_PATH: str = TEXT_MODEL_ID  # type: ignore[misc,assignment]
+BRAIN_MODEL_NAME: str = TEXT_MODEL_ID  # type: ignore[misc,assignment]
+WORKER_MODEL_PATH: str = TEXT_MODEL_ID  # type: ignore[misc,assignment]
+WORKER_MODEL_NAME: str = TEXT_MODEL_ID  # type: ignore[misc,assignment]
+VISION_MODEL_PATH: str = VISION_MODEL_ID  # type: ignore[misc,assignment]
+VISION_MODEL_NAME: str = VISION_MODEL_ID  # type: ignore[misc,assignment]
+EMBEDDING_MODEL_PATH: str = EMBEDDER_MODEL_ID  # type: ignore[misc,assignment]
 
 # Legacy aliases for backward compatibility
 CORTEX_URL: str = _env("CORTEX_URL", CORTEX_BRAIN_URL)
@@ -116,9 +175,10 @@ QDRANT_URL: str = VECTOR_URL  # Alias
 # Embedder (Sentence Transformers) - Vectorizer
 EMBEDDER_URL: str = get_embedder_url()
 SENTENCE_TRANSFORMER_URL: str = EMBEDDER_URL  # Alias
-# Embedding model path (HuggingFace Hub format)
-EMBEDDING_MODEL_PATH: str = _env("EMBEDDING_MODEL_PATH", "BAAI/bge-large-en-v1.5")
-# Embedding dimension (BGE-Large = 1024)
+# Embedding model path (HuggingFace Hub format) - legacy alias, use EMBEDDER_MODEL_ID
+EMBEDDING_MODEL_PATH: str = EMBEDDER_MODEL_ID  # type: ignore[misc,assignment]
+# Embedding dimension (nv-embedqa-e5-v5 = 1024)
+# This must match the embedding model's output dimension
 EMBEDDING_DIMENSION: int = int(_env("EMBEDDING_DIMENSION", "1024"))
 # HuggingFace Hub token for authenticated model downloads
 HF_TOKEN: Optional[str] = os.getenv("HF_TOKEN")

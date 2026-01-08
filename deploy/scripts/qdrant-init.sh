@@ -76,10 +76,11 @@ create_collection() {
   fi
 }
 
-# Create entity-embeddings collection (384 dimensions for all-MiniLM-L6-v2)
-create_collection "entity-embeddings" 384
+# Create entity-embeddings collection (uses EMBEDDING_DIMENSION env var, default 1024 for nv-embedqa-e5-v5)
+EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1024}
+create_collection "entity-embeddings" ${EMBEDDING_DIMENSION}
 
-# Create document-embeddings collection (384 dimensions for all-MiniLM-L6-v2)
-create_collection "document-embeddings" 384
+# Create document-embeddings collection (uses EMBEDDING_DIMENSION env var, default 1024 for nv-embedqa-e5-v5)
+create_collection "document-embeddings" ${EMBEDDING_DIMENSION}
 
 echo "✅ Qdrant initialization complete - both collections ready"

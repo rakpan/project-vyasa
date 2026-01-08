@@ -31,7 +31,7 @@ except ImportError:
 
 from ...shared.logger import get_logger
 from ...shared.config import EMBEDDING_DIMENSION
-from ...vector.client import get_qdrant_client
+from ...vector.client import get_qdrant_client, ensure_collection_dimension
 
 logger = get_logger("orchestrator", __name__)
 
@@ -55,6 +55,15 @@ class QdrantStorage:
         self.collection_name = collection_name
         self.client = client or get_qdrant_client()
         self._ensure_collection()
+        # Validate dimension BEFORE allowing any ingestion operations
+        try:
+            ensure_collection_dimension(self.client, self.collection_name, EMBEDDING_DIMENSION)
+        except ValueError as e:
+            logger.critical(
+                f"Qdrant collection dimension mismatch for {self.collection_name}: {e}",
+                extra={"payload": {"collection_name": self.collection_name, "expected_dim": EMBEDDING_DIMENSION}}
+            )
+            raise
     
     def _ensure_collection(self) -> None:
         """Ensure collection exists with proper configuration."""
@@ -71,6 +80,8 @@ class QdrantStorage:
                     ),
                 )
                 logger.info(f"Created Qdrant collection: {self.collection_name}")
+                # Validate dimension after creation
+                ensure_collection_dimension(self.client, self.collection_name, EMBEDDING_DIMENSION)
         except Exception as e:
             logger.error(f"Failed to ensure Qdrant collection: {e}", exc_info=True)
             raise

@@ -189,7 +189,12 @@ cp .env.example .env
 - `QDRANT_API_KEY` - Qdrant API key
 - `CONSOLE_PASSWORD` - Console login password
 - `HF_TOKEN` - HuggingFace Hub token (get from https://huggingface.co/settings/tokens)
-- `BRAIN_MODEL_PATH`, `WORKER_MODEL_PATH`, `VISION_MODEL_PATH` - Model paths (HuggingFace or local)
+- `TEXT_MODEL_ID`, `VISION_MODEL_ID`, `EMBEDDER_MODEL_ID` - Canonical model configuration variables (HuggingFace Hub paths or local filesystem paths). These are the primary variables for model configuration.
+  - `TEXT_MODEL_ID`: Used by both Brain and Worker services (default: `meta-llama/Llama-3.3-70B-Instruct`, same model, different services for redundancy)
+  - `VISION_MODEL_ID`: Used by Vision service (default: `Qwen/Qwen2-VL-7B-Instruct`)
+  - `EMBEDDER_MODEL_ID`: Used by Embedder service (default: `nvidia/nv-embedqa-e5-v5`)
+  - `EMBEDDING_DIMENSION`: Embedding dimension for Qdrant collections (default: `1024` for nv-embedqa-e5-v5)
+  - Legacy variables (`BRAIN_MODEL_PATH`, `WORKER_MODEL_PATH`, `VISION_MODEL_PATH`, `EMBEDDING_MODEL_PATH`) are supported for one release with deprecation warnings.
 - `BRAIN_GPU_IDS`, `WORKER_GPU_IDS`, `VISION_GPU_IDS` - GPU assignments
 
 **Optional (Opik observability tracing):**

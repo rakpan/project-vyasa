@@ -555,13 +555,59 @@ REQUIREMENTS:
         usage = meta.get("usage")
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         
-        # Parse JSON (handle markdown code blocks if present)
+        # Parse JSON with fallback strategy (handles cases where response_format: json_object is not supported)
+        # This implements Guardrail 2: Prompt alignment contract - ensures JSON extraction works
+        extracted = None
+        parse_attempts = []
+        
         if isinstance(content, str):
-            # Remove markdown code blocks if present
-            if content.strip().startswith("```"):
-                lines = content.strip().split("\n")
-                content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
-            extracted = json.loads(content)
+            # Attempt 1: Direct JSON parse
+            try:
+                extracted = json.loads(content)
+                parse_attempts.append("direct_parse")
+            except json.JSONDecodeError:
+                # Attempt 2: Remove markdown code blocks and retry
+                try:
+                    cleaned = content.strip()
+                    if cleaned.startswith("```"):
+                        # Remove markdown code fence
+                        lines = cleaned.split("\n")
+                        if len(lines) > 2:
+                            # Remove first line (```json or ```) and last line (```)
+                            cleaned = "\n".join(lines[1:-1])
+                        else:
+                            cleaned = cleaned.replace("```", "").replace("```json", "").replace("```JSON", "")
+                    # Try to extract JSON object if wrapped in prose (regex fallback)
+                    import re
+                    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', cleaned, re.DOTALL)
+                    if json_match:
+                        cleaned = json_match.group(0)
+                    extracted = json.loads(cleaned)
+                    parse_attempts.append("markdown_cleaned")
+                    logger.debug(
+                        "Extracted JSON from markdown-wrapped response",
+                        extra={"payload": {"parse_method": "markdown_cleaned"}}
+                    )
+                except (json.JSONDecodeError, AttributeError) as e:
+                    # All parsing attempts failed - log and re-raise to be caught by outer handler
+                    logger.error(
+                        "Failed to parse JSON from extraction response after all fallback attempts",
+                        extra={
+                            "payload": {
+                                "content_preview": content[:200],
+                                "parse_attempts": parse_attempts,
+                                "error": str(e),
+                                "error_type": type(e).__name__,
+                            }
+                        },
+                        exc_info=True,
+                    )
+                    # Re-raise as JSONDecodeError to be caught by existing error handler
+                    raise json.JSONDecodeError(
+                        f"Failed to parse JSON after fallback attempts: {e}",
+                        content,
+                        0
+                    ) from e
         else:
             extracted = content
         
