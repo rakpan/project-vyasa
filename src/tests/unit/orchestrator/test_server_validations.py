@@ -120,17 +120,17 @@ class TestFileTooLarge:
         with app.test_client() as client:
             # Simulate RequestEntityTooLarge exception
             with patch.object(app, "dispatch_request", side_effect=RequestEntityTooLarge()):
-                response = client.post("/workflow/submit", data={"file": b"x" * (101 * 1024 * 1024)})
+                response = client.post("/workflow/submit", data={"file": b"x" * (11 * 1024 * 1024)})
                 
                 # Note: In actual Flask, MAX_CONTENT_LENGTH prevents request parsing,
                 # so we can't easily test this in a unit test without mocking at a lower level.
                 # However, we verify the error handler exists and works correctly.
-                # For a full integration test, you would need to send a real >100MB request.
+                # For a full integration test, you would need to send a real >10MB request.
                 pass  # Error handler is registered, will be called automatically by Flask
     
     def test_max_content_length_config(self):
         """Test that MAX_CONTENT_LENGTH is configured correctly."""
-        assert app.config["MAX_CONTENT_LENGTH"] == 100 * 1024 * 1024  # 100MB
+        assert app.config["MAX_CONTENT_LENGTH"] == 10 * 1024 * 1024  # 10MB
 
 
 

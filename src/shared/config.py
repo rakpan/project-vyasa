@@ -79,9 +79,10 @@ def get_worker_url() -> str:
 
 # Cortex Services - Committee of Experts Architecture
 # Brain (Logic) - High-level reasoning and JSON planning
+# Default model: Llama-3.1-8B-Instruct (non-gated, small, stable for DGX Spark)
 CORTEX_BRAIN_URL: str = _env("CORTEX_BRAIN_URL", "http://cortex-brain:30000")
 BRAIN_URL: str = _env("BRAIN_URL", CORTEX_BRAIN_URL)
-BRAIN_MODEL_NAME: str = _env("BRAIN_MODEL_NAME", "meta-llama/Llama-3.3-70B-Instruct")
+BRAIN_MODEL_NAME: str = _env("BRAIN_MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
 
 # Worker (Extraction) - Strict JSON extraction (cheap model)
 CORTEX_WORKER_URL: str = _env("CORTEX_WORKER_URL", "http://cortex-worker:30001")

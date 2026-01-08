@@ -1,12 +1,25 @@
 services:
   # SGLang - Brain (logic/routing)
-  # MXFP4 quantization preserves reasoning logic while reducing memory footprint
-  # Lowered mem-fraction to ensure 24GB headroom for OS/ArangoDB/Qdrant
+  # Stabilized configuration for DGX Spark:
+  # - Small non-gated model (Llama-3.1-8B-Instruct) for reliability
+  # - Conservative memory settings (mem-fraction ≤0.5) to prevent OOM
+  # - Single tensor parallelism (tp-size=1) for stability
+  # - INT8 quantization for balanced precision/performance
+  # - FlashInfer attention backend for efficient memory usage
+  # - GPU runtime properly configured for NVIDIA containers
   cortex-brain:
     image: ${CORTEX_IMAGE}
-    command: python3 -m sglang.launch_server --model-path ${BRAIN_MODEL_PATH} --host 0.0.0.0 --port 30000 --tp-size 2 --quantization mxfp4 --mem-fraction-static 0.70 --max-running-requests 2
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    command: python3 -m sglang.launch_server --model-path ${BRAIN_MODEL_PATH:-meta-llama/Llama-3.1-8B-Instruct} --host 0.0.0.0 --port 30000 --tp-size 1 --quantization int8 --mem-fraction-static 0.45 --max-running-requests 2
     environment:
-      - HF_TOKEN=${HF_TOKEN}
+      - HF_TOKEN=${HF_TOKEN:-}
       - CUDA_VISIBLE_DEVICES=0
       - HF_HOME=/raid/vyasa/hf_cache
       - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
@@ -26,7 +39,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 20s
+      start_period: 30s
 
   # SGLang - Worker (general tasks)
   # FP4 quantization maximizes memory efficiency for extraction tasks

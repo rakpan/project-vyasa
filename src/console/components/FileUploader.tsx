@@ -72,13 +72,68 @@ export function FileUploader({
     )
   }
 
-  const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100MB in bytes
+  const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB in bytes
+
+  // Pre-upload health check: verify dependencies are healthy before allowing upload
+  const checkSystemHealth = async (): Promise<{ healthy: boolean; message: string }> => {
+    try {
+      const response = await fetch("/api/proxy/orchestrator/health?deep=true", {
+        method: "GET",
+        cache: "no-store",
+      })
+
+      if (!response.ok) {
+        return {
+          healthy: false,
+          message: "Orchestrator is unavailable. Please check system status.",
+        }
+      }
+
+      const data = await response.json()
+
+      if (data.status !== "healthy") {
+        const unhealthyDeps: string[] = []
+        if (data.dependencies) {
+          if (data.dependencies.arango === "error") {
+            unhealthyDeps.push("ArangoDB (graph database)")
+          }
+          if (data.dependencies.worker === "error") {
+            unhealthyDeps.push("Cortex Worker (extraction service)")
+          }
+          if (data.dependencies.brain === "error") {
+            unhealthyDeps.push("Cortex Brain (reasoning service)")
+          }
+        }
+
+        const depsList = unhealthyDeps.length > 0 ? unhealthyDeps.join(", ") : "unknown services"
+        return {
+          healthy: false,
+          message: `System dependencies are unhealthy: ${depsList}. Upload is blocked to prevent failed jobs. Please wait for services to recover or contact support.`,
+        }
+      }
+
+      // Specifically check cortex-brain as it's critical for processing
+      if (data.dependencies?.brain !== "ok") {
+        return {
+          healthy: false,
+          message: "Cortex Brain service is unavailable. Upload is blocked because files cannot be processed without the reasoning service. Please wait for the service to recover.",
+        }
+      }
+
+      return { healthy: true, message: "" }
+    } catch (error) {
+      return {
+        healthy: false,
+        message: "Failed to check system health. Upload is blocked to prevent failed jobs. Please try again in a moment.",
+      }
+    }
+  }
 
   const validateFile = (file: File): boolean => {
     // Validate file size
     if (file.size > MAX_FILE_SIZE) {
       setError(
-        `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed size (100MB). Please upload a smaller file.`
+        `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed size (10MB). Please upload a smaller file.`
       )
       return false
     }
@@ -160,6 +215,20 @@ export function FileUploader({
 
   const processBatch = async () => {
     if (pendingFiles.length === 0) return
+    
+    // Pre-upload health check: block upload if dependencies are unhealthy
+    const healthCheck = await checkSystemHealth()
+    if (!healthCheck.healthy) {
+      setError(healthCheck.message)
+      setIsUploading(false)
+      // Mark all pending files as error
+      setPendingFiles((prev) =>
+        prev.map((f) => ({ ...f, status: "error" as FileStatus, error: healthCheck.message }))
+      )
+      onUploadError?.(healthCheck.message)
+      return
+    }
+    
     setIsUploading(true)
     setError(null)
 

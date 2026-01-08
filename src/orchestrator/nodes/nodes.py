@@ -60,7 +60,11 @@ BACKPRESSURE_THRESHOLD_RETRY = 0.95
 # ============================================================================
 
 def validate_state_schema(state: ResearchState) -> ResearchState:
-    """Ensure required control keys exist before node execution."""
+    """Ensure required control keys exist before node execution.
+    
+    Preserves all state fields including raw_text, pdf_path, and any unknown fields.
+    This defensive preservation ensures that fields are not dropped during state validation.
+    """
     job_id = state.get("jobId") or state.get("job_id")
     thread_id = state.get("threadId") or state.get("thread_id")
     if not job_id:
@@ -68,9 +72,26 @@ def validate_state_schema(state: ResearchState) -> ResearchState:
     if not thread_id:
         raise ValueError("ResearchState missing required field: threadId")
     # Normalize keys so downstream nodes can rely on camelCase
+    # Preserve ALL fields from input state (defensive preservation)
     normalized = {**state}
     normalized["jobId"] = job_id
     normalized["threadId"] = thread_id
+    
+    # Debug logging for raw_text preservation
+    raw_text_len = len(state.get("raw_text", "")) if state.get("raw_text") else 0
+    logger.debug(
+        "State schema validated",
+        extra={
+            "payload": {
+                "job_id": job_id,
+                "state_keys": list(state.keys()),
+                "raw_text_length": raw_text_len,
+                "has_raw_text": "raw_text" in state,
+                "has_pdf_path": "pdf_path" in state,
+            }
+        }
+    )
+    
     return normalized  # type: ignore[return-value]
 
 

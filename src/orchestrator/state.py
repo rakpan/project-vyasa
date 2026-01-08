@@ -92,3 +92,6 @@ class ResearchState(TypedDict, total=False):
     manuscript_blocks: Optional[List[Dict[str, Any]]]
     needs_human_review: Optional[bool]
     conflict_detected: Optional[bool]
+    # Raw text and PDF path (preserved across all nodes)
+    raw_text: Optional[str]
+    pdf_path: Optional[str]

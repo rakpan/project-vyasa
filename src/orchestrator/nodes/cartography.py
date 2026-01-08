@@ -9,6 +9,8 @@ import json
 import re
 from typing import Dict, Any, List, Optional
 
+import requests
+
 from ...shared.config import (
     _env,
     get_brain_url,
@@ -302,8 +304,10 @@ def cartographer_node(state: ResearchState) -> ResearchState:
         
     Raises:
         ValueError: If raw_text is missing or project_id provided but project not found.
-        RuntimeError: If project_id provided but DB unavailable.
-        requests.RequestException: If Worker API call fails.
+        RuntimeError: If project_id provided but DB unavailable, or if infrastructure
+            dependencies (cortex-brain, cortex-worker) are unavailable. This prevents
+            silent completion with 0 triples when services are down.
+        requests.RequestException: If Worker API call fails due to dependency issues.
     """
     # Import from nodes.py for now (will be moved to base.py/utils.py later)
     # Note: These are still in nodes.py but will be moved to base/utils in future refactor phases
@@ -318,7 +322,20 @@ def cartographer_node(state: ResearchState) -> ResearchState:
     project_context = state.get("project_context")
     job_id = state.get("jobId") or state.get("job_id")
     
+    # Debug logging for raw_text preservation at node entry
     raw_text = state.get("raw_text", "")
+    logger.debug(
+        "Cartographer node entry",
+        extra={
+            "payload": {
+                "job_id": job_id,
+                "raw_text_length": len(raw_text) if raw_text else 0,
+                "has_raw_text": "raw_text" in state,
+                "has_pdf_path": "pdf_path" in state,
+                "state_keys": list(state.keys())[:20],  # Limit to first 20 keys for logging
+            }
+        }
+    )
     critiques = state.get("critiques", []) or []
     
     # Fetch prompt from Prompt Registry (with fallback to factory default)
@@ -739,14 +756,48 @@ REQUIREMENTS:
             extra={"payload": {"prompt_chars": len(raw_text), "error": str(e)}},
             exc_info=True,
         )
-        # Return empty structure on JSON parse failure
+        # Return empty structure on JSON parse failure (not a dependency error)
         return {"extracted_json": {"triples": []}, "triples": [], "phase": PhaseEnum.MAPPING.value}
     except Exception as e:
-        logger.error(
-            "Cartographer failed to extract graph",
-            extra={"payload": {"prompt_chars": len(raw_text), "error": str(e)}},
-            exc_info=True,
+        # Detect dependency errors (infrastructure failures) that should fail the job
+        error_str = str(e).lower()
+        is_dependency_error = (
+            isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)) or
+            "connection" in error_str or
+            "timeout" in error_str or
+            "unavailable" in error_str or
+            "refused" in error_str or
+            "failed to connect" in error_str or
+            "name or service not known" in error_str or
+            "no route to host" in error_str
         )
-        # Return empty structure on failure (don't raise to allow workflow to continue)
-        return {"extracted_json": {"triples": []}, "triples": [], "phase": PhaseEnum.MAPPING.value}
+        
+        if is_dependency_error:
+            # Dependency error: raise to fail the job immediately
+            logger.error(
+                "Cartographer failed due to infrastructure dependency error",
+                extra={
+                    "payload": {
+                        "job_id": job_id,
+                        "ingestion_id": ingestion_id,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    }
+                },
+                exc_info=True,
+            )
+            # Raise with clear dependency error message
+            raise RuntimeError(
+                f"Infrastructure dependency unavailable: {str(e)}. "
+                "Please check that cortex-brain and cortex-worker services are running. "
+                "Upload is blocked until services recover."
+            ) from e
+        else:
+            # Non-dependency error: log and return empty structure (allow workflow to continue)
+            logger.error(
+                "Cartographer failed to extract graph (non-dependency error)",
+                extra={"payload": {"prompt_chars": len(raw_text), "error": str(e)}},
+                exc_info=True,
+            )
+            return {"extracted_json": {"triples": []}, "triples": [], "phase": PhaseEnum.MAPPING.value}
 

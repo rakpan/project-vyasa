@@ -83,6 +83,21 @@ def vision_node(state: ResearchState) -> ResearchState:
     
     state = validate_state_schema(state)
     job_id = state.get("jobId") or state.get("job_id")
+    
+    # Debug logging for raw_text preservation at node entry
+    raw_text = state.get("raw_text", "")
+    logger.debug(
+        "Vision node entry",
+        extra={
+            "payload": {
+                "job_id": job_id,
+                "raw_text_length": len(raw_text) if raw_text else 0,
+                "has_raw_text": "raw_text" in state,
+                "has_pdf_path": "pdf_path" in state,
+                "state_keys": list(state.keys())[:20],  # Limit to first 20 keys for logging
+            }
+        }
+    )
     image_paths = state.get("image_paths") or []
     if not image_paths:
         logger.warning("Vision: No images to process")
@@ -183,5 +198,6 @@ def vision_node(state: ResearchState) -> ResearchState:
         extra={"payload": {"images_processed": len(vision_results), "context_chars": len(vision_context)}},
     )
 
-    return {"raw_text": combined_text, "vision_results": vision_results}
+    # Preserve ALL state fields when returning (defensive preservation)
+    return {**state, "raw_text": combined_text, "vision_results": vision_results}
 

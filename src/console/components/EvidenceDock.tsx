@@ -54,9 +54,14 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
       )
       if (!response.ok) return null
       const data = await response.json()
+      
+      // Normalize status defensively: handle both "status" and "state" fields, normalize to uppercase
+      const rawStatus = data.status || data.state || "QUEUED"
+      const normalizedStatus = typeof rawStatus === "string" ? rawStatus.toUpperCase() : "QUEUED"
+      
       return {
         ingestion_id: ingestionId,
-        status: data.status,
+        status: normalizedStatus,
         progress: data.progress || 0,
         metadata: data.metadata,
         error_message: data.error_message,  // Include backend error message
@@ -82,8 +87,9 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
                   ? {
                       ...f,
                       status,
-                      // Clear error message when status becomes COMPLETED
-                      error: status.status === "COMPLETED" ? undefined : f.error,
+                      // Set error message immediately when status is FAILED
+                      error: status.status === "FAILED" ? (status.error_message || "Processing failed") : 
+                             status.status === "COMPLETED" ? undefined : f.error,
                     }
                   : f
               )
@@ -115,12 +121,18 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
                     const data = await response.json()
                     const files = Array.isArray(data.files) ? data.files : []
                     setCorpusFiles(
-                      files.map((f: any) => ({
-                        filename: typeof f === 'string' ? f : f.filename,
-                        claims_count: typeof f === 'object' ? f.triples_count : undefined,
-                        status: typeof f === 'object' ? f.status : "COMPLETED",
-                        error_message: typeof f === 'object' ? f.error_message : undefined,
-                      }))
+                      files.map((f: any) => {
+                        // Normalize status defensively to uppercase
+                        const rawStatus = typeof f === 'object' ? f.status : "COMPLETED"
+                        const normalizedStatus = typeof rawStatus === "string" ? rawStatus.toUpperCase() : "COMPLETED"
+                        
+                        return {
+                          filename: typeof f === 'string' ? f : f.filename,
+                          claims_count: typeof f === 'object' ? f.triples_count : undefined,
+                          status: normalizedStatus,
+                          error_message: typeof f === 'object' ? f.error_message : undefined,
+                        }
+                      })
                     )
                   }
                 } catch (error) {
@@ -227,7 +239,75 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
     }
   }, [])
 
+  // Pre-upload health check: verify dependencies are healthy before allowing upload
+  const checkSystemHealth = useCallback(async (): Promise<{ healthy: boolean; message: string }> => {
+    try {
+      const response = await fetch("/api/proxy/orchestrator/health?deep=true", {
+        method: "GET",
+        cache: "no-store",
+      })
+
+      if (!response.ok) {
+        return {
+          healthy: false,
+          message: "Orchestrator is unavailable. Please check system status.",
+        }
+      }
+
+      const data = await response.json()
+
+      if (data.status !== "healthy") {
+        const unhealthyDeps: string[] = []
+        if (data.dependencies) {
+          if (data.dependencies.arango === "error") {
+            unhealthyDeps.push("ArangoDB (graph database)")
+          }
+          if (data.dependencies.worker === "error") {
+            unhealthyDeps.push("Cortex Worker (extraction service)")
+          }
+          if (data.dependencies.brain === "error") {
+            unhealthyDeps.push("Cortex Brain (reasoning service)")
+          }
+        }
+
+        const depsList = unhealthyDeps.length > 0 ? unhealthyDeps.join(", ") : "unknown services"
+        return {
+          healthy: false,
+          message: `System dependencies are unhealthy: ${depsList}. Upload is blocked to prevent failed jobs. Please wait for services to recover or contact support.`,
+        }
+      }
+
+      // Specifically check cortex-brain as it's critical for processing
+      if (data.dependencies?.brain !== "ok") {
+        return {
+          healthy: false,
+          message: "Cortex Brain service is unavailable. Upload is blocked because files cannot be processed without the reasoning service. Please wait for the service to recover.",
+        }
+      }
+
+      return { healthy: true, message: "" }
+    } catch (error) {
+      return {
+        healthy: false,
+        message: "Failed to check system health. Upload is blocked to prevent failed jobs. Please try again in a moment.",
+      }
+    }
+  }, [])
+
   const handleStartProcessing = async () => {
+    // Pre-upload health check: block upload if dependencies are unhealthy
+    const healthCheck = await checkSystemHealth()
+    if (!healthCheck.healthy) {
+      // Show error for all staged files
+      setStagedFiles((prev) =>
+        prev.map((f) => ({
+          ...f,
+          error: healthCheck.message,
+        }))
+      )
+      return
+    }
+
     for (const staged of stagedFiles.filter((f) => !f.ingestion_id)) {
       try {
         const formData = new FormData()

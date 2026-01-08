@@ -78,8 +78,19 @@ from ..project.hub_types import ProjectGrouping
 
 logger = get_logger("orchestrator", __name__)
 app = Flask(__name__)
-# Set max content length to 100MB (104857600 bytes) for file uploads
-app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100MB
+# Set max content length to 10MB (10485760 bytes) for file uploads
+# 
+# Rationale for 10MB limit:
+# - InMemorySaver: LangGraph checkpoints store full job state in memory, including raw_text
+# - raw_text in job state: PDF text extraction results are stored in ResearchState.raw_text
+#   which is persisted in LangGraph checkpoints and ArangoDB
+# - ArangoDB document size risk: Large raw_text values can exceed ArangoDB's document size
+#   limits (default 16MB per document) and cause ingestion failures
+# - Memory pressure: Large files increase memory usage during processing and checkpointing
+# 
+# For larger files, consider chunking or streaming approaches that don't store full raw_text
+# in job state.
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
 app.register_blueprint(knowledge_bp)
 app.register_blueprint(jobs_bp)
 app.register_blueprint(manuscript_bp)
@@ -101,7 +112,7 @@ telemetry_emitter = get_telemetry_emitter()
 def handle_file_too_large(e):
     """Handle file size limit exceeded errors."""
     return jsonify({
-        "error": "File size exceeds maximum allowed size (100MB)",
+        "error": "File size exceeds maximum allowed size (10MB)",
         "code": "FILE_TOO_LARGE"
     }), 413
 
@@ -364,7 +375,7 @@ def health():
         Returns 200 if the server is up.
     
     Deep Check (?deep=true):
-        Pings ArangoDB and Cortex Worker to verify connectivity.
+        Pings ArangoDB, Cortex Worker, and Cortex Brain to verify connectivity.
         Returns 503 if any dependency is down.
     
     Response:
@@ -374,7 +385,8 @@ def health():
             "version": "1.0.0",
             "dependencies": {
                 "arango": "ok" | "error",
-                "worker": "ok" | "error"
+                "worker": "ok" | "error",
+                "brain": "ok" | "error"
             }
         }
     """
@@ -430,6 +442,24 @@ def health():
     except Exception as e:
         logger.warning(f"Worker health check failed: {e}")
         dependencies["worker"] = "error"
+        all_healthy = False
+    
+    # Check Cortex Brain (required for Critic node and synthesis)
+    try:
+        import requests
+        from ..shared.config import get_brain_url
+        
+        brain_url = get_brain_url()
+        # SGLang health endpoint check
+        response = requests.get(f"{brain_url}/health", timeout=2)
+        if response.status_code == 200:
+            dependencies["brain"] = "ok"
+        else:
+            dependencies["brain"] = "error"
+            all_healthy = False
+    except Exception as e:
+        logger.warning(f"Brain health check failed: {e}")
+        dependencies["brain"] = "error"
         all_healthy = False
     
     status = "healthy" if all_healthy else "unhealthy"
@@ -1094,6 +1124,7 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
             emit_reprocess_completion_telemetry(job_id, result)
             
             # Update ingestion record to COMPLETED when job succeeds
+            # BUT: Validate that extraction actually succeeded (non-zero triples)
             ingestion_id = initial_state.get("ingestion_id")
             if ingestion_id:
                 try:
@@ -1105,23 +1136,129 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
                         # Get triples count for metadata
                         extracted = result.get("extracted_json", {})
                         triples_count = len(extracted.get("triples", [])) if isinstance(extracted, dict) else 0
-                        ingestion_store.update_ingestion(
-                            ingestion_id,
-                            status=IngestionStatus.COMPLETED,  # Use constant to ensure consistency
-                            progress_pct=100.0,
-                            error_message=None,  # Clear any previous errors
+                        
+                        # Check for infrastructure failure indicators:
+                        # 1. Zero triples extracted (likely infrastructure failure)
+                        # 2. Job error message indicates dependency failure
+                        # Get error from job record if available
+                        job_record = get_job(job_id) if job_id else None
+                        job_error = ""
+                        if job_record:
+                            job_error = job_record.get("error") or ""
+                        is_dependency_failure = (
+                            "infrastructure dependency" in job_error.lower() or
+                            "unavailable" in job_error.lower() or
+                            "connection" in job_error.lower() or
+                            "timeout" in job_error.lower() or
+                            "refused" in job_error.lower()
                         )
-                        logger.info(
-                            f"Updated ingestion {ingestion_id} to COMPLETED",
-                            extra={"payload": {"ingestion_id": ingestion_id, "triples_count": triples_count}}
-                        )
+                        
+                        # Prevent silent completion with 0 triples (likely infrastructure failure)
+                        if triples_count == 0 and not extracted.get("claims"):
+                            # No triples and no claims extracted - likely infrastructure failure
+                            error_message = (
+                                job_error if is_dependency_failure else
+                                "Extraction completed with 0 triples. This may indicate an infrastructure failure. "
+                                "Please check that cortex-brain and cortex-worker services are running and retry."
+                            )
+                            ingestion_store.update_ingestion(
+                                ingestion_id,
+                                status=IngestionStatus.FAILED,
+                                progress_pct=100.0,
+                                error_message=error_message,
+                            )
+                            logger.warning(
+                                f"Marked ingestion {ingestion_id} as FAILED due to 0 triples",
+                                extra={
+                                    "payload": {
+                                        "ingestion_id": ingestion_id,
+                                        "triples_count": triples_count,
+                                        "error_message": error_message,
+                                    }
+                                }
+                            )
+                        elif is_dependency_failure:
+                            # Dependency failure detected - mark as FAILED
+                            ingestion_store.update_ingestion(
+                                ingestion_id,
+                                status=IngestionStatus.FAILED,
+                                progress_pct=100.0,
+                                error_message=job_error or "Infrastructure dependency unavailable. Please retry after services recover.",
+                            )
+                            logger.warning(
+                                f"Marked ingestion {ingestion_id} as FAILED due to dependency error",
+                                extra={
+                                    "payload": {
+                                        "ingestion_id": ingestion_id,
+                                        "error_message": job_error,
+                                    }
+                                }
+                            )
+                        else:
+                            # Successful extraction with triples - mark as COMPLETED
+                            ingestion_store.update_ingestion(
+                                ingestion_id,
+                                status=IngestionStatus.COMPLETED,  # Use constant to ensure consistency
+                                progress_pct=100.0,
+                                error_message=None,  # Clear any previous errors
+                            )
+                            logger.info(
+                                f"Updated ingestion {ingestion_id} to COMPLETED",
+                                extra={"payload": {"ingestion_id": ingestion_id, "triples_count": triples_count}}
+                            )
                 except Exception as e:
-                    logger.warning(f"Failed to update ingestion {ingestion_id} to COMPLETED: {e}", exc_info=True)
+                    logger.warning(f"Failed to update ingestion {ingestion_id} status: {e}", exc_info=True)
                     # Don't fail the job if ingestion update fails
 
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Workflow execution failed for job {job_id}", exc_info=True)
-            update_job_status(job_id, JobStatus.FAILED, error=str(exc), message="Failed")
+            error_str = str(exc)
+            
+            # Detect dependency errors from exception message
+            is_dependency_error = (
+                "infrastructure dependency" in error_str.lower() or
+                "unavailable" in error_str.lower() or
+                "connection" in error_str.lower() or
+                "timeout" in error_str.lower() or
+                "refused" in error_str.lower()
+            )
+            
+            # Update job status with error
+            update_job_status(job_id, JobStatus.FAILED, error=error_str, message="Failed")
+            
+            # Update ingestion record to FAILED if dependency error
+            ingestion_id = initial_state.get("ingestion_id")
+            if ingestion_id:
+                try:
+                    from .ingestion_store import IngestionStore, IngestionStatus
+                    from .services.project_service import get_project_service
+                    project_service = get_project_service()
+                    if project_service:
+                        ingestion_store = IngestionStore(project_service.db)
+                        error_message = (
+                            error_str if is_dependency_error else
+                            f"Workflow failed: {error_str}"
+                        )
+                        ingestion_store.update_ingestion(
+                            ingestion_id,
+                            status=IngestionStatus.FAILED,
+                            progress_pct=100.0,
+                            error_message=error_message,
+                        )
+                        logger.info(
+                            f"Updated ingestion {ingestion_id} to FAILED due to workflow error",
+                            extra={
+                                "payload": {
+                                    "ingestion_id": ingestion_id,
+                                    "error": error_str,
+                                    "is_dependency_error": is_dependency_error,
+                                }
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to update ingestion {ingestion_id} to FAILED: {e}", exc_info=True)
+                    # Don't fail the job update if ingestion update fails
+            
             raise
         finally:
             release_job_slot()
@@ -1353,6 +1490,20 @@ def submit_workflow():
             "rigor_level": (project_context or {}).get("rigor_level") or "exploratory",
             "phase": PhaseEnum.MAPPING.value,  # Workflow starts with cartographer (mapping phase)
         }
+        
+        # Debug logging for raw_text preservation
+        logger.info(
+            "Initial state created",
+            extra={
+                "payload": {
+                    "project_id": project_id,
+                    "raw_text_length": len(raw_text) if raw_text else 0,
+                    "has_raw_text": bool(raw_text),
+                    "has_pdf_path": bool(initial_state.get("pdf_path")),
+                    "state_keys": list(initial_state.keys()),
+                }
+            }
+        )
         
         # Add ingestion_id and doc_hash for file uploads (required for Qdrant indexing and provenance)
         if ingestion_id:
@@ -2014,6 +2165,20 @@ def run_workflow():
     }
     if project_context:
         initial_state["project_context"] = project_context
+    
+    # Debug logging for raw_text preservation
+    logger.info(
+        "Initial state created (legacy endpoint)",
+        extra={
+            "payload": {
+                "project_id": project_id,
+                "raw_text_length": len(raw_text) if raw_text else 0,
+                "has_raw_text": bool(raw_text),
+                "has_pdf_path": bool(initial_state.get("pdf_path")),
+                "state_keys": list(initial_state.keys()),
+            }
+        }
+    )
 
     try:
         job_id = create_job(initial_state, idempotency_key=payload.get("idempotency_key"))

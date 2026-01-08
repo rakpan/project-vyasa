@@ -87,8 +87,74 @@ export function SeedCorpusZone({ projectId }: SeedCorpusZoneProps) {
     [projectId, addJob, updateJobId]
   )
 
+  // Pre-upload health check: verify dependencies are healthy before allowing upload
+  const checkSystemHealth = useCallback(async (): Promise<{ healthy: boolean; message: string }> => {
+    try {
+      const response = await fetch("/api/proxy/orchestrator/health?deep=true", {
+        method: "GET",
+        cache: "no-store",
+      })
+
+      if (!response.ok) {
+        return {
+          healthy: false,
+          message: "Orchestrator is unavailable. Please check system status.",
+        }
+      }
+
+      const data = await response.json()
+
+      if (data.status !== "healthy") {
+        const unhealthyDeps: string[] = []
+        if (data.dependencies) {
+          if (data.dependencies.arango === "error") {
+            unhealthyDeps.push("ArangoDB (graph database)")
+          }
+          if (data.dependencies.worker === "error") {
+            unhealthyDeps.push("Cortex Worker (extraction service)")
+          }
+          if (data.dependencies.brain === "error") {
+            unhealthyDeps.push("Cortex Brain (reasoning service)")
+          }
+        }
+
+        const depsList = unhealthyDeps.length > 0 ? unhealthyDeps.join(", ") : "unknown services"
+        return {
+          healthy: false,
+          message: `System dependencies are unhealthy: ${depsList}. Upload is blocked to prevent failed jobs. Please wait for services to recover or contact support.`,
+        }
+      }
+
+      // Specifically check cortex-brain as it's critical for processing
+      if (data.dependencies?.brain !== "ok") {
+        return {
+          healthy: false,
+          message: "Cortex Brain service is unavailable. Upload is blocked because files cannot be processed without the reasoning service. Please wait for the service to recover.",
+        }
+      }
+
+      return { healthy: true, message: "" }
+    } catch (error) {
+      return {
+        healthy: false,
+        message: "Failed to check system health. Upload is blocked to prevent failed jobs. Please try again in a moment.",
+      }
+    }
+  }, [])
+
   const proceedWithUpload = useCallback(
     async (file: File, fileHash: string) => {
+      // Pre-upload health check: block upload if dependencies are unhealthy
+      const healthCheck = await checkSystemHealth()
+      if (!healthCheck.healthy) {
+        toast({
+          title: "Upload blocked",
+          description: healthCheck.message,
+          variant: "destructive",
+        })
+        return
+      }
+
       try {
         // Upload file and start workflow
         const formData = new FormData()
@@ -135,7 +201,7 @@ export function SeedCorpusZone({ projectId }: SeedCorpusZoneProps) {
         })
       }
     },
-    [projectId, addJob, updateJobId]
+    [projectId, addJob, updateJobId, checkSystemHealth]
   )
 
   const handleDuplicateProceed = useCallback(() => {

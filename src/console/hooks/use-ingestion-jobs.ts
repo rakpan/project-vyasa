@@ -35,7 +35,7 @@ function mapJobStatusToIngestionStatus(
   backendStatus: string,
   currentStep?: string
 ): IngestionStatus {
-  switch (backendStatus) {
+  switch (backendStatus.toUpperCase()) {
     case "QUEUED":
     case "PENDING":
       return "Queued"
@@ -62,6 +62,27 @@ function mapJobStatusToIngestionStatus(
   }
 }
 
+// Map uppercase backend status to title case IngestionStatus
+function mapBackendStatusToIngestionStatus(backendStatus: string): IngestionStatus {
+  const upper = backendStatus.toUpperCase()
+  switch (upper) {
+    case "QUEUED":
+      return "Queued"
+    case "EXTRACTING":
+      return "Extracting"
+    case "MAPPING":
+      return "Mapping"
+    case "VERIFYING":
+      return "Verifying"
+    case "COMPLETED":
+      return "Completed"
+    case "FAILED":
+      return "Failed"
+    default:
+      return "Queued"
+  }
+}
+
 export function useIngestionJobs({ projectId, pollingInterval = 2000 }: UseIngestionJobsOptions) {
   const [jobs, setJobs] = useState<IngestionJob[]>([])
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
@@ -77,9 +98,13 @@ export function useIngestionJobs({ projectId, pollingInterval = 2000 }: UseInges
       }
 
       const data = await response.json()
-      // Response format: { ingestion_id, state, progress_pct, error_message, first_glance, confidence, job_id }
-      const status = (data.state || "Queued") as IngestionStatus
-      const progress = data.progress_pct !== undefined ? data.progress_pct : 0
+      // Response format: { ingestion_id, status (or state), progress (or progress_pct), error_message, first_glance, confidence, job_id }
+      // Normalize status defensively: handle both "status" and "state" fields, normalize to title case for IngestionStatus type
+      const rawStatus = data.status || data.state || "QUEUED"
+      const normalizedStatusUpper = typeof rawStatus === "string" ? rawStatus.toUpperCase() : "QUEUED"
+      // Map uppercase backend status to title case frontend IngestionStatus
+      const status = mapBackendStatusToIngestionStatus(normalizedStatusUpper) as IngestionStatus
+      const progress = data.progress !== undefined ? data.progress * 100 : (data.progress_pct !== undefined ? data.progress_pct : 0)
       const error = data.error_message || undefined
       const firstGlance = data.first_glance
       const confidence = data.confidence as "High" | "Medium" | "Low" | undefined
@@ -102,7 +127,15 @@ export function useIngestionJobs({ projectId, pollingInterval = 2000 }: UseInges
       )
 
       // Return whether to continue polling
-      return status !== "Completed" && status !== "Failed"
+      // Stop polling on terminal statuses (Completed or Failed)
+      const shouldContinue = status !== "Completed" && status !== "Failed"
+      
+      // If status is Failed, ensure error is displayed immediately
+      if (status === "Failed" && error) {
+        console.warn(`Ingestion ${ingestionId} failed: ${error}`)
+      }
+      
+      return shouldContinue
     } catch (error) {
       console.error("Failed to poll ingestion status:", error)
       // Continue polling on error (might be transient)

@@ -7,7 +7,7 @@ across all LangGraph nodes with explicit phase tracking and ingestion lineage.
 
 from enum import Enum
 from typing import Annotated, List, Optional, Dict, Any
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from operator import add
 
 from langgraph.graph.message import add_messages
@@ -40,7 +40,12 @@ class ResearchState(BaseModel):
     
     The model supports LangGraph reducer semantics for lists (triples, artifacts)
     while maintaining strict validation for required fields.
+    
+    Configured with extra='allow' to preserve unknown fields like raw_text and pdf_path
+    that may be added to state dicts during workflow execution.
     """
+    
+    model_config = ConfigDict(extra='allow')
     
     # Required identifiers
     job_id: str = Field(..., description="Job identifier (UUID)")
@@ -92,6 +97,10 @@ class ResearchState(BaseModel):
         description="Record of prompts used by each node (keyed by node name: 'cartographer', 'critic', 'synthesizer')"
     )
     
+    # Raw text and PDF path (preserved across all nodes)
+    raw_text: Optional[str] = Field(None, description="Raw text content from PDF or direct input (preserved across workflow)")
+    pdf_path: Optional[str] = Field(None, description="Path to source PDF file (preserved across workflow)")
+    
     @field_validator("ingestion_id")
     @classmethod
     def validate_ingestion_id(cls, v: Optional[str], info) -> Optional[str]:
@@ -130,10 +139,15 @@ class ResearchState(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for LangGraph compatibility.
         
+        Preserves all fields including unknown fields (like raw_text, pdf_path) via
+        model_dump with include_extra=True (Pydantic v2).
+        
         Returns:
             Dictionary representation compatible with LangGraph TypedDict expectations.
         """
+        # With extra='allow' in model_config, extra fields are automatically included in model_dump
         data = self.model_dump(exclude_none=False, by_alias=False, mode="python")
+        
         # Ensure legacy fields are set
         data["jobId"] = data.get("job_id")
         data["threadId"] = data.get("thread_id")
@@ -161,11 +175,13 @@ class ResearchState(BaseModel):
     def from_dict(cls, data: Dict[str, Any]) -> "ResearchState":
         """Create ResearchState from dictionary (for LangGraph state loading).
         
+        Preserves all unknown fields (like raw_text, pdf_path) via model_config extra='allow'.
+        
         Args:
-            data: Dictionary with state fields (may include legacy keys).
+            data: Dictionary with state fields (may include legacy keys and unknown fields).
         
         Returns:
-            ResearchState instance.
+            ResearchState instance with all fields preserved.
         """
         # Normalize legacy keys
         if "jobId" in data and "job_id" not in data:
@@ -225,7 +241,8 @@ class ResearchState(BaseModel):
             from .disputes import DisputeContext
             data["dispute_context"] = DisputeContext(**data["dispute_context"])
         
-        return cls(**data)
+        # Create instance with extra='allow' (via model_config) to preserve unknown fields
+        return cls.model_validate(data, strict=False)
     
     def transition_phase(self, new_phase: PhaseEnum) -> "ResearchState":
         """Transition to a new phase (creates new instance for immutability).

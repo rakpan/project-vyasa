@@ -205,6 +205,21 @@ def critic_node(state: ResearchState) -> ResearchState:
     raw_text = state.get("raw_text", "")
     synthesis = state.get("synthesis", "")
     
+    # Debug logging for raw_text preservation at node entry
+    job_id = state.get("jobId") or state.get("job_id")
+    logger.debug(
+        "Critic node entry",
+        extra={
+            "payload": {
+                "job_id": job_id,
+                "raw_text_length": len(raw_text) if raw_text else 0,
+                "has_raw_text": "raw_text" in state,
+                "has_pdf_path": "pdf_path" in state,
+                "state_keys": list(state.keys())[:20],  # Limit to first 20 keys for logging
+            }
+        }
+    )
+    
     # Fetch prompt from Prompt Registry (with fallback to factory default)
     from ..prompts import get_active_prompt_with_meta, DEFAULT_CRITIC_PROMPT
     system_template, prompt_meta = get_active_prompt_with_meta("vyasa-critic", DEFAULT_CRITIC_PROMPT)
@@ -223,8 +238,10 @@ def critic_node(state: ResearchState) -> ResearchState:
             extra={"payload": {"extracted_preview": extracted_str[:200]}},
         )
         # Early return to avoid double-incrementing revision_count in downstream logic
+        # Preserve ALL state fields (defensive preservation)
         revision_count = state.get("revision_count", 0) + 1
         return {
+            **state,
             "critiques": ["Extraction appears garbled or contains repetitive tokens (possible FP4 quantization failure)"],
             "revision_count": revision_count,
             "critic_status": "fail",
@@ -417,7 +434,9 @@ def critic_node(state: ResearchState) -> ResearchState:
             revision_count = state.get("revision_count", 0) + (0 if status == "pass" else 1)
             critic_score = 1.0 if status == "pass" else 0.0
             synthesis_val = state.get("synthesis") or "synthesis_placeholder"
+            # Preserve ALL state fields (defensive preservation)
             return {
+                **state,
                 "critiques": critiques,
                 "revision_count": revision_count,
                 "critic_status": status,
@@ -430,7 +449,8 @@ def critic_node(state: ResearchState) -> ResearchState:
         expert_url, expert_name, expert_model = route_to_expert("critic_node", ExpertType.LOGIC_REASONING)
         decision = check_kv_backpressure(expert_url)
         if decision.get("action") == "retry_later":
-            return {"critic_status": "retry_later", "error": "RETRY_LATER"}
+            # Preserve ALL state fields (defensive preservation)
+            return {**state, "critic_status": "retry_later", "error": "RETRY_LATER"}
         # soft delay already applied inside decision for >85%
         
         # Get role for allowed_tools
@@ -722,7 +742,8 @@ def critic_node(state: ResearchState) -> ResearchState:
                 logger.warning("Failed to persist conflict report", exc_info=True)
         # Set phase to VETTING
         base_state["phase"] = PhaseEnum.VETTING.value
-        return base_state
+        # Preserve ALL state fields (defensive preservation)
+        return {**state, **base_state}
     except Exception:
         logger.error(
             "Critic validation failed",
@@ -730,8 +751,10 @@ def critic_node(state: ResearchState) -> ResearchState:
             exc_info=True,
         )
         # On failure to critique, force manual review path
+        # Preserve ALL state fields (defensive preservation)
         revision_count = state.get("revision_count", 0) + 1
         return {
+            **state,
             "critiques": ["Critic execution failed"],
             "revision_count": revision_count,
             "critic_status": "fail",
@@ -812,7 +835,8 @@ def tone_validator_node(state: ResearchState) -> ResearchState:
     state = validate_state_schema(state)
     text = str(state.get("synthesis") or state.get("final_text") or "")
     if not text:
-        return {"synthesis": ""}
+        # Preserve ALL state fields (defensive preservation)
+        return {**state, "synthesis": ""}
 
     try:
         from ..shared.vocab_guard import get_vocab_guard
@@ -830,8 +854,10 @@ def tone_validator_node(state: ResearchState) -> ResearchState:
                 )
             )
         neutral_text = rewrite_to_neutral(text, tone_flags, evidence_context=None)
-        return {"synthesis": neutral_text, "final_text": neutral_text}
+        # Preserve ALL state fields (defensive preservation)
+        return {**state, "synthesis": neutral_text, "final_text": neutral_text}
     except Exception as exc:
         logger.warning("Tone validator skipped", extra={"payload": {"error": str(exc)}})
-        return {"synthesis": text, "final_text": text}
+        # Preserve ALL state fields (defensive preservation)
+        return {**state, "synthesis": text, "final_text": text}
 

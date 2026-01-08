@@ -230,10 +230,14 @@ def list_project_files(project_id: str):
                         except Exception:
                             pass
                 
+                # Normalize status to uppercase for API consistency
+                raw_status = record.get("status", "Unknown")
+                normalized_status = raw_status.upper() if raw_status else "UNKNOWN"
+                
                 valid_files.append({
                     "filename": filename,
                     "ingestion_id": ingestion_id,
-                    "status": record.get("status", "Unknown"),
+                    "status": normalized_status,  # Normalized to uppercase: QUEUED, COMPLETED, FAILED, etc.
                     "created_at": record.get("created_at", ""),
                     "triples_count": triples_count,  # Number of triples extracted
                     "error_message": error_message,  # Error message if processing failed
@@ -455,7 +459,8 @@ def get_ingestion_status(project_id: str, ingestion_id: str):
             }
         
         response: Dict[str, Any] = {
-            "status": status_upper,
+            "ingestion_id": ingestion_id,
+            "status": status_upper,  # Normalized to uppercase: QUEUED, COMPLETED, FAILED, etc.
             "progress": progress,
         }
         
@@ -464,8 +469,9 @@ def get_ingestion_status(project_id: str, ingestion_id: str):
             response["metadata"] = metadata
         
         # Include error_message when present (allows UI to show processing errors at any stage)
-        if error_message:
-            response["error_message"] = error_message
+        # Always include error_message for FAILED status to ensure immediate display
+        if error_message or status_upper == "FAILED":
+            response["error_message"] = error_message or "Processing failed"
         
         return jsonify(response), 200
         
