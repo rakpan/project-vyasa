@@ -80,9 +80,33 @@ def vision_node(state: ResearchState) -> ResearchState:
     """Run Vision on selected images and inject results into raw_text context."""
     # Import validate_state_schema from nodes.py to avoid circular imports
     from .nodes import validate_state_schema
+    from ...shared.config import VISION_ENABLED, VISION_HEALTH_TIMEOUT, get_vision_url
     
     state = validate_state_schema(state)
     job_id = state.get("jobId") or state.get("job_id")
+    
+    # Early exit: Vision disabled by config
+    if not VISION_ENABLED:
+        logger.info("Vision node skipped: disabled by config", extra={"payload": {"job_id": job_id}})
+        return {**state, "vision_output": [], "vision_skipped_reason": "disabled"}
+    
+    # Early exit: Vision unhealthy
+    try:
+        import requests
+        vision_url = get_vision_url()
+        response = requests.get(f"{vision_url}/health", timeout=VISION_HEALTH_TIMEOUT)
+        if response.status_code != 200:
+            reason = f"unhealthy:health check returned {response.status_code}"
+            logger.warning(f"Vision node skipped: {reason}", extra={"payload": {"job_id": job_id}})
+            return {**state, "vision_output": [], "vision_skipped_reason": reason}
+    except requests.Timeout:
+        reason = "unhealthy:health check timeout"
+        logger.warning(f"Vision node skipped: {reason}", extra={"payload": {"job_id": job_id}})
+        return {**state, "vision_output": [], "vision_skipped_reason": reason}
+    except Exception as e:
+        reason = f"unhealthy:{str(e)}"
+        logger.warning(f"Vision node skipped: {reason}", extra={"payload": {"job_id": job_id}})
+        return {**state, "vision_output": [], "vision_skipped_reason": reason}
     
     # Debug logging for raw_text preservation at node entry
     raw_text = state.get("raw_text", "")

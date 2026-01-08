@@ -445,15 +445,24 @@ def health():
         all_healthy = False
     
     # Check Cortex Worker
+    # SGLang doesn't expose a /health endpoint, so we check if the port is reachable
     try:
-        import requests
+        import socket
         from ..shared.config import get_worker_url
+        from urllib.parse import urlparse
         
         worker_url = get_worker_url()
-        # SGLang doesn't have a standard health endpoint, so we try a lightweight request
-        # or just check if the port is reachable
-        response = requests.get(f"{worker_url}/health", timeout=2)
-        if response.status_code == 200:
+        parsed = urlparse(worker_url)
+        host = parsed.hostname or "cortex-worker"
+        port = parsed.port or 30001
+        
+        # Check if port is open (lightweight TCP connection test)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        
+        if result == 0:
             dependencies["worker"] = "ok"
         else:
             dependencies["worker"] = "error"
@@ -464,14 +473,24 @@ def health():
         all_healthy = False
     
     # Check Cortex Brain (required for Critic node and synthesis)
+    # SGLang doesn't expose a /health endpoint, so we check if the port is reachable
     try:
-        import requests
+        import socket
         from ..shared.config import get_brain_url
+        from urllib.parse import urlparse
         
         brain_url = get_brain_url()
-        # SGLang health endpoint check
-        response = requests.get(f"{brain_url}/health", timeout=2)
-        if response.status_code == 200:
+        parsed = urlparse(brain_url)
+        host = parsed.hostname or "cortex-brain"
+        port = parsed.port or 30000
+        
+        # Check if port is open (lightweight TCP connection test)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        
+        if result == 0:
             dependencies["brain"] = "ok"
         else:
             dependencies["brain"] = "error"
@@ -480,6 +499,49 @@ def health():
         logger.warning(f"Brain health check failed: {e}")
         dependencies["brain"] = "error"
         all_healthy = False
+    
+    # Check Vision (optional accelerator)
+    from ..shared.config import VISION_ENABLED, VISION_HEALTH_TIMEOUT, get_vision_url
+    vision_status = {
+        "enabled": VISION_ENABLED,
+        "healthy": False,
+        "reason": ""
+    }
+    if not VISION_ENABLED:
+        vision_status["healthy"] = False
+        vision_status["reason"] = "disabled by config"
+    else:
+        try:
+            import socket
+            from urllib.parse import urlparse
+            
+            vision_url = get_vision_url()
+            parsed = urlparse(vision_url)
+            host = parsed.hostname or "cortex-vision"
+            port = parsed.port or 30002
+            
+            # Check if port is open (lightweight TCP connection test)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(VISION_HEALTH_TIMEOUT)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            
+            if result == 0:
+                vision_status["healthy"] = True
+                vision_status["reason"] = "ok"
+            else:
+                vision_status["healthy"] = False
+                vision_status["reason"] = "port not reachable"
+        except socket.timeout:
+            vision_status["healthy"] = False
+            vision_status["reason"] = "health check timeout"
+        except Exception as e:
+            vision_status["healthy"] = False
+            vision_status["reason"] = f"health check failed: {str(e)}"
+    
+    dependencies["vision"] = vision_status
+    # Vision being disabled or unhealthy does NOT make the overall system unhealthy
+    # (it's an optional accelerator)
     
     status = "healthy" if all_healthy else "unhealthy"
     status_code = 200 if all_healthy else 503
@@ -1416,6 +1478,36 @@ def submit_workflow():
                         logger.warning(f"Failed to compute first glance for {uploaded_filename}: {e}", exc_info=True)
                         # Continue without first_glance (will be computed later from job result)
                     
+                    # Perform PDF triage for vision detection
+                    warnings = []
+                    triage = {}
+                    try:
+                        from .pdf_triage import triage_pdf
+                        from ..shared.config import VISION_ENABLED
+                        
+                        triage = triage_pdf(persistent_file_path)
+                        likely_scanned = triage.get("likely_scanned", False)
+                        
+                        # If PDF is likely scanned and vision is disabled, add warning
+                        if likely_scanned and not VISION_ENABLED:
+                            warnings.append({
+                                "code": "VISION_OFF_SCANNED_PDF",
+                                "severity": "warning",
+                                "message": f"PDF appears to be scanned/image-heavy (preview text: {triage.get('preview_text_chars', 0)} chars from {triage.get('pages_previewed', 0)} pages), but vision processing is disabled. Enable VISION_ENABLED=true for better extraction of scanned documents."
+                            })
+                            logger.info(
+                                "PDF triage: likely scanned PDF detected with vision disabled",
+                                extra={
+                                    "payload": {
+                                        "filename": uploaded_filename,
+                                        "triage": triage,
+                                    }
+                                }
+                            )
+                    except Exception as e:
+                        logger.warning(f"PDF triage failed for {uploaded_filename}: {e}", exc_info=True)
+                        # Continue without triage (non-critical)
+                    
                     # Create new ingestion record with persistent file path
                     ingestion_record = ingestion_store.create_ingestion(
                         project_id=project_id,
@@ -1423,6 +1515,8 @@ def submit_workflow():
                         file_hash=doc_hash,
                         file_path=persistent_file_path,  # Store persistent path
                         first_glance=first_glance,
+                        warnings=warnings if warnings else None,
+                        triage=triage if triage else None,
                     )
                     ingestion_id = ingestion_record.ingestion_id  # Set for use in response
                     
@@ -1590,11 +1684,27 @@ def submit_workflow():
         
         # Response contract: always include ingestion_id (non-optional)
         # Returns tracking IDs immediately for polling-based UX
+        # Include warnings and triage if available (for vision-related warnings)
         response = {
             "ingestion_id": ingestion_id,  # Required, non-optional
             "job_id": job_id,
             "status": "QUEUED",  # Use string literal for consistency with status endpoint
         }
+        
+        # Include warnings and triage from ingestion record if available
+        if ingestion_id:
+            try:
+                from .ingestion_store import IngestionStore
+                ingestion_store = IngestionStore(project_service.db)
+                record = ingestion_store.get_ingestion(ingestion_id)
+                if record:
+                    if record.warnings:
+                        response["warnings"] = record.warnings
+                    if record.triage:
+                        response["triage"] = record.triage
+            except Exception as e:
+                logger.debug(f"Failed to fetch warnings/triage for response: {e}")
+                # Non-critical, continue without warnings/triage
         
         return jsonify(response), 202  # 202 Accepted
         

@@ -12,7 +12,6 @@ graph TD
 
     subgraph "Fusion Backend (Docker Network)"
         Cortex[<b>Cortex</b><br/>SGLang / Port 30000<br/><i>The Brain</i>]
-        Drafter[<b>Drafter</b><br/>Ollama / Port 11435<br/><i>The Writer</i>]
         Embedder[<b>Embedder</b><br/>Sentence-Transformers<br/><i>The Vectorizer</i>]
         
         subgraph "Memory"
@@ -24,7 +23,7 @@ graph TD
     %% Flows
     User -->|Click| UI
     UI -->|Extract JSON| Cortex
-    UI -->|Summarize| Drafter
+    UI -->|Summarize| Cortex
     UI -->|Search| Embedder
     Embedder -->|Vectors| VectorDB
     Cortex -->|Triples| GraphDB

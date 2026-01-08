@@ -7,9 +7,9 @@ Validates critical system state before allowing operations:
 """
 
 from typing import Dict, List, Optional, Tuple
-from ...shared.logger import get_logger
-from ...shared.config import EMBEDDING_DIMENSION
-from ...vector.client import get_qdrant_client, ensure_collection_dimension
+from src.shared.logger import get_logger
+from src.shared.config import EMBEDDING_DIMENSION
+from src.vector.client import get_qdrant_client, ensure_collection_dimension
 
 logger = get_logger("orchestrator", __name__)
 

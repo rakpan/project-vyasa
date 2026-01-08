@@ -25,7 +25,7 @@ class ExpertType:
 
     LOGIC_REASONING = "logic_reasoning"  # Brain (Port 30000)
     EXTRACTION_SCHEMA = "extraction_schema"  # Worker (Port 30001) with Brain fallback
-    PROSE_WRITING = "prose_writing"  # Drafter (Port 11435)
+    PROSE_WRITING = "prose_writing"  # TEXT model (Brain/Worker) with draft prompt profile
     VISION = "vision"  # Vision (Port 30002)
 
 

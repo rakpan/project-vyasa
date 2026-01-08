@@ -18,7 +18,6 @@ PACTGraph = KnowledgeGraph
 from .config import (
     CORTEX_URL,
     CORTEX_SERVICE_URL,
-    DRAFTER_URL,
     WORKER_URL,
     MEMORY_URL,
     MEMORY_SERVICE_URL,
@@ -31,7 +30,6 @@ from .config import (
     ARANGODB_USER,
     ARANGODB_PASSWORD,
     get_cortex_url,
-    get_drafter_url,
     get_memory_url,
     get_vector_url,
     get_embedder_url,
@@ -54,7 +52,6 @@ __all__ = [
     # Config exports
     "CORTEX_URL",
     "CORTEX_SERVICE_URL",
-    "DRAFTER_URL",
     "WORKER_URL",
     "MEMORY_URL",
     "MEMORY_SERVICE_URL",
@@ -67,7 +64,6 @@ __all__ = [
     "ARANGODB_USER",
     "ARANGODB_PASSWORD",
     "get_cortex_url",
-    "get_drafter_url",
     "get_memory_url",
     "get_vector_url",
     "get_embedder_url",

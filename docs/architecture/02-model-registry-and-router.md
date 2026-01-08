@@ -56,18 +56,18 @@ Validation runs at import:
 **Authoritative fields only** (quantization/optimization details are in docker-compose.yml):
 
 - `brain`: 
-  - `model_id`: `TEXT_MODEL_ID` (default `meta-llama/Llama-3.3-70B-Instruct`)
+  - `model_id`: `TEXT_MODEL_ID` (default `nvidia/Llama-3_3-Nemotron-Super-49B-v1_5`)
   - `provider`: `sglang`
   - `purpose`: `critic / high-level reasoning`
   - `endpoint_env`: `BRAIN_URL`
   - Deployment optimizations (quantization, kv_policy, tp-size, etc.) are configured in `deploy/docker-compose.yml` service `cortex-brain`
 
 - `worker`: 
-  - `model_id`: `TEXT_MODEL_ID` (same as Brain - default `meta-llama/Llama-3.3-70B-Instruct`)
+  - `model_id`: `TEXT_MODEL_ID` (same as Brain - default `nvidia/Llama-3_3-Nemotron-Super-49B-v1_5`)
   - `provider`: `sglang`
   - `purpose`: `extraction / cartographer`
   - `endpoint_env`: `WORKER_URL`
-  - Note: Both Brain and Worker use the same `TEXT_MODEL_ID` (same model, different services for redundancy)
+  - Note: Both Brain and Worker use the same `TEXT_MODEL_ID` (same model, different services for redundancy, optimized for DGX Spark)
   - Deployment optimizations (quantization, kv_policy, tp-size, context-length, etc.) are configured in `deploy/docker-compose.yml` service `cortex-worker`
 
 - `vision`: 
@@ -84,19 +84,14 @@ Validation runs at import:
   - `endpoint_env`: `SENTENCE_TRANSFORMER_URL`
   - Deployment configuration is in `deploy/docker-compose.yml` service `embedder`
 
-- `drafter`: 
-  - `model_id`: not set in repo (Ollama manages its own registry)
-  - `provider`: `ollama`
-  - `purpose`: `prose / drafting`
-  - `endpoint_env`: `DRAFTER_URL`
-  - Deployment configuration is in `deploy/docker-compose.yml` service `drafter`
+Note: Prose writing (previously handled by `drafter` service) now routes to the TEXT model (Brain) via `ExpertType.PROSE_WRITING` with a draft prompt profile. No separate drafter service is required.
 
 **Model Configuration**: Use canonical environment variables:
-- `TEXT_MODEL_ID`: Used by both Brain and Worker services (default: `meta-llama/Llama-3.3-70B-Instruct`)
+- `TEXT_MODEL_ID`: Used by both Brain and Worker services (default: `nvidia/Llama-3_3-Nemotron-Super-49B-v1_5`, optimized for DGX Spark)
 - `VISION_MODEL_ID`: Used by Vision service (default: `Qwen/Qwen2-VL-7B-Instruct`)
 - `EMBEDDER_MODEL_ID`: Used by Embedder service (default: `nvidia/nv-embedqa-e5-v5`)
 
-**Model Download**: All SGLang and embedder models download from [HuggingFace Hub](https://huggingface.co/) on first container start. Set `HF_TOKEN` environment variable for authenticated downloads (required for some gated models). Model paths can be HuggingFace Hub paths (e.g., `meta-llama/Llama-3.3-70B-Instruct`) or local filesystem paths.
+**Model Download**: All SGLang and embedder models download from [HuggingFace Hub](https://huggingface.co/) on first container start. Set `HF_TOKEN` environment variable for authenticated downloads (required for some gated models). Model paths can be HuggingFace Hub paths (e.g., `nvidia/Llama-3_3-Nemotron-Super-49B-v1_5`) or local filesystem paths.
 
 ## Usage (read-only)
 

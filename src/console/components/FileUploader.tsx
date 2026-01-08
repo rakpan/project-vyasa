@@ -7,16 +7,20 @@
  */
 
 import { useState } from "react"
-import { Upload, AlertCircle, FileText, Loader2, X, Check, AlertTriangle } from "lucide-react"
+import { Upload, AlertCircle, FileText, Loader2, X, Check, AlertTriangle, Eye } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { useProjectFiles } from "@/hooks/use-project-files"
+import { VisionEnableModal } from "./vision-enable-modal"
+import { getVisionOffScannedWarning } from "@/utils/ingestion-warnings"
 
 interface UploadResult {
   file: File
   ingestion_id: string
   job_id: string
   status: string
+  warnings?: Array<{ code: string; severity: string; message: string }>
+  triage?: { likely_scanned: boolean; preview_text_chars: number; pages_previewed: number }
 }
 
 interface FileUploaderProps {
@@ -44,6 +48,11 @@ export function FileUploader({
   const [isUploading, setIsUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pendingFiles, setPendingFiles] = useState<QueuedFile[]>([])
+  const [visionWarning, setVisionWarning] = useState<{
+    filename: string
+    message: string
+  } | null>(null)
+  const [showVisionModal, setShowVisionModal] = useState(false)
   const {
     files: ingestedFiles,
     isLoading: isLoadingFiles,
@@ -255,9 +264,9 @@ export function FileUploader({
         }
 
         const data = await response.json()
-        // Response: { ingestion_id, job_id, status: "QUEUED" }
+        // Response: { ingestion_id, job_id, status: "QUEUED", warnings?, triage? }
         // Status code: 202 Accepted
-        const { ingestion_id, job_id, status } = data
+        const { ingestion_id, job_id, status, warnings, triage } = data
         
         if (!ingestion_id) {
           throw new Error("No ingestion_id returned from server")
@@ -266,12 +275,23 @@ export function FileUploader({
         updatedFiles[i] = { ...current, status: "success" }
         setPendingFiles([...updatedFiles])
         
+        // Check for vision warning (scanned PDF with vision off)
+        const visionNotice = getVisionOffScannedWarning(warnings, triage)
+        if (visionNotice.shouldWarn) {
+          setVisionWarning({
+            filename: current.file.name,
+            message: visionNotice.message,
+          })
+        }
+        
         // Pass complete upload result with tracking IDs
         onUploadComplete?.({
           file: current.file,
           ingestion_id,
           job_id: job_id || "",
           status: status || "QUEUED",
+          warnings,
+          triage,
         })
         refreshFiles()
       } catch (err) {
@@ -291,12 +311,51 @@ export function FileUploader({
   if (compact) {
     return (
       <div className="space-y-2">
+        {visionWarning && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs">
+            <div className="flex items-start gap-2 mb-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="font-medium text-amber-900 mb-1">{visionWarning.filename}</p>
+                <p className="text-amber-800">{visionWarning.message}</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setVisionWarning(null)}
+                className="h-5 w-5 p-0 text-amber-600 hover:text-amber-800"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowVisionModal(true)}
+                className="h-6 text-xs border-amber-300 text-amber-700 hover:bg-amber-100"
+              >
+                <Eye className="h-3 w-3 mr-1" />
+                How to enable Vision
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setVisionWarning(null)}
+                className="h-6 text-xs text-amber-700 hover:text-amber-900"
+              >
+                Continue
+              </Button>
+            </div>
+          </div>
+        )}
         {error && (
           <div className="flex items-start gap-2 text-xs text-destructive">
             <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
             <p>{error}</p>
           </div>
         )}
+        <VisionEnableModal open={showVisionModal} onOpenChange={setShowVisionModal} />
         <div
           className={`relative border-2 border-dashed rounded-lg p-3 text-center transition-all duration-200 ${
             isDragging
@@ -344,6 +403,46 @@ export function FileUploader({
 
   return (
     <div className="space-y-4">
+      {visionWarning && (
+        <Card className="border-amber-300 bg-amber-50">
+          <CardContent className="pt-4">
+            <div className="flex items-start gap-3 mb-3">
+              <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-amber-900 mb-1">{visionWarning.filename}</p>
+                <p className="text-sm text-amber-800">{visionWarning.message}</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setVisionWarning(null)}
+                className="h-6 w-6 p-0 text-amber-600 hover:text-amber-800"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowVisionModal(true)}
+                className="text-xs border-amber-300 text-amber-700 hover:bg-amber-100"
+              >
+                <Eye className="h-3 w-3 mr-1" />
+                How to enable Vision
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setVisionWarning(null)}
+                className="text-xs text-amber-700 hover:text-amber-900"
+              >
+                Upload anyway
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
       {error && (
         <Card className="border-destructive/50">
           <CardContent className="pt-6">
@@ -354,6 +453,7 @@ export function FileUploader({
           </CardContent>
         </Card>
       )}
+      <VisionEnableModal open={showVisionModal} onOpenChange={setShowVisionModal} />
 
       <div
         className={`relative border-2 border-dashed rounded-lg p-6 text-center transition-all duration-200 ${

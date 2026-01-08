@@ -20,24 +20,28 @@ SECRETS_FILE="$DEPLOY_DIR/.secrets.env"
 
 usage() {
   cat <<EOF
-Usage: $0 [--bootstrap-secrets] [--force]
+Usage: $0 [--bootstrap-secrets] [--configure-nvidia] [--force]
   --bootstrap-secrets   Generate secrets into deploy/.secrets.env (idempotent)
-  --force               Overwrite deploy/.secrets.env even if it exists
-  --help                Show this help
+  --configure-nvidia     Configure NVIDIA Container Toolkit for Docker (requires sudo)
+  --force                Overwrite deploy/.secrets.env even if it exists
+  --help                 Show this help
 
 Notes:
   - deploy/.env and deploy/.env.example are never modified by this script.
   - ARANGO_ROOT_PASSWORD is canonical for ArangoDB auth; ARANGODB_PASSWORD
     is read only for legacy compatibility.
+  - --configure-nvidia must be run with sudo to modify Docker configuration.
 EOF
 }
 
 BOOTSTRAP=false
+CONFIGURE_NVIDIA=false
 FORCE=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --bootstrap-secrets) BOOTSTRAP=true ;;
+    --configure-nvidia) CONFIGURE_NVIDIA=true ;;
     --force) FORCE=true ;;
     --help|-h) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
@@ -65,6 +69,15 @@ generate_secret() {
 
 bootstrap_secrets() {
   ensure_writable_dir "$DEPLOY_DIR"
+
+  # Load .env file if it exists (to read user-provided passwords)
+  local env_file="$DEPLOY_DIR/.env"
+  if [ -f "$env_file" ]; then
+    # Source .env to load CONSOLE_PASSWORD and other vars (without exporting to avoid side effects)
+    set -a
+    source "$env_file" 2>/dev/null || true
+    set +a
+  fi
 
   # Prevent accidental rotation if volumes already exist (Arango lockout protection)
   local arango_data="/raid/vyasa/arangodb"
@@ -103,6 +116,7 @@ bootstrap_secrets() {
   fi
 
   # Console / NextAuth secrets
+  # Prefer CONSOLE_PASSWORD from .env if set, otherwise generate
   append_kv "CONSOLE_PASSWORD" "${CONSOLE_PASSWORD:-$(generate_secret)}" "$SECRETS_FILE"
   append_kv "CONSOLE_SECRET" "${CONSOLE_SECRET:-$(generate_secret)}" "$SECRETS_FILE"
   append_kv "NEXTAUTH_SECRET" "${NEXTAUTH_SECRET:-$(generate_secret)}" "$SECRETS_FILE"
@@ -113,8 +127,82 @@ bootstrap_secrets() {
   echo "Secrets written to $SECRETS_FILE"
 }
 
+configure_nvidia_runtime() {
+  # Check if nvidia-ctk is available
+  if ! command -v nvidia-ctk >/dev/null 2>&1; then
+    echo "Error: nvidia-ctk not found. Install NVIDIA Container Toolkit first:"
+    echo "  sudo apt-get install -y nvidia-container-toolkit"
+    return 1
+  fi
+
+  # Check if already configured (verify Docker actually sees it, not just config file)
+  # Use sudo docker info if we're running as root, otherwise regular docker info
+  DOCKER_INFO_CMD="docker info"
+  if [ "$EUID" -eq 0 ]; then
+    DOCKER_INFO_CMD="docker info"
+  fi
+  
+  if $DOCKER_INFO_CMD 2>/dev/null | grep -qiE "(runtimes.*nvidia|nvidia.*runtime)" || \
+     [ -f /etc/docker/daemon.json ] && grep -q "nvidia" /etc/docker/daemon.json 2>/dev/null; then
+    # Double-check Docker actually recognizes it
+    if $DOCKER_INFO_CMD 2>/dev/null | grep -qiE "runtimes.*nvidia"; then
+      echo "NVIDIA Container Toolkit is already configured for Docker."
+      echo "Runtime detected in docker info output."
+      return 0
+    else
+      echo "Warning: NVIDIA runtime is in daemon.json but Docker doesn't recognize it."
+      echo "Docker may need to be restarted. Proceeding with restart..."
+      # Fall through to restart Docker
+    fi
+  fi
+
+  # Check if running with sudo
+  if [ "$EUID" -ne 0 ]; then
+    echo "Error: --configure-nvidia requires sudo privileges."
+    echo "Please run: sudo $0 --configure-nvidia"
+    return 1
+  fi
+
+  echo "Configuring NVIDIA Container Toolkit for Docker..."
+  
+  # Configure the runtime
+  if nvidia-ctk runtime configure --runtime=docker; then
+    echo "NVIDIA runtime configured successfully."
+  else
+    echo "Error: Failed to configure NVIDIA runtime."
+    return 1
+  fi
+
+  # Restart Docker
+  echo "Restarting Docker to apply configuration..."
+  if systemctl restart docker; then
+    echo "Docker restarted successfully."
+  else
+    echo "Warning: Failed to restart Docker. Please restart manually:"
+    echo "  sudo systemctl restart docker"
+    return 1
+  fi
+
+  # Verify configuration
+  sleep 2
+  if docker info 2>/dev/null | grep -qi "nvidia"; then
+    echo "✓ NVIDIA Container Toolkit is now configured and active."
+    return 0
+  else
+    echo "Warning: Configuration applied but verification failed."
+    echo "Please check Docker logs: sudo journalctl -u docker -n 50"
+    return 1
+  fi
+}
+
 if $BOOTSTRAP; then
   bootstrap_secrets
-else
+fi
+
+if $CONFIGURE_NVIDIA; then
+  configure_nvidia_runtime
+fi
+
+if ! $BOOTSTRAP && ! $CONFIGURE_NVIDIA; then
   usage
 fi

@@ -171,7 +171,7 @@ This checks:
 - ✅ NVIDIA Grace Blackwell superchip detection
 - ✅ Unified memory (120GB+ required)
 - ✅ Knowledge Harvester dataset directory (`/raid/datasets/`)
-- ✅ Port availability (30000, 30001, 30002, 11435, ${PORT_EMBEDDER:-8000}, 8529, 6333, 8000, 3000)
+- ✅ Port availability (30000, 30001, 30002, ${PORT_EMBEDDER:-8000}, 8529, 6333, 8000, 3000)
 - ✅ Expertise configuration file (optional)
 
 **If checks fail**: Resolve issues before proceeding.
@@ -190,7 +190,7 @@ cp .env.example .env
 - `CONSOLE_PASSWORD` - Console login password
 - `HF_TOKEN` - HuggingFace Hub token (get from https://huggingface.co/settings/tokens)
 - `TEXT_MODEL_ID`, `VISION_MODEL_ID`, `EMBEDDER_MODEL_ID` - Canonical model configuration variables (HuggingFace Hub paths or local filesystem paths). These are the primary variables for model configuration.
-  - `TEXT_MODEL_ID`: Used by both Brain and Worker services (default: `meta-llama/Llama-3.3-70B-Instruct`, same model, different services for redundancy)
+  - `TEXT_MODEL_ID`: Used by both Brain and Worker services (default: `nvidia/Llama-3_3-Nemotron-Super-49B-v1_5`, same model, different services for redundancy, optimized for DGX Spark)
   - `VISION_MODEL_ID`: Used by Vision service (default: `Qwen/Qwen2-VL-7B-Instruct`)
   - `EMBEDDER_MODEL_ID`: Used by Embedder service (default: `nvidia/nv-embedqa-e5-v5`)
   - `EMBEDDING_DIMENSION`: Embedding dimension for Qdrant collections (default: `1024` for nv-embedqa-e5-v5)

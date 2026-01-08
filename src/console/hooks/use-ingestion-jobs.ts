@@ -22,6 +22,8 @@ export interface IngestionJob {
     text_density: number
   }
   confidence?: "High" | "Medium" | "Low"
+  warnings?: Array<{ code: string; severity: string; message: string }>
+  triage?: { likely_scanned: boolean; preview_text_chars: number; pages_previewed: number }
   createdAt: number
 }
 
@@ -98,7 +100,7 @@ export function useIngestionJobs({ projectId, pollingInterval = 2000 }: UseInges
       }
 
       const data = await response.json()
-      // Response format: { ingestion_id, status (or state), progress (or progress_pct), error_message, first_glance, confidence, job_id }
+      // Response format: { ingestion_id, status (or state), progress (or progress_pct), error_message, first_glance, confidence, job_id, warnings?, triage? }
       // Normalize status defensively: handle both "status" and "state" fields, normalize to title case for IngestionStatus type
       const rawStatus = data.status || data.state || "QUEUED"
       const normalizedStatusUpper = typeof rawStatus === "string" ? rawStatus.toUpperCase() : "QUEUED"
@@ -109,6 +111,8 @@ export function useIngestionJobs({ projectId, pollingInterval = 2000 }: UseInges
       const firstGlance = data.first_glance
       const confidence = data.confidence as "High" | "Medium" | "Low" | undefined
       const jobId = data.job_id || null
+      const warnings = data.warnings
+      const triage = data.triage
 
       setJobs((prev) =>
         prev.map((j) =>
@@ -121,6 +125,8 @@ export function useIngestionJobs({ projectId, pollingInterval = 2000 }: UseInges
                 firstGlance,
                 confidence,
                 jobId: jobId || j.jobId, // Preserve existing jobId if not provided
+                warnings: warnings || j.warnings, // Preserve existing warnings if not provided
+                triage: triage || j.triage, // Preserve existing triage if not provided
               }
             : j
         )

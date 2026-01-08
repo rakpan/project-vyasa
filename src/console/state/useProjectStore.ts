@@ -92,15 +92,31 @@ export const useProjectStore = create<ProjectState>()(
           }
         } catch (error) {
           const message = projectService.safeParseError(error);
-          set({ 
-            error: message, 
-            isLoading: false,
-            activeProject: null,
-            // Clear activeProjectId if project not found
-            activeProjectId: error instanceof ApiError && error.status === 404 
-              ? null 
-              : get().activeProjectId,
-          });
+          const is404 = error instanceof ApiError && error.status === 404;
+          
+          // Clear activeProjectId if project not found
+          if (is404) {
+            set({ 
+              error: message, 
+              isLoading: false,
+              activeProject: null,
+              activeProjectId: null,
+            });
+            // Also clear URL parameter if present
+            if (typeof window !== "undefined" && window.location.search.includes("projectId=")) {
+              const params = new URLSearchParams(window.location.search);
+              params.delete("projectId");
+              const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+              window.history.replaceState(null, "", newUrl);
+            }
+          } else {
+            set({ 
+              error: message, 
+              isLoading: false,
+              activeProject: null,
+              activeProjectId: get().activeProjectId,
+            });
+          }
           console.error(`Failed to fetch project ${id}:`, error);
         }
       },

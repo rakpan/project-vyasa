@@ -31,7 +31,7 @@ const baseModels = [
     icon: <Cpu className="h-4 w-4 text-blue-500" />,
     description: "Text model - Used by both Brain (reasoning) and Worker (extraction) services",
     // Canonical variable: NEXT_PUBLIC_TEXT_MODEL_ID
-    model: process.env.NEXT_PUBLIC_TEXT_MODEL_ID || process.env.NEXT_PUBLIC_BRAIN_MODEL_PATH || process.env.NEXT_PUBLIC_WORKER_MODEL_PATH || "meta-llama/Llama-3.3-70B-Instruct",
+    model: process.env.NEXT_PUBLIC_TEXT_MODEL_ID || process.env.NEXT_PUBLIC_BRAIN_MODEL_PATH || process.env.NEXT_PUBLIC_WORKER_MODEL_PATH || "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
     baseURL: process.env.NEXT_PUBLIC_BRAIN_URL || "http://cortex-brain:30000",
   },
   {

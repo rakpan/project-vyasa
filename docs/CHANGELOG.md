@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Cortex-Brain and Cortex-Worker: `--mem-fraction-static 0.70` (70% for weights, 30% for KV cache)
   - Cortex-Vision: `--mem-fraction-static 0.75` (75% for weights, 25% for KV cache)
 - **Headroom Guarantee**: At least 24GB of unified memory remains unallocated for OS, ArangoDB buffers, and Qdrant operations
-- **CPU Core Partitioning**: Drafter and Embedder moved to efficiency cores (`cpuset: "0-9"`)
+- **CPU Core Partitioning**: Embedder moved to efficiency cores (`cpuset: "0-9"`)
 
 #### Committee of Experts Architecture
 - **Split Cortex into three specialized services**:
@@ -80,7 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Injects "ESTABLISHED KNOWLEDGE" into system prompt
   - Guides extraction to focus on new relationships
 - **Infrastructure**: 
-  - GPU reservations via environment variables (`${BRAIN_GPU_IDS}`, `${WORKER_GPU_IDS}`, `${VISION_GPU_IDS}`, `${DRAFTER_GPU_IDS}`)
+  - GPU reservations via environment variables (`${BRAIN_GPU_IDS}`, `${WORKER_GPU_IDS}`, `${VISION_GPU_IDS}`)
   - All ports configurable via `.env` variables
   - Docker image tags and model paths configurable
   - Memory fractions adjusted for 24GB headroom guarantee
@@ -100,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2025-01-XX] - Initial Release
 
 ### Added
-- **Core Services**: Console, Orchestrator, Cortex, Drafter, Embedder, Graph (ArangoDB), Vector (Qdrant)
+- **Core Services**: Console, Orchestrator, Cortex, Embedder, Graph (ArangoDB), Vector (Qdrant)
 - **Knowledge Graph**: Vulnerability, Mechanism, Constraint, Outcome entities and relations
 - **LangGraph Workflow**: Cartographer → Critic → Saver loop
 - **NextAuth Authentication**: Password-based UI authentication
@@ -130,7 +130,6 @@ If migrating from a single Cortex service:
    BRAIN_GPU_IDS=0,1
    WORKER_GPU_IDS=2
    VISION_GPU_IDS=3,4
-   DRAFTER_GPU_IDS=5
    ```
 
 3. **Update Service Calls**:

@@ -12,7 +12,6 @@ flowchart LR
     Orchestrator -->|Worker (extract)| CortexWorker[SGLang Worker]
     Orchestrator -->|Brain (critic/QA)| CortexBrain[SGLang Brain]
     Orchestrator -->|Vision| CortexVision[SGLang Vision]
-    Orchestrator -->|Draft| Drafter[Ollama]
     Orchestrator --> ArangoDB[(ArangoDB)]
     Orchestrator --> Qdrant[(Qdrant)]
     Orchestrator --> Embedder[Sentence-Transformers]

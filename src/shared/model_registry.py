@@ -105,17 +105,6 @@ _MODEL_REGISTRY: Dict[str, ModelConfig] = {
         quantization=None,
         endpoint_env="SENTENCE_TRANSFORMER_URL",
     ),
-    "drafter": ModelConfig(
-        key="drafter",
-        model_id="(ollama model not set in repo)",
-        provider="ollama",
-        purpose="prose / drafting",
-        default_context=None,
-        max_context=None,
-        kv_policy=None,
-        quantization=None,
-        endpoint_env="DRAFTER_URL",
-    ),
 }
 
 # Validate at import to fail fast on obvious issues.

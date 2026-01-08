@@ -48,6 +48,8 @@ class IngestionRecord:
         first_glance: Optional[Dict[str, Any]] = None,
         confidence_badge: Optional[str] = None,
         file_path: Optional[str] = None,
+        warnings: Optional[List[Dict[str, Any]]] = None,
+        triage: Optional[Dict[str, Any]] = None,
         created_at: Optional[str] = None,
         updated_at: Optional[str] = None,
     ):
@@ -62,6 +64,8 @@ class IngestionRecord:
         self.first_glance = first_glance or {}
         self.confidence_badge = confidence_badge
         self.file_path = file_path  # Persistent file path in landing zone
+        self.warnings = warnings or []  # List of warning objects
+        self.triage = triage or {}  # PDF triage metadata
         self.created_at = created_at or datetime.now(timezone.utc).isoformat()
         self.updated_at = updated_at or datetime.now(timezone.utc).isoformat()
     
@@ -80,6 +84,8 @@ class IngestionRecord:
             "first_glance": self.first_glance,
             "confidence_badge": self.confidence_badge,
             "file_path": self.file_path,
+            "warnings": self.warnings,
+            "triage": self.triage,
             "qdrant_indexed": getattr(self, "qdrant_indexed", False),
             "chunk_count": getattr(self, "chunk_count", None),
             "indexed_at": getattr(self, "indexed_at", None),
@@ -102,6 +108,8 @@ class IngestionRecord:
             first_glance=doc.get("first_glance", {}),
             confidence_badge=doc.get("confidence_badge"),
             file_path=doc.get("file_path"),
+            warnings=doc.get("warnings", []),
+            triage=doc.get("triage", {}),
             created_at=doc.get("created_at"),
             updated_at=doc.get("updated_at"),
         )
@@ -164,6 +172,8 @@ class IngestionStore:
         allow_empty_hash: bool = False,
         first_glance: Optional[Dict[str, Any]] = None,
         file_path: Optional[str] = None,
+        warnings: Optional[List[Dict[str, Any]]] = None,
+        triage: Optional[Dict[str, Any]] = None,
     ) -> IngestionRecord:
         """Create a new ingestion record (atomic).
         
@@ -174,6 +184,9 @@ class IngestionStore:
             job_id: Optional job ID if workflow already started.
             allow_empty_hash: If True, allows empty hash (for non-file workflows).
             first_glance: Optional first glance summary (computed deterministically from PDF).
+            file_path: Optional persistent file path in landing zone.
+            warnings: Optional list of warning objects (e.g., vision-related warnings).
+            triage: Optional PDF triage metadata (e.g., likely_scanned, preview_text_chars).
         
         Returns:
             IngestionRecord with generated ingestion_id.
@@ -195,6 +208,8 @@ class IngestionStore:
             job_id=job_id,
             first_glance=first_glance,
             file_path=file_path,
+            warnings=warnings,
+            triage=triage,
         )
         
         try:

@@ -241,6 +241,8 @@ def list_project_files(project_id: str):
                     "created_at": record.get("created_at", ""),
                     "triples_count": triples_count,  # Number of triples extracted
                     "error_message": error_message,  # Error message if processing failed
+                    "warnings": record.get("warnings", []),  # List of warning objects
+                    "triage": record.get("triage", {}),  # PDF triage metadata
                 })
         
         return jsonify({"files": valid_files}), 200
@@ -402,6 +404,8 @@ def get_ingestion_status(project_id: str, ingestion_id: str):
         error_message = record.error_message
         first_glance = record.first_glance
         confidence_badge = record.confidence_badge
+        warnings = record.warnings or []
+        triage = record.triage or {}
         
         if record.job_id:
             job = get_job(record.job_id)
@@ -472,6 +476,12 @@ def get_ingestion_status(project_id: str, ingestion_id: str):
         # Always include error_message for FAILED status to ensure immediate display
         if error_message or status_upper == "FAILED":
             response["error_message"] = error_message or "Processing failed"
+        
+        # Include warnings and triage metadata (for vision-related warnings)
+        if warnings:
+            response["warnings"] = warnings
+        if triage:
+            response["triage"] = triage
         
         return jsonify(response), 200
         

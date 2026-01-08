@@ -83,8 +83,7 @@ Set these in your DGX environment or docker-compose.yml:
 # Service URLs (Functional Naming)
 CORTEX_URL=http://vyasa-cortex:30000          # Cortex (SGLang) - Logic & Extraction
 CORTEX_SERVICE_URL=http://vyasa-cortex:30000  # Alias
-DRAFTER_URL=http://drafter:11435              # Drafter (Ollama) - Chat & Prose
-WORKER_URL=http://drafter:11435               # Alias (backward compatibility)
+WORKER_URL=http://cortex-worker:30001        # Worker (SGLang) - Extraction
 MEMORY_URL=http://graph:8529           # Graph (ArangoDB) - Knowledge Graph
 MEMORY_SERVICE_URL=http://graph:8529   # Alias
 ARANGODB_URL=http://graph:8529        # Alias

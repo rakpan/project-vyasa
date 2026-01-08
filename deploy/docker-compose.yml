@@ -1,14 +1,24 @@
 services:
   # SGLang - Brain (logic/routing)
   # Unified TEXT_MODEL configuration (same model as Worker, service-level redundancy)
-  # Conservative baseline for meta-llama/Llama-3.3-70B-Instruct:
-  # - INT8 quantization: Balanced precision/performance, more stable than FP4
-  # - mem-fraction-static 0.45: Conservative to prevent OOM, leaves headroom for OS/ArangoDB/Qdrant
-  # - max-running-requests 2: Low concurrency to avoid KV cache blowups
-  # - tp-size 1: Single tensor parallelism for stability
-  # - context-length: Uses SGLang default (no explicit limit)
-  # Tuning guidance: Monitor KV cache utilization and UMA pressure via observability endpoints.
-  # Adjust mem-fraction-static and max-running-requests based on actual workload patterns.
+  # Quality-first, stability-first baseline for nvidia/Llama-3_3-Nemotron-Super-49B-v1_5 on DGX Spark:
+  #
+  # Baseline rationale:
+  # - context-length 65536: 64K context supports journal workflows (paper sections + extracted claims + instructions)
+  #   without aggressive truncation. Prioritizes quality over throughput.
+  # - max-running-requests 1: Maximizes KV cache per request and simplifies scheduling for stability.
+  #   Reduces contention and OOM risk. Quality-first approach favors single-request processing.
+  # - mem-fraction-static 0.50: Conservative DGX Spark baseline, leaves headroom for OS/ArangoDB/Qdrant.
+  # - quantization int8: Balanced precision/performance, optimized for Nemotron architecture.
+  # - tp-size 1: Single tensor parallelism for stability.
+  #
+  # Staged tuning rules (DO NOT apply without documentation and metrics):
+  # - Increase max-running-requests only if: KV cache fill < 80%, queue depth < 2, zero watchdog restarts over 24h.
+  # - Increase context-length beyond 64K only if: UMA/VRAM pressure < 85%, sustained KV cache headroom observed.
+  # - Adjust mem-fraction-static only if: UMA utilization < 80% and VRAM headroom > 15% under peak load.
+  # - Any tuning must be staged: change one parameter, observe for 48h, document metrics, then consider next.
+  #
+  # Monitoring: Watch KV cache fill %, queue depth, watchdog restarts, UMA/VRAM pressure via observability endpoints.
   cortex-brain:
     image: ${CORTEX_IMAGE}
     runtime: nvidia
@@ -17,12 +27,14 @@ services:
         reservations:
           devices:
             - driver: nvidia
+              # device_ids must match NVIDIA_VISIBLE_DEVICES (set in environment section)
+              # For multi-GPU, manually update to array format: ['0', '1']
               device_ids: ['0']
               capabilities: [gpu]
-    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${BRAIN_MODEL_PATH:-meta-llama/Llama-3.3-70B-Instruct}} --host 0.0.0.0 --port 30000 --tp-size 1 --quantization int8 --mem-fraction-static 0.45 --max-running-requests 2
+    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${BRAIN_MODEL_PATH:-nvidia/Llama-3_3-Nemotron-Super-49B-v1_5}} --host 0.0.0.0 --port 30000 --tp-size 1 --quantization int8 --mem-fraction-static 0.50 --max-running-requests 1 --context-length 65536
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
-      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${TEXT_GPU_IDS:-0}
       - HF_HOME=/raid/vyasa/hf_cache
       - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
     cpuset: "10-19"
@@ -45,20 +57,40 @@ services:
 
   # SGLang - Worker (extraction/cartographer)
   # Unified TEXT_MODEL configuration (same model as Brain, service-level redundancy)
-  # Conservative baseline for meta-llama/Llama-3.3-70B-Instruct:
-  # - INT8 quantization: Balanced precision/performance, more stable than FP4
-  # - mem-fraction-static 0.45: Conservative to prevent OOM, leaves headroom for OS/ArangoDB/Qdrant
-  # - max-running-requests 2: Low concurrency to avoid KV cache blowups
-  # - tp-size 1: Single tensor parallelism for stability
-  # - context-length: Uses SGLang default (no explicit limit, same as Brain)
-  # Tuning guidance: Monitor KV cache utilization and UMA pressure via observability endpoints.
-  # Adjust mem-fraction-static and max-running-requests based on actual workload patterns.
+  # Quality-first, stability-first baseline for nvidia/Llama-3_3-Nemotron-Super-49B-v1_5 on DGX Spark:
+  #
+  # Baseline rationale (identical to Brain for service-level redundancy):
+  # - context-length 65536: 64K context supports journal workflows (paper sections + extracted claims + instructions)
+  #   without aggressive truncation. Prioritizes quality over throughput.
+  # - max-running-requests 1: Maximizes KV cache per request and simplifies scheduling for stability.
+  #   Reduces contention and OOM risk. Quality-first approach favors single-request processing.
+  # - mem-fraction-static 0.50: Conservative DGX Spark baseline, leaves headroom for OS/ArangoDB/Qdrant.
+  # - quantization int8: Balanced precision/performance, optimized for Nemotron architecture.
+  # - tp-size 1: Single tensor parallelism for stability.
+  #
+  # Staged tuning rules (DO NOT apply without documentation and metrics):
+  # - Increase max-running-requests only if: KV cache fill < 80%, queue depth < 2, zero watchdog restarts over 24h.
+  # - Increase context-length beyond 64K only if: UMA/VRAM pressure < 85%, sustained KV cache headroom observed.
+  # - Adjust mem-fraction-static only if: UMA utilization < 80% and VRAM headroom > 15% under peak load.
+  # - Any tuning must be staged: change one parameter, observe for 48h, document metrics, then consider next.
+  #
+  # Monitoring: Watch KV cache fill %, queue depth, watchdog restarts, UMA/VRAM pressure via observability endpoints.
   cortex-worker:
     image: ${CORTEX_IMAGE}
-    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${WORKER_MODEL_PATH:-meta-llama/Llama-3.3-70B-Instruct}} --host 0.0.0.0 --port 30001 --tp-size 1 --quantization int8 --mem-fraction-static 0.45 --max-running-requests 2
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              # device_ids must match NVIDIA_VISIBLE_DEVICES (set in environment section)
+              # For multi-GPU, manually update to array format: ['0', '1']
+              device_ids: ['0']
+              capabilities: [gpu]
+    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${WORKER_MODEL_PATH:-nvidia/Llama-3_3-Nemotron-Super-49B-v1_5}} --host 0.0.0.0 --port 30001 --tp-size 1 --quantization int8 --mem-fraction-static 0.50 --max-running-requests 1 --context-length 65536
     environment:
       - HF_TOKEN=${HF_TOKEN}
-      - CUDA_VISIBLE_DEVICES=1
+      - NVIDIA_VISIBLE_DEVICES=${TEXT_GPU_IDS:-0}
       - HF_HOME=/raid/vyasa/hf_cache
       - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
     cpuset: "10-19"
@@ -79,17 +111,38 @@ services:
       retries: 3
       start_period: 20s
 
-  # SGLang - Vision
-  # INT8 quantization for vision models (balanced precision/performance)
-  # Memory guardrails: bounded footprint to prevent UMA spikes
-  # Safety limit: context-length 8192 prevents pathological OCR-heavy or high-resolution page workloads
-  # This cap ensures Vision service remains stable when processing dense visual content
+  # SGLang - Vision (Optional Accelerator)
+  # Safety-first configuration for Qwen/Qwen2-VL-7B-Instruct on DGX Spark:
+  # - quantization int8: Conservative quantization for vision models (balanced precision/performance)
+  # - context-length 8192: Explicit safety cap prevents pathological OCR-heavy or high-resolution page workloads.
+  #   This cap ensures Vision service remains stable when processing dense visual content.
+  # - tp-size 1: Single-GPU tensor parallelism (default). Single GPU via VISION_GPU_IDS (default: "0").
+  #   Multi-GPU is optional: set VISION_GPU_IDS="0,1" and update tp-size to 2 if needed.
+  # - mem-fraction-static 0.75: Conservative memory allocation for vision workloads.
+  # - max-running-requests 2: Low concurrency to prevent UMA spikes.
+  # Note: Keep vision quantization conservative and avoid experimental backends.
+  # 
+  # Vision is OPTIONAL and disabled by default (profiles: ["vision"]).
+  # To enable: docker compose --profile vision up -d cortex-vision
+  # To disable: docker compose stop cortex-vision (reclaims GPU memory)
+  # The orchestrator handles vision unavailability gracefully (see VISION_ENABLED config).
   cortex-vision:
+    profiles: ["vision"]
     image: ${CORTEX_IMAGE}
-    command: python3 -m sglang.launch_server --model-path ${VISION_MODEL_ID:-${VISION_MODEL_PATH:-Qwen/Qwen2-VL-7B-Instruct}} --host 0.0.0.0 --port 30002 --tp-size 2 --quantization int8 --mem-fraction-static 0.75 --max-running-requests 2 --context-length 8192
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              # device_ids must match NVIDIA_VISIBLE_DEVICES (set in environment section)
+              # For multi-GPU, manually update to array format: ['0', '1']
+              device_ids: ['0']
+              capabilities: [gpu]
+    command: python3 -m sglang.launch_server --model-path ${VISION_MODEL_ID:-${VISION_MODEL_PATH:-Qwen/Qwen2-VL-7B-Instruct}} --host 0.0.0.0 --port 30002 --tp-size 1 --quantization int8 --mem-fraction-static 0.75 --max-running-requests 2 --context-length 8192
     environment:
       - HF_TOKEN=${HF_TOKEN}
-      - CUDA_VISIBLE_DEVICES=${VISION_GPU_IDS}
+      - NVIDIA_VISIBLE_DEVICES=${VISION_GPU_IDS:-0}
       - HF_HOME=/raid/vyasa/hf_cache
       - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
     cpuset: "10-19"
@@ -108,28 +161,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
-
-  # Ollama - Drafter
-  # Pinned to efficiency cores for management tasks
-  drafter:
-    image: ${DRAFTER_IMAGE}
-    environment:
-      - CUDA_VISIBLE_DEVICES=0
-    cpuset: "0-9"
-    shm_size: "16gb"
-    ports:
-      - "${PORT_DRAFTER}:11435"
-    volumes:
-      - /raid/vyasa/ollama:/root/.ollama
-    restart: unless-stopped
-    networks:
-      - vyasa-net
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/11435"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
   # ArangoDB - Graph
   graph:
@@ -225,10 +256,21 @@ services:
   # - Dimension guardrail: EMBEDDING_DIMENSION=1024 enforced by orchestrator startup validation
   # - Chunking responsibility: Upstream services (orchestrator) must chunk text before embedding
   # - No quantization or performance tuning: Service remains simple and deterministic
+  # - GPU: Defaults to CPU (no GPU pinning) to avoid VRAM contention with TEXT/VISION services
+  #   To enable GPU: Set EMBEDDER_GPU_IDS in .env and uncomment runtime/device_ids below
   # Pinned to efficiency cores for management tasks
   embedder:
     build:
       context: ../src/embedder
+    # GPU configuration (uncomment if EMBEDDER_GPU_IDS is set):
+    # runtime: nvidia
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           device_ids: ${EMBEDDER_GPU_IDS}
+    #           capabilities: [gpu]
     cpuset: "0-9"
     shm_size: "16gb"
     ports:
@@ -237,7 +279,7 @@ services:
       - EMBEDDER_MODEL_ID=${EMBEDDER_MODEL_ID:-${EMBEDDING_MODEL_PATH:-nvidia/nv-embedqa-e5-v5}}
       - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1024}
       - HF_TOKEN=${HF_TOKEN}
-      - CUDA_VISIBLE_DEVICES=1
+      - NVIDIA_VISIBLE_DEVICES=${EMBEDDER_GPU_IDS:-}
       - HF_HOME=/raid/vyasa/hf_cache
       - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
     volumes:
@@ -270,13 +312,14 @@ services:
       - ./scripts:/app/deploy/scripts:ro
       - ./scripts/orchestrator-setup.sh:/app/deploy/scripts/orchestrator-setup.sh:ro
       - ./forbidden_vocab.yaml:/app/deploy/forbidden_vocab.yaml:ro
+      - ./neutral_tone.yaml:/app/deploy/neutral_tone.yaml:ro
+      - ./rigor_policy.yaml:/app/deploy/rigor_policy.yaml:ro
       - /raid/vyasa/telemetry:/raid/telemetry
       - /raid/vyasa/scratch:/raid/scratch
     environment:
       - BRAIN_URL=http://cortex-brain:30000
       - WORKER_URL=http://cortex-worker:30001
       - VISION_URL=http://cortex-vision:30002
-      - DRAFTER_URL=http://drafter:11435
       - MEMORY_URL=http://graph:${PORT_MEMORY}
       - VECTOR_URL=http://vector:${PORT_VECTOR}
       - FIRECRAWL_SERVICE_URL=${FIRECRAWL_SERVICE_URL:-http://firecrawl:3002}
@@ -289,10 +332,10 @@ services:
     depends_on:
       - cortex-brain
       - cortex-worker
-      - cortex-vision
-      - drafter
       - graph
       - vector
+      # Note: cortex-vision is optional (profiles: ["vision"])
+      # Orchestrator handles vision unavailability gracefully via VISION_ENABLED config
     networks:
       - vyasa-net
     healthcheck:
@@ -342,5 +385,4 @@ networks:
 volumes:
   memory_data:
   qdrant_data:
-  ollama_data:
   console_node_modules:

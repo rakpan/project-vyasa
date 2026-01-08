@@ -19,7 +19,6 @@ from arango.collection import StandardCollection
 
 from ..shared.config import (
     get_cortex_url,
-    get_drafter_url,
     get_memory_url,
     get_arango_password,
     ARANGODB_DB,
@@ -32,7 +31,6 @@ logger = get_logger("orchestrator", __name__)
 
 # Get service URLs from environment or config
 CORTEX_URL = get_cortex_url()
-DRAFTER_URL = get_drafter_url()
 MEMORY_URL = get_memory_url()
 
 
@@ -59,7 +57,6 @@ class Supervisor:
     def __init__(
         self,
         cortex_url: Optional[str] = None,
-        drafter_url: Optional[str] = None,
         arango_url: Optional[str] = None,
         arango_db: Optional[str] = None,
         arango_user: Optional[str] = None,
@@ -71,8 +68,6 @@ class Supervisor:
         Args:
             cortex_url: URL of the Cortex (SGLang) service endpoint.
                        If None, uses CORTEX_URL from environment/config.
-            drafter_url: URL of the Drafter (Ollama) service endpoint.
-                       If None, uses DRAFTER_URL from environment/config.
             arango_url: ArangoDB connection URL.
                        If None, uses MEMORY_URL from environment/config.
             arango_db: ArangoDB database name.
@@ -83,7 +78,6 @@ class Supervisor:
                             If None, uses get_arango_password() from environment/config.
         """
         self.cortex_url = cortex_url or CORTEX_URL
-        self.drafter_url = drafter_url or DRAFTER_URL
         self.db: Optional[StandardDatabase] = None
         resolved_password = arango_password or get_arango_password()
         self.role_registry = RoleRegistry(
@@ -179,7 +173,7 @@ class Supervisor:
         The routing prompt includes conversation history (last 5 messages) and uses
         the Supervisor role's system prompt to determine the next step:
         - QUERY_MEMORY: Query the knowledge graph for information
-        - DRAFT_CONTENT: Generate content using Drafter (Ollama)
+        - DRAFT_CONTENT: Generate content using TEXT model (Brain) with draft prompt profile
         - FINISH: Complete the workflow
         
         Args:
@@ -409,11 +403,11 @@ JSON:"""
             return state
     
     def draft_content(self, state: SupervisorState) -> SupervisorState:
-        """Draft content using the Drafter (Ollama) service.
+        """Draft content using the TEXT model (Brain) service with draft prompt profile.
         
         Generates prose, summaries, or creative content based on the conversation
-        history and query results. This is a placeholder implementation that will
-        be replaced with actual Ollama API calls in production.
+        history and query results. Uses the unified TEXT model (Brain) instead of
+        the unified TEXT model (Brain) service.
         
         Args:
             state: Current supervisor state containing messages and optional query_result.
@@ -423,21 +417,21 @@ JSON:"""
             contains generated text based on the context.
             
         Note:
-            This is a placeholder implementation. Production should:
-            - Call Ollama API at self.drafter_url
-            - Use conversation history as context
-            - Generate appropriate content based on query results
-            - Handle errors gracefully
+            This implementation uses the TEXT model (Brain) via CORTEX_URL with a draft
+            prompt profile. The prompt profile selection should be handled by the
+            calling code or role registry.
         """
-        # Placeholder for Ollama (Drafter) integration
-        # In production, this would make an HTTP request to Ollama at self.drafter_url
+        # Use TEXT model (Brain) for prose writing
+        # In production, this would make an HTTP request to SGLang at self.cortex_url
+        # with a draft-specific prompt profile
         messages = state.get("messages", [])
         query_result = state.get("query_result", {})
         
         # For now, return a placeholder
+        # TODO: Implement actual SGLang API call with draft prompt profile
         state["draft_content"] = f"[Draft content based on {len(query_result.get('entities', []))} entities]"
         
-        logger.info(f"Draft content generated (placeholder) - Drafter URL: {self.drafter_url}")
+        logger.info(f"Draft content generated (placeholder) - Using TEXT model at: {self.cortex_url}")
         
         return state
     
@@ -507,7 +501,6 @@ JSON:"""
 
 def create_supervisor(
     cortex_url: Optional[str] = None,
-    drafter_url: Optional[str] = None,
     arango_url: Optional[str] = None,
     arango_db: Optional[str] = None,
     arango_user: Optional[str] = None,
@@ -519,8 +512,6 @@ def create_supervisor(
     Args:
         cortex_url: URL of the Cortex (SGLang) service endpoint.
                    If None, uses CORTEX_URL from environment/config.
-        drafter_url: URL of the Drafter (Ollama) service endpoint.
-                    If None, uses DRAFTER_URL from environment/config.
         arango_url: ArangoDB connection URL.
                    If None, uses MEMORY_URL from environment/config.
         arango_db: ArangoDB database name.
@@ -535,7 +526,6 @@ def create_supervisor(
     """
     return Supervisor(
         cortex_url=cortex_url,
-        drafter_url=drafter_url,
         arango_url=arango_url,
         arango_db=arango_db,
         arango_user=arango_user,

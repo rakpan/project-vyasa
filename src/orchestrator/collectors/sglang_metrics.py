@@ -34,8 +34,23 @@ class SGLangMetricsCollector:
             resp = requests.get(url, timeout=self.timeout)
             resp.raise_for_status()
             return resp.text
+        except requests.exceptions.ConnectionError as exc:
+            logger.debug(
+                "SGLang metrics endpoint not reachable (service may not expose /metrics or not running)",
+                extra={"payload": {"url": url, "error": str(exc), "error_type": "ConnectionError"}}
+            )
+            return None
+        except requests.exceptions.HTTPError as exc:
+            logger.debug(
+                "SGLang metrics endpoint returned error (may not be enabled)",
+                extra={"payload": {"url": url, "status_code": getattr(exc.response, "status_code", None), "error": str(exc), "error_type": "HTTPError"}}
+            )
+            return None
         except Exception as exc:  # pragma: no cover - network errors are expected
-            logger.warning("Failed to fetch SGLang metrics", extra={"payload": {"url": url, "error": str(exc)}})
+            logger.warning(
+                "Failed to fetch SGLang metrics",
+                extra={"payload": {"url": url, "error": str(exc), "error_type": type(exc).__name__}}
+            )
             return None
 
     def _aggregate_metric(self, families: Dict[str, Any], name: str) -> Optional[float]:

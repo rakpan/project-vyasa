@@ -132,7 +132,7 @@ def process_pdf(file_path: str, output_image_dir: Optional[str] = None) -> Tuple
                         "text_length": primary_text_length,
                     }
                 }
-            }
+            )
             use_fallback = True
         elif primary_text_length < min_expected_length:
             logger.warning(

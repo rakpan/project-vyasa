@@ -39,11 +39,12 @@ OPIK_COMPOSE="$PROJECT_ROOT/deploy/docker-compose.opik.yml"
 
 usage() {
   cat <<EOF
-Usage: $0 <start|stop|restart|up|down|logs|status|backup|verify> [--opik] [--firecrawl] [--hot|--dev-console] [--detach] [service]
+Usage: $0 <start|stop|restart|up|down|logs|status|backup|verify> [--opik] [--firecrawl] [--vision-only] [--hot|--dev-console] [--detach] [service]
 
 Optional Services:
   --opik                   Enable Opik observability services
   --firecrawl              Enable Firecrawl web scraping sidecar (requires FIRECRAWL_IMAGE)
+  --vision-only            Start ONLY vision service (nothing else). Useful for testing or GPU memory management.
 
 Hot Reload Options:
   --hot, --dev-console     Enable hot reload for console (mounts local source, auto-refresh on changes)
@@ -54,11 +55,12 @@ Examples:
   $0 start --opik          # start Vyasa + Opik in detached mode
   $0 start --firecrawl     # start Vyasa + Firecrawl (requires FIRECRAWL_IMAGE)
   $0 start --opik --firecrawl  # start Vyasa + Opik + Firecrawl
+  $0 start --vision-only   # start ONLY vision service (nothing else)
   $0 start --hot           # start Vyasa with console hot reload enabled
   $0 restart --hot         # restart with console hot reload
   $0 up --detach           # start Vyasa (explicit up)
   $0 up --opik --detach    # start Vyasa + Opik (explicit up)
-  $0 stop                  # stop all Vyasa services
+  $0 stop                  # stop all Vyasa services (including vision if running)
   $0 down --opik           # stop all including Opik
   $0 logs --opik opik-api  # tail Opik API logs
   $0 backup                # run full backup (ArangoDB + Qdrant)
@@ -75,6 +77,7 @@ shift || true
 
 USE_OPIK=false
 USE_FIRECRAWL=false
+USE_VISION_ONLY=false
 DEV_CONSOLE=false
 DETACH=""
 
@@ -87,6 +90,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --opik) USE_OPIK=true ;;
     --firecrawl) USE_FIRECRAWL=true ;;
+    --vision-only) USE_VISION_ONLY=true ;;
     --dev-console|--hot|--dev) DEV_CONSOLE=true ;;
     --detach|-d) DETACH="-d" ;;
     *) break ;;
@@ -122,6 +126,9 @@ compose_profiles() {
   local profiles=()
   if $USE_FIRECRAWL; then
     profiles+=("--profile" "firecrawl")
+  fi
+  if $USE_VISION_ONLY; then
+    profiles+=("--profile" "vision")
   fi
   echo "${profiles[@]}"
 }
@@ -230,24 +237,6 @@ if [ -f "$PROJECT_ROOT/deploy/.env" ]; then
   set +u
   export $(grep -E '^PORT_' "$PROJECT_ROOT/deploy/.env" | xargs) 2>/dev/null || true
   set -u
-fi
-
-# Check critical ports (best effort - may not catch all conflicts)
-# Skip port check for stop/down/restart/backup/verify commands
-if [[ "$COMMAND" != "stop" && "$COMMAND" != "down" && "$COMMAND" != "restart" && "$COMMAND" != "backup" && "$COMMAND" != "verify" ]]; then
-  PORT_DRAFTER="${PORT_DRAFTER:-11435}"
-  if ! check_port_conflict "$PORT_DRAFTER" "drafter"; then
-    echo "" >&2
-    echo "Resolution options:" >&2
-    echo "  1. Stop the conflicting container:" >&2
-    echo "     docker stop ollama-compose" >&2
-    echo "  2. Or use a different port by setting PORT_DRAFTER in deploy/.env" >&2
-    echo "     Example: PORT_DRAFTER=11436" >&2
-    echo "  3. Or remove the conflicting container if not needed:" >&2
-    echo "     docker rm -f ollama-compose" >&2
-    echo "" >&2
-    # Don't exit - let Docker Compose handle the error with a clearer message
-  fi
 fi
 
 # Ensure ARANGO_ROOT_PASSWORD is set (auto-generate if missing)
@@ -488,7 +477,13 @@ case "$COMMAND" in
       docker network create "$NETWORK_NAME" || true
     fi
     DETACH="-d"
-    $(compose_cmd) up $DETACH
+    if $USE_VISION_ONLY; then
+      # Start ONLY vision service
+      echo "Starting vision service only..."
+      $(compose_cmd) --profile vision up $DETACH cortex-vision
+    else
+      $(compose_cmd) up $DETACH $(compose_profiles)
+    fi
     
     # Wait for Opik services to be ready (if Opik is enabled)
     if $USE_OPIK && [ -n "$DETACH" ]; then
@@ -521,7 +516,13 @@ case "$COMMAND" in
       echo "Creating network $NETWORK_NAME..."
       docker network create "$NETWORK_NAME" || true
     fi
-    $(compose_cmd) up $DETACH $(compose_profiles)
+    if $USE_VISION_ONLY; then
+      # Start ONLY vision service
+      echo "Starting vision service only..."
+      $(compose_cmd) --profile vision up $DETACH cortex-vision
+    else
+      $(compose_cmd) up $DETACH $(compose_profiles)
+    fi
     
     # Wait for Opik services to be ready (if Opik is enabled and detached)
     if $USE_OPIK && [ -n "$DETACH" ]; then
@@ -547,18 +548,37 @@ case "$COMMAND" in
     fi
     ;;
   stop)
-    # Use down with --remove-orphans and ignore errors if network doesn't exist
+    # Stop all services including vision if it exists
+    # First stop main services
     $(compose_cmd) down --remove-orphans $(compose_profiles) 2>/dev/null || true
+    # Also stop vision if it's running (even if not in profile)
+    if docker ps --format '{{.Names}}' | grep -q "^.*cortex-vision$" 2>/dev/null; then
+      echo "Stopping vision service..."
+      $(compose_cmd) --profile vision stop cortex-vision 2>/dev/null || true
+      $(compose_cmd) --profile vision rm -f cortex-vision 2>/dev/null || true
+    fi
     ;;
   down)
-    # Use down with --remove-orphans and ignore errors if network doesn't exist
+    # Stop all services including vision if it exists
+    # First stop main services
     $(compose_cmd) down --remove-orphans $(compose_profiles) 2>/dev/null || true
+    # Also stop vision if it's running (even if not in profile)
+    if docker ps --format '{{.Names}}' | grep -q "^.*cortex-vision$" 2>/dev/null; then
+      echo "Stopping vision service..."
+      $(compose_cmd) --profile vision stop cortex-vision 2>/dev/null || true
+      $(compose_cmd) --profile vision rm -f cortex-vision 2>/dev/null || true
+    fi
     ;;
   restart)
     # Stop services first (this will free up ports)
     echo "Stopping services..."
     # Use down with --remove-orphans to clean up properly
     $(compose_cmd) down --remove-orphans 2>/dev/null || true
+    # Also stop vision if it's running
+    if docker ps --format '{{.Names}}' | grep -q "^.*cortex-vision$" 2>/dev/null; then
+      $(compose_cmd) --profile vision stop cortex-vision 2>/dev/null || true
+      $(compose_cmd) --profile vision rm -f cortex-vision 2>/dev/null || true
+    fi
     # Wait a moment for ports to be released and network to be cleaned up
     sleep 2
     # Ensure network exists before starting (compose validation requires it)
@@ -572,7 +592,13 @@ case "$COMMAND" in
     # Start services again
     echo "Starting services..."
     DETACH="${DETACH:--d}"
-    $(compose_cmd) up $DETACH $(compose_profiles)
+    if $USE_VISION_ONLY; then
+      # Start ONLY vision service
+      echo "Starting vision service only..."
+      $(compose_cmd) --profile vision up $DETACH cortex-vision
+    else
+      $(compose_cmd) up $DETACH $(compose_profiles)
+    fi
     
     # Wait for Opik services to be ready (if Opik is enabled)
     if $USE_OPIK && [ -n "$DETACH" ]; then
@@ -598,10 +624,24 @@ case "$COMMAND" in
     fi
     ;;
   logs)
-    $(compose_cmd) logs -f $(compose_profiles) ${SERVICE:+$SERVICE}
+    if $USE_VISION_ONLY; then
+      $(compose_cmd) --profile vision logs -f cortex-vision
+    else
+      $(compose_cmd) logs -f $(compose_profiles) ${SERVICE:+$SERVICE}
+    fi
     ;;
   status)
-    $(compose_cmd) ps $(compose_profiles)
+    if $USE_VISION_ONLY; then
+      $(compose_cmd) --profile vision ps cortex-vision
+    else
+      $(compose_cmd) ps $(compose_profiles)
+      # Also show vision status if it's running
+      if docker ps --format '{{.Names}}' | grep -q "^.*cortex-vision$" 2>/dev/null; then
+        echo ""
+        echo "Vision service (running separately):"
+        $(compose_cmd) --profile vision ps cortex-vision
+      fi
+    fi
     ;;
   backup)
     # Run full backup (ArangoDB + Qdrant)

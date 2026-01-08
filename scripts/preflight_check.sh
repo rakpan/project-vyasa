@@ -49,12 +49,12 @@ echo "=========================================="
 echo ""
 
 # ============================================
-# Check 0: Python runtime imports (a2wsgi, nvidia_smi)
+# Check 0: Python runtime imports (a2wsgi, pynvml)
 # ============================================
-echo -n "Checking Python import readiness (a2wsgi, nvidia_smi)... "
+echo -n "Checking Python import readiness (a2wsgi, pynvml)... "
 if python3 - <<'PY' >/dev/null 2>&1
 import a2wsgi  # noqa: F401
-import nvidia_smi  # noqa: F401
+import pynvml  # noqa: F401
 PY
 then
   echo -e "${GREEN}PASS${NC}"
@@ -313,6 +313,88 @@ done
 echo ""
 
 # ============================================
+# Check 7: Docker Image Configuration
+# ============================================
+echo "Checking Docker image configuration..."
+
+REQUIRED_IMAGE_VARS=(
+    "ORCHESTRATOR_IMAGE:Orchestrator (Python API)"
+    "CORTEX_IMAGE:Cortex (SGLang - Brain/Worker/Vision)"
+    "MEMORY_IMAGE:Graph (ArangoDB)"
+    "VECTOR_IMAGE:Vector (Qdrant)"
+)
+
+MISSING_VARS=0
+IMAGE_VALIDATION_WARNINGS=0
+
+for VAR_INFO in "${REQUIRED_IMAGE_VARS[@]}"; do
+    VAR_NAME="${VAR_INFO%%:*}"
+    VAR_LABEL="${VAR_INFO#*:}"
+    
+    echo -n "  ${VAR_LABEL} (${VAR_NAME})... "
+    
+    # Check if variable is set
+    eval "VAR_VALUE=\${${VAR_NAME}:-}"
+    
+    if [ -z "$VAR_VALUE" ]; then
+        echo -e "${RED}MISSING${NC}"
+        echo "    Error: ${VAR_NAME} is not set in deploy/.env"
+        echo "    Set ${VAR_NAME} in deploy/.env before launching."
+        ((MISSING_VARS++))
+        ((CHECKS_FAILED++))
+    else
+        echo -e "${GREEN}SET${NC}"
+        echo "    Value: ${VAR_VALUE}"
+        ((CHECKS_PASSED++))
+        
+        # Optionally validate image exists or is pullable (if Docker is available)
+        if command -v docker >/dev/null 2>&1; then
+            # Check if image exists locally
+            if docker image inspect "$VAR_VALUE" >/dev/null 2>&1; then
+                echo "    Status: Image exists locally"
+            else
+                # Try to check if image is pullable (dry-run check)
+                # Note: This is a best-effort check; actual pull may still fail
+                echo -e "    ${YELLOW}WARN${NC}: Image not found locally"
+                echo "    Docker will attempt to pull ${VAR_VALUE} on first run"
+                ((IMAGE_VALIDATION_WARNINGS++))
+                ((WARNINGS++))
+            fi
+        fi
+    fi
+done
+
+# Check for NVIDIA Container Toolkit if using GPU images
+if [ -n "${CORTEX_IMAGE:-}" ]; then
+    echo -n "  NVIDIA Container Toolkit (for GPU images)... "
+    if command -v docker >/dev/null 2>&1; then
+        if docker info 2>/dev/null | grep -qi "nvidia" || docker info 2>/dev/null | grep -qi "runtime.*nvidia"; then
+            echo -e "${GREEN}CONFIGURED${NC}"
+            ((CHECKS_PASSED++))
+        else
+            echo -e "${YELLOW}WARN${NC}"
+            echo "    Warning: NVIDIA runtime not detected in Docker"
+            echo "    GPU services (cortex-brain, cortex-worker) require nvidia runtime"
+            echo ""
+            echo "    To configure automatically (recommended):"
+            echo "      sudo ./scripts/init_vyasa.sh --configure-nvidia"
+            echo ""
+            echo "    Or configure manually:"
+            echo "      sudo nvidia-ctk runtime configure --runtime=docker"
+            echo "      sudo systemctl restart docker"
+            ((IMAGE_VALIDATION_WARNINGS++))
+            ((WARNINGS++))
+        fi
+    else
+        echo -e "${YELLOW}SKIP${NC}"
+        echo "    Docker not available; cannot verify NVIDIA runtime"
+        ((WARNINGS++))
+    fi
+fi
+
+echo ""
+
+# ============================================
 # Summary
 # ============================================
 echo "=========================================="
@@ -327,18 +409,33 @@ if [ "$CHECKS_FAILED" -eq "0" ]; then
     echo -e "${GREEN}✓ Launch Ready${NC}"
     echo ""
     echo "All critical checks passed. You can proceed with:"
-    echo "  docker compose -f deploy/docker-compose.yml up -d"
+    echo "  ./scripts/run_stack.sh start"
+    if [ "${IMAGE_VALIDATION_WARNINGS:-0}" -gt "0" ]; then
+        echo ""
+        echo -e "${YELLOW}Note:${NC} Some Docker images are not cached locally."
+        echo "  First launch may take longer while images are pulled."
+    fi
     exit 0
 else
     echo -e "${RED}✗ Launch Blocked${NC}"
     echo ""
     echo "Critical checks failed. Please resolve the issues above before launching."
-    if [ "$PORT_CONFLICTS" -gt "0" ]; then
+    if [ "${PORT_CONFLICTS:-0}" -gt "0" ]; then
         echo ""
         echo "To find processes using conflicting ports:"
         echo "  sudo lsof -i :30000  # Brain"
         echo "  sudo lsof -i :30001  # Worker"
         echo "  sudo lsof -i :8529   # ArangoDB"
+    fi
+    if [ "${MISSING_VARS:-0}" -gt "0" ]; then
+        echo ""
+        echo "To fix missing Docker image variables:"
+        echo "  1. Copy deploy/.env.example to deploy/.env (if not exists)"
+        echo "  2. Set required image variables in deploy/.env:"
+        echo "     ORCHESTRATOR_IMAGE=python:3.12-slim"
+        echo "     CORTEX_IMAGE=<your-sglang-image>"
+        echo "     MEMORY_IMAGE=arangodb:latest"
+        echo "     VECTOR_IMAGE=qdrant/qdrant:latest"
     fi
     exit 1
 fi

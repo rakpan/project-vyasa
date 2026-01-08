@@ -20,7 +20,6 @@ C4Container
         Container(brain, "Brain", "SGLang", "High-level reasoning & routing")
         Container(worker, "Worker", "SGLang", "Strict JSON extraction & validation")
         Container(vision, "Vision", "SGLang", "Confidence scoring & filtering")
-        Container(drafter, "Drafter", "Ollama", "Prose generation & summarization")
         Container(embedder, "Embedder", "Sentence-Transformers", "Text-to-vector conversion")
         ContainerDb(graph, "Graph", "ArangoDB", "Knowledge graph storage")
         ContainerDb(vector, "Vector", "Qdrant", "Semantic search index")
@@ -31,7 +30,6 @@ C4Container
     Rel(orchestrator, brain, "HTTP", "Port 30000\nRouting decisions")
     Rel(orchestrator, worker, "HTTP", "Port 30001\nExtraction & validation")
     Rel(orchestrator, vision, "HTTP", "Port 30002\nConfidence filtering")
-    Rel(orchestrator, drafter, "HTTP", "Port 11435\n/api/generate")
     Rel(orchestrator, graph, "AQL", "Port 8529\nKnowledge graph queries")
     Rel(console, embedder, "HTTP", "Port 30010\n/embed")
     Rel(embedder, vector, "HTTP", "Port 6333\nVector storage")
@@ -129,8 +127,8 @@ C4Container
 
 **Port**: 30002 (configurable via `${PORT_VISION}`)  
 **Internal DNS**: `cortex-vision`  
-**Technology**: SGLang, `Qwen2-VL-72B`  
-**GPU**: `${VISION_GPU_IDS}` (Tensor Parallelism: 2)
+**Technology**: SGLang, `Qwen2-VL-7B-Instruct`  
+**GPU**: `${VISION_GPU_IDS}` (Tensor Parallelism: 1, single-GPU default)
 
 **Responsibilities**:
 - Figure/table/chart interpretation
@@ -140,20 +138,6 @@ C4Container
 **Key Endpoints**:
 - `/v1/chat/completions` - OpenAI-compatible API
 - Used by Vision node for confidence filtering
-
-### Drafter (Ollama)
-
-**Port**: 11435  
-**Technology**: Ollama, Local LLM
-
-**Responsibilities**:
-- Prose generation
-- Document summarization
-- Creative content drafting
-
-**Key Endpoints**:
-- `/api/generate` - Text generation
-- `/api/chat` - Chat completion
 
 ### Embedder (Sentence-Transformers)
 
@@ -272,7 +256,6 @@ All services run in a single Docker network (`${NETWORK_NAME}`, default: `vyasa-
 - `orchestrator` → `cortex-brain` (Port 30000)
 - `orchestrator` → `cortex-worker` (Port 30001)
 - `orchestrator` → `cortex-vision` (Port 30002)
-- `orchestrator` → `drafter` (Port 11435)
 - `console` → `embedder` (Port 30010)
 - `embedder` → `vector` (Port 6333)
 - All services → `graph` (ArangoDB, Port 8529)
@@ -288,7 +271,6 @@ All services run in a single Docker network (`${NETWORK_NAME}`, default: `vyasa-
 ## Scaling Considerations
 
 - **Brain/Worker/Vision**: GPU-bound, single instance each (GPU reservations via `${BRAIN_GPU_IDS}`, `${WORKER_GPU_IDS}`, `${VISION_GPU_IDS}`)
-- **Drafter**: GPU-bound, single instance (GPU reservation via `${DRAFTER_GPU_IDS}`)
 - **Embedder**: CPU-bound, can scale horizontally
 - **Graph**: Single instance (ArangoDB cluster for production)
 - **Vector**: Single instance (Qdrant cluster for production)

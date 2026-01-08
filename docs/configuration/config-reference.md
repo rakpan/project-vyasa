@@ -16,7 +16,7 @@ Single source for common Vyasa env flags. API docs should link here instead of r
 - ArangoDB: `ARANGODB_DB` (default: `project_vyasa`), `ARANGODB_USER` (default: `root`), `ARANGODB_PASSWORD`.
 - Memory/graph URL: `MEMORY_URL` (used by orchestrator).
 - Qdrant: `QDRANT_URL` (vector DB).
-- Worker/Brain/Vision/Drafter URLs: see `src/shared/config.py` for defaults; override via env.
+- Worker/Brain/Vision URLs: see `src/shared/config.py` for defaults; override via env.
 
 ## Web Augmentation (Optional)
 - `WEB_AUGMENTATION_ENABLED` (default: `false`) — Enable web search and scraping via Firecrawl Cloud.

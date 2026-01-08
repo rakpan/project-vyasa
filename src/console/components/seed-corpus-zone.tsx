@@ -13,6 +13,7 @@ import { GlobalStatusBanner } from "./global-status-banner"
 import { DuplicateWarningModal } from "./duplicate-warning-modal"
 import { useIngestionJobs } from "@/hooks/use-ingestion-jobs"
 import { toast } from "@/hooks/use-toast"
+import { getVisionOffScannedWarning } from "@/utils/ingestion-warnings"
 import { useRouter } from "next/navigation"
 import { computeFileHash } from "@/lib/file-hash"
 
@@ -174,6 +175,8 @@ export function SeedCorpusZone({ projectId }: SeedCorpusZoneProps) {
         const data = await response.json()
         const jobId = data.job_id
         const returnedIngestionId = data.ingestion_id
+        const warnings = data.warnings
+        const triage = data.triage
 
         if (!returnedIngestionId) {
           throw new Error("No ingestion_id returned from server")
@@ -185,10 +188,21 @@ export function SeedCorpusZone({ projectId }: SeedCorpusZoneProps) {
           addJob(file.name, returnedIngestionId)
           // Update with jobId to start polling
           updateJobId(returnedIngestionId, jobId)
-          toast({
-            title: "File uploaded",
-            description: `${file.name} is being processed.`,
-          })
+          
+          // Check for vision warning (scanned PDF with vision off)
+          const visionNotice = getVisionOffScannedWarning(warnings, triage)
+          if (visionNotice.shouldWarn) {
+            toast({
+              title: "Scanned PDF detected",
+              description: "Vision is OFF. OCR/figure extraction may be limited. See file card for details.",
+              variant: "default",
+            })
+          } else {
+            toast({
+              title: "File uploaded",
+              description: `${file.name} is being processed.`,
+            })
+          }
         } else {
           throw new Error("No job_id or ingestion_id returned from server")
         }
@@ -352,6 +366,8 @@ export function SeedCorpusZone({ projectId }: SeedCorpusZoneProps) {
               ingestionId={job.id}
               firstGlance={job.firstGlance}
               confidence={job.confidence}
+              warnings={job.warnings}
+              triage={job.triage}
               onRetry={() => handleRetry(job.id)}
               onRemove={() => handleRemove(job.id)}
               onViewDetails={job.jobId ? () => handleViewDetails(job.jobId!) : undefined}
@@ -368,4 +384,3 @@ export function SeedCorpusZone({ projectId }: SeedCorpusZoneProps) {
     </div>
   )
 }
-

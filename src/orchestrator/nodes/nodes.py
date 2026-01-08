@@ -27,7 +27,6 @@ from ...shared.config import (
     get_worker_url,
     get_brain_url,
     get_vision_url,
-    get_drafter_url,
     get_memory_url,
     get_arango_password,
     ARANGODB_DB,
@@ -226,7 +225,9 @@ def route_to_expert(node_name: str, node_type: str = "auto") -> tuple[str, str, 
     elif node_type == ExpertType.EXTRACTION_SCHEMA:
         return get_worker_url(), "Worker", get_model_config("worker").model_id
     elif node_type == ExpertType.PROSE_WRITING:
-        return get_drafter_url(), "Drafter", "(ollama model)"
+        # Route prose writing to TEXT model (Brain) with draft prompt profile
+        # Note: Prompt profile selection happens in the calling code, not here
+        return get_brain_url(), "Brain", get_model_config("brain").model_id
     elif node_type == ExpertType.VISION:
         return get_vision_url(), "Vision", get_model_config("vision").model_id
     else:

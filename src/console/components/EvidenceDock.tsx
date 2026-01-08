@@ -6,7 +6,7 @@
  */
 
 import { useState, useCallback, useEffect } from "react"
-import { FileText, Search, Loader2, CheckCircle2, AlertCircle } from "lucide-react"
+import { FileText, Search, Loader2, CheckCircle2, AlertCircle, AlertTriangle, Eye, X } from "lucide-react"
 import { FileUploader } from "./FileUploader"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +14,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
 import { useProjectStore } from "@/state/useProjectStore"
+import { VisionEnableModal } from "./vision-enable-modal"
+import { getVisionOffScannedWarning } from "@/utils/ingestion-warnings"
+import { VisionStatusBadge } from "./vision-status-badge"
 
 interface IngestionStatus {
   ingestion_id: string
@@ -34,6 +37,8 @@ interface StagedFile {
   job_id?: string
   status?: IngestionStatus
   error?: string
+  warnings?: Array<{ code: string; severity: string; message: string }>
+  triage?: { likely_scanned: boolean; preview_text_chars: number; pages_previewed: number }
 }
 
 interface EvidenceDockProps {
@@ -45,6 +50,8 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([])
   const [searchQuery, setSearchQuery] = useState("")
   const [corpusFiles, setCorpusFiles] = useState<Array<{ filename: string; claims_count?: number; status?: string; error_message?: string }>>([])
+  const [visionWarning, setVisionWarning] = useState<{ filename: string; message: string } | null>(null)
+  const [showVisionModal, setShowVisionModal] = useState(false)
 
   // Poll ingestion status
   const pollIngestionStatus = useCallback(async (ingestionId: string) => {
@@ -207,7 +214,7 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
     loadCorpusFiles()
   }, [activeProject, projectId])
 
-  const handleFileStaged = useCallback((result: { file: File; ingestion_id: string; job_id: string; status: string }) => {
+  const handleFileStaged = useCallback((result: { file: File; ingestion_id: string; job_id: string; status: string; warnings?: Array<{ code: string; severity: string; message: string }>; triage?: { likely_scanned: boolean; preview_text_chars: number; pages_previewed: number } }) => {
     // If ingestion_id is already present, this is from a completed upload
     if (result.ingestion_id) {
       setStagedFiles((prev) => {
@@ -225,6 +232,8 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
               status: result.status as any,
               progress: 0,
             },
+            warnings: result.warnings,
+            triage: result.triage,
           },
         ]
       })
@@ -325,7 +334,8 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
         }
 
         const data = await response.json()
-        const { ingestion_id, job_id, status } = data
+        const { ingestion_id, job_id, status, warnings, triage } = data
+        const visionNotice = getVisionOffScannedWarning(warnings, triage)
 
         setStagedFiles((prev) =>
           prev.map((f) =>
@@ -341,10 +351,19 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
                   },
                   // Clear any previous error on successful submission
                   error: undefined,
+                  warnings,
+                  triage,
                 }
               : f
           )
         )
+
+        if (visionNotice.shouldWarn) {
+          setVisionWarning({
+            filename: staged.file.name,
+            message: visionNotice.message,
+          })
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Upload failed"
         // Remove file from staging if upload fails - don't keep it as "staged"
@@ -366,6 +385,48 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
     <div className="flex flex-col h-full border-r border-slate-200">
       {/* Ingestion Zone (Top) - Compact */}
       <div className="flex-shrink-0 p-4 border-b border-slate-200">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium text-muted-foreground">Vision Status</span>
+          <VisionStatusBadge />
+        </div>
+        {visionWarning && (
+          <div className="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs">
+            <div className="flex items-start gap-2 mb-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="font-medium text-amber-900 mb-1">{visionWarning.filename}</p>
+                <p className="text-amber-800">{visionWarning.message}</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setVisionWarning(null)}
+                className="h-5 w-5 p-0 text-amber-600 hover:text-amber-800"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowVisionModal(true)}
+                className="h-6 text-xs border-amber-300 text-amber-700 hover:bg-amber-100"
+              >
+                <Eye className="h-3 w-3 mr-1" />
+                How to enable Vision
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setVisionWarning(null)}
+                className="h-6 text-xs text-amber-700 hover:text-amber-900"
+              >
+                Continue
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="max-h-[150px] overflow-y-auto">
           <FileUploader
             projectId={projectId}
@@ -373,6 +434,7 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
             compact
           />
         </div>
+        <VisionEnableModal open={showVisionModal} onOpenChange={setShowVisionModal} />
 
         {/* Staging Area */}
         {stagedFiles.length > 0 && (
@@ -578,4 +640,3 @@ export function EvidenceDock({ projectId }: EvidenceDockProps) {
     </div>
   )
 }
-

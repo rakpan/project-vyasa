@@ -92,10 +92,10 @@ VISION_URL: str = _env("VISION_URL", CORTEX_VISION_URL)
 # Legacy vars (BRAIN_MODEL_PATH, WORKER_MODEL_PATH, etc.) are supported for one release with deprecation warnings.
 
 # Text model (used by both Brain and Worker services)
-# Default: meta-llama/Llama-3.3-70B-Instruct (target consolidation model)
+# Default: nvidia/Llama-3_3-Nemotron-Super-49B-v1_5 (DGX Spark optimized)
 TEXT_MODEL_ID: str = _env(
     "TEXT_MODEL_ID",
-    _env("BRAIN_MODEL_PATH", _env("WORKER_MODEL_PATH", "meta-llama/Llama-3.3-70B-Instruct"))
+    _env("BRAIN_MODEL_PATH", _env("WORKER_MODEL_PATH", "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5"))
 )
 
 # Vision model (used by Vision service)
@@ -159,9 +159,8 @@ EMBEDDING_MODEL_PATH: str = EMBEDDER_MODEL_ID  # type: ignore[misc,assignment]
 CORTEX_URL: str = _env("CORTEX_URL", CORTEX_BRAIN_URL)
 CORTEX_SERVICE_URL: str = _env("CORTEX_SERVICE_URL", CORTEX_URL)
 
-# Drafter (Ollama) - Chat & Prose
-DRAFTER_URL: str = _env("DRAFTER_URL", "http://drafter:11435")
-LEGACY_WORKER_URL: str = _env("LEGACY_WORKER_URL", DRAFTER_URL)  # Optional alias for legacy configs
+# Legacy worker URL (optional alias for backward compatibility)
+LEGACY_WORKER_URL: str = _env("LEGACY_WORKER_URL", WORKER_URL)  # Optional alias for legacy configs
 
 # Memory (ArangoDB) - Knowledge Graph
 MEMORY_URL: str = get_arango_url()
@@ -260,7 +259,6 @@ OOB_REQUIRE_SOURCE_URL_FOR_AUTO_PROMOTION: bool = _env("OOB_REQUIRE_SOURCE_URL_F
 # These can be set in docker-compose.yml or .env files:
 #
 # CORTEX_URL=http://cortex-brain:30000
-# DRAFTER_URL=http://drafter:11435
 # MEMORY_URL=http://graph:8529
 # VECTOR_URL=http://vector:6333
 # EMBEDDER_URL=http://embedder:30010
@@ -289,9 +287,12 @@ def get_vision_url() -> str:
     """Get Vision (Eye) service URL from environment or default."""
     return VISION_URL
 
-def get_drafter_url() -> str:
-    """Get Drafter service URL from environment or default."""
-    return DRAFTER_URL
+# Vision as optional accelerator configuration
+# Vision is disabled by default for journals-first system (most PDFs are text-based)
+VISION_ENABLED: bool = _env("VISION_ENABLED", "false").lower() in ("true", "1", "yes")
+VISION_TRIAGE_PAGES: int = int(_env("VISION_TRIAGE_PAGES", "2"))  # Number of pages to preview for triage
+VISION_MIN_TEXT_CHARS: int = int(_env("VISION_MIN_TEXT_CHARS", "800"))  # Minimum text chars to consider PDF text-based
+VISION_HEALTH_TIMEOUT: float = float(_env("VISION_HEALTH_TIMEOUT", "1.0"))  # Health check timeout in seconds
 
 def get_memory_url() -> str:
     """Get Memory (ArangoDB) service URL from environment or default."""
