@@ -30,17 +30,41 @@ from ..services.analytical_notes_service import AnalyticalNotesService
 from ..services.blueprint_service import BlueprintService
 from ..services.section_synthesis_service import SectionSynthesisService
 from ..schemas.retrieval import RetrievalBundle
+from ..schemas.evidence_pack import (
+    EvidencePack,
+    EvidencePointer,
+    EvidenceSnippet,
+    SourceMetadata,
+    ModelVersions,
+)
 from ..schemas.analytical_notes import AnalyticalNote, NoteState
 from ...shared.schema import ManuscriptBlock
 from ..nodes.base import wrap_prompt_with_context
 from ..nodes.nodes import route_to_expert, call_expert_with_fallback, ExpertType
 from ..prompts import get_active_prompt_with_meta
+from ..state import ExecutionTier, acquire_tier_b_slot, release_tier_b_slot
 from arango.database import StandardDatabase
 
 logger = get_logger("orchestrator", __name__)
 
 # Configuration defaults
 ANALYTICAL_NOTES_LIMIT = 10  # Max notes to include in Packet B
+
+# Stage-to-Tier mapping for section synthesis
+# Tier A: CPU/Embedder-bound (forkable, parallelizable)
+# Tier B: GPU-bound (Nemotron-49B, bounded parallelism)
+STAGE_TIER_MAP = {
+    "query_building": ExecutionTier.TIER_A,
+    "retrieval": ExecutionTier.TIER_A,
+    "rerank": ExecutionTier.TIER_A,
+    "packet_a": ExecutionTier.TIER_A,  # evidence_pack
+    "packet_b": ExecutionTier.TIER_A,  # Building analytical notes packet
+    "cartographer_pass2": ExecutionTier.TIER_B,  # Triple extraction (if applicable)
+    "critique": ExecutionTier.TIER_B,  # critic_verify
+    "synthesis": ExecutionTier.TIER_B,
+    "persist": ExecutionTier.TIER_A,
+    "complete": None,  # Terminal state, no tier
+}
 
 
 class SectionSynthesisError(Exception):
@@ -116,10 +140,179 @@ def build_section_query(
     return query_text
 
 
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate from character length (4 chars per token average)."""
+    if not text:
+        return 0
+    return max(1, len(text) // 4)
+
+
+def build_evidence_pack(
+    reranked_chunks: List[Dict[str, Any]],
+    retrieval_bundle: RetrievalBundle,
+    ingestion_id: str,
+    project_id: str,
+    section_id: Optional[str] = None,
+) -> EvidencePack:
+    """Build EvidencePack from RetrievalBundle top-M chunks.
+    
+    EvidencePack is a first-class persisted artifact with bounded snippet count (5-20)
+    and bounded snippet size (~300-800 tokens per snippet).
+    
+    Args:
+        reranked_chunks: List of reranked chunks (top-M from RetrievalBundle).
+        retrieval_bundle: RetrievalBundle this EvidencePack is built from.
+        ingestion_id: Ingestion identifier (required for evidence scoping).
+        project_id: Project identifier.
+        section_id: Optional blueprint section ID.
+    
+    Returns:
+        EvidencePack with bounded snippets and pointers.
+    
+    Raises:
+        ValueError: If snippet count is outside bounds (5-20) or snippet tokens exceed 800.
+    """
+    # Sort by rerank_rank if available, else by score (descending)
+    if reranked_chunks:
+        # Check if any chunk has rerank_rank
+        has_rerank_rank = any(
+            chunk.get("rerank_rank") is not None 
+            for chunk in reranked_chunks
+        )
+        
+        if has_rerank_rank:
+            # Sort ascending by rerank_rank: rank 1 is best
+            sorted_chunks = sorted(
+                reranked_chunks,
+                key=lambda x: x.get("rerank_rank") if x.get("rerank_rank") is not None else 999999,
+                reverse=False,  # Ascending: rank 1 (best) comes first
+            )
+        else:
+            # Sort descending by score: highest score is best
+            sorted_chunks = sorted(
+                reranked_chunks,
+                key=lambda x: x.get("score", 0.0),
+                reverse=True,  # Descending: highest score (best) comes first
+            )
+    else:
+        sorted_chunks = []
+    
+    # Apply Tier A budgets: snippet count and token bounds
+    from ...shared.runtime_budgets import get_tier_a_limits, cap_snippet_tokens
+    tier_a_limits = get_tier_a_limits()
+    max_snippets = tier_a_limits.get("max_snippets", 20)
+    snippet_min_tokens = tier_a_limits.get("snippet_min_tokens", 50)
+    snippet_max_tokens = tier_a_limits.get("snippet_max_tokens", 800)
+    
+    # Bound snippet count: at least 5, at most max_snippets
+    if len(sorted_chunks) < 5:
+        raise ValueError(f"EvidencePack requires at least 5 chunks, got {len(sorted_chunks)}")
+    bounded_chunks = sorted_chunks[:max_snippets]  # Take at most max_snippets
+    
+    pointers: List[EvidencePointer] = []
+    snippets: List[EvidenceSnippet] = []
+    source_meta_map: Dict[str, SourceMetadata] = {}
+    
+    for chunk in bounded_chunks:
+        chunk_id = chunk.get("chunk_id", "")
+        text_content = chunk.get("text_content") or chunk.get("text", "")
+        payload = chunk.get("payload", {})
+        
+        file_hash = payload.get("file_hash", "")
+        file_id = file_hash or payload.get("doc_id", "") or payload.get("file_id", "")
+        page_number = payload.get("page_number")
+        section_label = payload.get("section_label") or payload.get("heading")
+        
+        # Build pointer
+        pointer = EvidencePointer(
+            chunk_id=chunk_id,
+            file_id=file_id,
+            doc_id=file_id,  # Alias
+            page_number=page_number,
+            section_label=section_label,
+        )
+        pointers.append(pointer)
+        
+        # Apply Tier A budget: cap snippet tokens
+        truncated_text, token_estimate = cap_snippet_tokens(text_content)
+        
+        # Build source metadata if not already added
+        if file_id and file_id not in source_meta_map:
+            # Try to get filename from ingestion records or use file_hash
+            filename = payload.get("filename") or payload.get("source_filename") or file_hash[:16] if file_hash else "unknown"
+            source_meta_map[file_id] = SourceMetadata(
+                filename=filename,
+                url=payload.get("url"),
+                doi=payload.get("doi"),
+                ingestion_timestamp=payload.get("ingestion_timestamp"),
+            )
+        
+        # Build snippet
+        snippet = EvidenceSnippet(
+            chunk_id=chunk_id,
+            quote_text=truncated_text,
+            page_number=page_number,
+            token_estimate=token_estimate,
+            source_meta=source_meta_map.get(file_id, {}).model_dump() if file_id in source_meta_map else {},
+        )
+        snippets.append(snippet)
+    
+    # Apply Tier B budget: cap Packet A total tokens
+    from ...shared.runtime_budgets import cap_packet_a_tokens, cap_evidence_pack_snippets
+    snippets = cap_evidence_pack_snippets(snippets)  # Cap snippet count first
+    snippets = cap_packet_a_tokens(snippets)  # Then cap total tokens
+    
+    # Rebuild pointers to match capped snippets
+    chunk_ids_in_snippets = {s.chunk_id for s in snippets}
+    pointers = [p for p in pointers if p.chunk_id in chunk_ids_in_snippets]
+    
+    # Convert source_meta_map to dict keyed by file_id
+    source_meta_dict = {
+        file_id: meta.model_dump()
+        for file_id, meta in source_meta_map.items()
+    }
+    
+    # Build ModelVersions
+    model_versions = ModelVersions(
+        embedder_model_id=retrieval_bundle.embedder_model_id,
+        reranker_model_id=retrieval_bundle.reranker_model_id,
+    )
+    
+    # Build EvidencePack
+    evidence_pack = EvidencePack(
+        project_id=project_id,
+        ingestion_id=ingestion_id,
+        section_id=section_id,
+        query_id=retrieval_bundle.query_id,
+        pointers=pointers,
+        snippets=snippets,
+        source_meta=source_meta_dict,
+        glossary_terms=[],  # Optional, can be populated later
+        model_versions=model_versions,
+        retrieval_bundle_id=retrieval_bundle.bundle_id,
+    )
+    
+    logger.debug(
+        f"Built EvidencePack",
+        extra={
+            "payload": {
+                "pack_id": evidence_pack.pack_id,
+                "snippet_count": len(snippets),
+                "pointer_count": len(pointers),
+                "retrieval_bundle_id": retrieval_bundle.bundle_id,
+            }
+        }
+    )
+    
+    return evidence_pack
+
+
 def build_packet_a(
     reranked_chunks: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """Build Packet A (Primary Sources) from reranked chunks.
+    
+    DEPRECATED: Use build_evidence_pack() instead. This function is kept for backward compatibility.
     
     Args:
         reranked_chunks: List of reranked chunks with chunk_id, text_content, payload, score, etc.
@@ -256,34 +449,108 @@ def build_packet_b(
 
 def synthesize_section(
     section: BlueprintSection,
-    packet_a: List[Dict[str, Any]],
+    evidence_pack: EvidencePack,
     packet_b: List[Dict[str, Any]],
     project_config: ProjectConfig,
     state: Optional[Dict[str, Any]] = None,
+    db: Optional[Any] = None,
 ) -> str:
     """Synthesize section using Nemotron 49B with section_writer prompt profile.
     
+    Tier-B call: Requires EvidencePack (not raw PDF).
+    
+    Protocol:
+    - Uses canonical citation tokens: \cite{chunk:<chunk_id>} (no numeric superscripts in stored text)
+    - Checks for locked sections (blocks synthesis if locked)
+    - Outputs structured Markdown blocks with fixed headings
+    
     Args:
         section: BlueprintSection with heading, journal_slot, depth_intent
-        packet_a: Primary Sources with citations
+        evidence_pack: EvidencePack (Packet A) - REQUIRED for Tier-B calls
         packet_b: Analytical Notes (style influence only)
         project_config: ProjectConfig for context wrapping
         state: Optional ResearchState for context injection
+        db: Optional ArangoDB database for checking locked status
     
     Returns:
-        Section text in Markdown format with inline citations.
+        Section text in Markdown format with canonical citation tokens \cite{chunk:<chunk_id>}.
     
     Raises:
-        SectionSynthesisError: If synthesis fails.
+        SectionSynthesisError: If EvidencePack is missing, section is locked, or synthesis fails.
     """
+    # Validate EvidencePack is provided (Tier-B contract enforcement)
+    if not evidence_pack:
+        raise SectionSynthesisError("EvidencePack is required for Synthesizer (Tier-B call)")
+    
+    if not evidence_pack.snippets or len(evidence_pack.snippets) == 0:
+        raise SectionSynthesisError("EvidencePack must contain at least one snippet (Tier-B contract violation)")
+    
+    # Locked text safety: Check if section is locked (blocks synthesis)
+    if db:
+        try:
+            # Query blocks directly from ArangoDB collection
+            # Check if any existing blocks for this section are locked
+            query = """
+            FOR block IN manuscript_blocks
+                FILTER block.project_id == @project_id AND block.section_id == @section_id
+                FILTER block.locked == true OR block.is_locked == true
+                LIMIT 1
+                RETURN block
+            """
+            cursor = db.aql.execute(
+                query,
+                bind_vars={
+                    "project_id": project_config.project_id if hasattr(project_config, "project_id") else project_config.get("project_id"),
+                    "section_id": section.section_id,
+                }
+            )
+            locked_blocks = list(cursor)
+            
+            if locked_blocks:
+                raise SectionSynthesisError(
+                    f"Section {section.section_id} is locked. Synthesis blocked to prevent modifications."
+                )
+        except Exception as e:
+            # Non-fatal: log and continue (locked check is best-effort)
+            # If collection doesn't exist or query fails, allow synthesis to proceed
+            logger.warning(f"Failed to check locked status: {e}", exc_info=True)
+    
+    # Convert EvidencePack to packet_a format for prompt formatting
+    packet_a = [
+        {
+            "text": snippet.quote_text,
+            "citation": {
+                "chunk_id": snippet.chunk_id,
+                "page": snippet.page_number,
+                "source": pointer.file_id[:16] if pointer.file_id else "",
+            },
+        }
+        for snippet, pointer in zip(evidence_pack.snippets, evidence_pack.pointers)
+    ]
     from ..prompts.defaults import DEFAULT_SECTION_WRITER_PROMPT
     from ...shared.vocab_guard import get_vocab_guard
+    from ...shared.prompt_registry import get_prompt as get_db_prompt
     
-    # Fetch prompt from Prompt Registry
-    system_template, prompt_meta = get_active_prompt_with_meta(
-        "vyasa-section-writer",
-        DEFAULT_SECTION_WRITER_PROMPT,
-    )
+    # Fetch prompt from DB-backed registry (with fallback to Opik/defaults)
+    prompt_profile = get_db_prompt("synthesizer_section_writer", DEFAULT_SECTION_WRITER_PROMPT)
+    system_template = prompt_profile["template"]
+    
+    # Fallback to Opik/defaults if DB not available
+    if prompt_profile.get("source") == "default":
+        system_template, prompt_meta = get_active_prompt_with_meta(
+            "vyasa-section-writer",
+            DEFAULT_SECTION_WRITER_PROMPT,
+        )
+    else:
+        # Use DB-backed template
+        from ..prompts.models import PromptUse
+        prompt_meta = PromptUse.from_template(
+            prompt_name="synthesizer_section_writer",
+            template=system_template,
+            resolved_source="db",
+            tag=f"v{prompt_profile.get('version', 0)}",
+            cache_hit=False,
+        )
     
     # Wrap with ProjectConfig context
     if state is None:
@@ -356,9 +623,11 @@ CRITICAL RULES:
 1. All factual claims and citations MUST come from Packet A (Primary Sources).
 2. Packet B (Analytical Notes) may influence style, analogies, and pedagogy ONLY.
 3. Use sandwich pattern: {depth_instruction}
-4. Include inline citations: [[chunk:<chunk_id>]] for each claim from Packet A (e.g., [[chunk:chunk-123]]).
-5. Do NOT cite Packet B directly. Use it to guide framing and style.
-6. Generate section text in Markdown format.
+4. Include inline citations using CANONICAL format: \\cite{{chunk:<chunk_id>}} for each claim from Packet A (e.g., \\cite{{chunk:chunk-123}}).
+5. Do NOT use numeric superscripts (e.g., [1], [2]) in the stored text. Only use \\cite{{chunk:<chunk_id>}} format.
+6. Do NOT cite Packet B directly. Use it to guide framing and style.
+7. Generate section text in Markdown format with fixed headings (use ## for section heading, ### for subsections).
+8. The compiler will later resolve \\cite{{chunk:<chunk_id>}} tokens into numeric superscripts at render time.
 
 Generate the section text now:"""
     
@@ -371,12 +640,25 @@ Generate the section text now:"""
     # Route to Synthesizer (Brain/Nemotron 49B)
     expert_url, expert_name, expert_model = route_to_expert("section_synthesizer", ExpertType.PROSE_WRITING)
     
+    # Acquire Tier B slot (serialize Nemotron calls: max-running-requests=1)
+    if not acquire_tier_b_slot(blocking=True, timeout=300.0):  # 5 minute timeout
+        raise SectionSynthesisError("Tier B slot unavailable (timeout waiting for Nemotron call slot)")
+    
+    # Apply Tier B budget: max output tokens
+    from ...shared.runtime_budgets import get_output_max_tokens
+    max_output_tokens = get_output_max_tokens("synthesizer")
+    
     # Call LLM
     try:
         request_params = {
             "temperature": 0.7,
-            "max_tokens": 4096,  # Reasonable limit for section text
+            "max_tokens": max_output_tokens,  # From runtime budgets
         }
+        
+        logger.debug(
+            f"Using output max_tokens={max_output_tokens} for synthesizer (from budgets)",
+            extra={"payload": {"agent": "synthesizer", "max_tokens": max_output_tokens}}
+        )
         
         data, meta = call_expert_with_fallback(
             expert_url=expert_url,
@@ -408,10 +690,23 @@ Generate the section text now:"""
         if not section_text or not section_text.strip():
             raise SectionSynthesisError("Synthesizer returned empty response")
         
-        # Validate: Check for at least one citation marker
-        if "[[chunk_id" not in section_text and "[[" not in section_text:
+        # Normalize citation format: Convert any [[chunk:<id>]] or [[<id>]] to \cite{chunk:<id>}
+        import re
+        # Pattern 1: [[chunk:<id>]] -> \cite{chunk:<id>}
+        section_text = re.sub(r'\[\[chunk:([^\]]+)\]\]', r'\\cite{chunk:\1}', section_text)
+        # Pattern 2: [[<id>]] (backward compatible) -> \cite{chunk:<id>}
+        # Only if it doesn't match claim: or chunk: prefix
+        section_text = re.sub(r'\[\[(?!chunk:|claim:)([^\]]+)\]\]', r'\\cite{chunk:\1}', section_text)
+        
+        # Remove any numeric superscripts that may have been generated (safety check)
+        # Pattern: [1], [2], etc. or ^1, ^2, etc.
+        section_text = re.sub(r'\[\d+\]', '', section_text)  # Remove [1], [2], etc.
+        section_text = re.sub(r'\^\d+', '', section_text)  # Remove ^1, ^2, etc.
+        
+        # Validate: Check for at least one canonical citation marker
+        if r'\cite{chunk:' not in section_text:
             logger.warning(
-                "Section text contains no citation markers",
+                "Section text contains no canonical citation markers",
                 extra={"payload": {"section_id": section.section_id, "text_length": len(section_text)}}
             )
             # Non-fatal in exploratory mode, fatal in conservative mode
@@ -422,7 +717,7 @@ Generate the section text now:"""
                 rigor_level = getattr(project_config, "rigor_level", "exploratory") or "exploratory"
             
             if rigor_level == "conservative":
-                raise SectionSynthesisError("Section text must include citation markers [[chunk:<chunk_id>]] in conservative mode")
+                raise SectionSynthesisError("Section text must include canonical citation markers \\cite{chunk:<chunk_id>} in conservative mode")
         
         logger.info(
             f"Synthesized section",
@@ -444,11 +739,14 @@ Generate the section text now:"""
             exc_info=True
         )
         raise SectionSynthesisError(f"Synthesis failed: {str(e)}") from e
+    finally:
+        # Always release Tier B slot after synthesis completes (success or failure)
+        release_tier_b_slot()
 
 
 def criticize_section(
     section_text: str,
-    packet_a: List[Dict[str, Any]],
+    evidence_pack: EvidencePack,
     packet_b: List[Dict[str, Any]],
     project_config: ProjectConfig,
     section_id: Optional[str] = None,
@@ -456,15 +754,41 @@ def criticize_section(
 ) -> Dict[str, Any]:
     """Criticize section using Nemotron 49B with cross_examiner prompt profile.
     
+    Tier-B call: Requires EvidencePack (not raw PDF).
+    
     Args:
         section_text: Synthesized section text
-        packet_a: Primary Sources with citations
+        evidence_pack: EvidencePack (Packet A) - REQUIRED for Tier-B calls
         packet_b: Analytical Notes
         project_config: ProjectConfig for context
+        section_id: Optional section ID for logging
         state: Optional ResearchState for context injection
     
     Returns:
         Dict with flags, promotions, vocabulary_suggestions, required_citations_missing.
+    
+    Raises:
+        SectionSynthesisError: If EvidencePack is missing (Tier-B contract violation).
+    """
+    # Validate EvidencePack is provided (Tier-B contract enforcement)
+    if not evidence_pack:
+        raise SectionSynthesisError("EvidencePack is required for Critic (Tier-B call)")
+    
+    if not evidence_pack.snippets or len(evidence_pack.snippets) == 0:
+        raise SectionSynthesisError("EvidencePack must contain at least one snippet (Tier-B contract violation)")
+    
+    # Convert EvidencePack to packet_a format for prompt formatting
+    packet_a = [
+        {
+            "text": snippet.quote_text,
+            "citation": {
+                "chunk_id": snippet.chunk_id,
+                "page": snippet.page_number,
+                "source": pointer.file_id[:16] if pointer.file_id else "",
+            },
+        }
+        for snippet, pointer in zip(evidence_pack.snippets, evidence_pack.pointers)
+    ]
     """
     from ..prompts.defaults import DEFAULT_CROSS_EXAMINER_PROMPT
     
@@ -538,7 +862,7 @@ def criticize_section(
 {packet_b_text}
 
 CRITICAL VALIDATION RULES:
-1. Check that ALL citations [[chunk:<chunk_id>]] in section_text reference chunks in Packet A.
+1. Check that ALL citations \\cite{{chunk:<chunk_id>}} in section_text reference chunks in Packet A.
 2. Flag any factual claims that cannot be traced to Packet A.
 3. Flag any analogies/framing in section_text that go beyond what's supported by Packet A.
 4. For each Analytical Note in Packet B:
@@ -548,6 +872,7 @@ CRITICAL VALIDATION RULES:
    - If note's framing goes beyond Packet A:
      → Flag as "overreach" (do not promote).
 5. Check for vocabulary violations: {vocab_clause}
+6. Ensure citations use canonical format: \\cite{{chunk:<chunk_id>}} (not numeric superscripts like [1], [2]).
 
 Return JSON:
 {{
@@ -570,16 +895,36 @@ Return JSON:
         {"role": "user", "content": user_message},
     ]
     
+    # Load prompt from DB-backed registry (with fallback to defaults)
+    from ...shared.prompt_registry import get_prompt as get_db_prompt
+    from ..prompts.defaults import DEFAULT_CROSS_EXAMINER_PROMPT
+    
+    prompt_profile = get_db_prompt("critic_verify", DEFAULT_CROSS_EXAMINER_PROMPT)
+    system_template = prompt_profile["template"]
+    
     # Route to Critic (Brain/Nemotron 49B)
     expert_url, expert_name, expert_model = route_to_expert("section_critic", ExpertType.LOGIC_REASONING)
+    
+    # Acquire Tier B slot (serialize Nemotron calls: max-running-requests=1)
+    if not acquire_tier_b_slot(blocking=True, timeout=300.0):  # 5 minute timeout
+        raise SectionSynthesisError("Tier B slot unavailable (timeout waiting for Nemotron call slot)")
+    
+    # Apply Tier B budget: max output tokens
+    from ...shared.runtime_budgets import get_output_max_tokens
+    max_output_tokens = get_output_max_tokens("critic")
     
     # Call LLM
     try:
         request_params = {
             "temperature": 0.3,  # Lower temperature for critical analysis
-            "max_tokens": 2048,
+            "max_tokens": max_output_tokens,  # From runtime budgets
             "response_format": {"type": "json_object"},  # Require JSON response
         }
+        
+        logger.debug(
+            f"Using prompt profile v{prompt_profile.get('version', 0)} and output max_tokens={max_output_tokens} for critic",
+            extra={"payload": {"agent": "critic", "max_tokens": max_output_tokens, "prompt_version": prompt_profile.get("version", 0), "prompt_source": prompt_profile.get("source", "default")}}
+        )
         
         data, meta = call_expert_with_fallback(
             expert_url=expert_url,
@@ -660,6 +1005,9 @@ Return JSON:
             "vocabulary_suggestions": [],
             "required_citations_missing": [],
         }
+    finally:
+        # Always release Tier B slot after critique completes (success or failure)
+        release_tier_b_slot()
 
 
 def run_section_synthesis(
@@ -668,7 +1016,6 @@ def run_section_synthesis(
     ingestion_id: Optional[str] = None,
     blueprint_version: Optional[int] = None,
     db: Optional[StandardDatabase] = None,
-    job_id: Optional[str] = None,
     job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run complete section synthesis loop.
@@ -747,17 +1094,31 @@ def run_section_synthesis(
     
     # Helper to update job progress
     def update_progress(stage: str, progress: float, message: Optional[str] = None):
-        """Update job progress if job_id is provided."""
+        """Update job progress if job_id is provided.
+        
+        Includes tier information based on STAGE_TIER_MAP.
+        """
         if job_id:
             try:
                 from ..job_store import update_job_record
                 from ..state import JobStatus
-                update_job_record(job_id, {
+                
+                # Get tier for this stage
+                tier = STAGE_TIER_MAP.get(stage)
+                tier_value = tier.value if tier else None
+                
+                update_data = {
                     "current_step": stage,
                     "progress": progress,
                     "message": message or f"Section synthesis: {stage}",
                     "status": JobStatus.PROCESSING.value if progress < 1.0 else JobStatus.SUCCEEDED.value,
-                })
+                }
+                
+                # Include tier if available
+                if tier_value:
+                    update_data["tier"] = tier_value
+                
+                update_job_record(job_id, update_data)
             except Exception as e:
                 logger.warning(f"Failed to update job progress: {e}", exc_info=True)
     
@@ -783,13 +1144,88 @@ def run_section_synthesis(
     
     update_progress("rerank", 0.3, "Reranking evidence chunks")
     
-    # Step 3: Build Packet A
+    # Step 3: Build EvidencePack (Packet A) from RetrievalBundle
     update_progress("packet_a", 0.4, "Building evidence packet")
-    packet_a = build_packet_a(reranked_chunks)
+    
+    # Get RetrievalBundle
+    from ..services.retrieval_bundle_service import RetrievalBundleService
+    bundle_service = RetrievalBundleService(db)
+    retrieval_bundle = bundle_service.get_bundle(bundle_id) if bundle_id else None
+    
+    if not retrieval_bundle:
+        raise SectionSynthesisError(f"RetrievalBundle {bundle_id} not found")
+    
+    # Build EvidencePack from RetrievalBundle top-M chunks
+    evidence_pack = build_evidence_pack(
+        reranked_chunks=reranked_chunks,
+        retrieval_bundle=retrieval_bundle,
+        ingestion_id=ingestion_id,
+        project_id=project_id,
+        section_id=section_id,
+    )
+    
+    # Persist EvidencePack
+    from ..services.evidence_pack_service import EvidencePackService
+    pack_service = EvidencePackService(db)
+    
+    # Opik tracing: EvidencePack creation (critical path span 1)
+    from ..telemetry.opik_emitter import get_opik_emitter
+    opik_emitter = get_opik_emitter()
+    error_msg = None
+    
+    try:
+        evidence_pack = pack_service.save_pack(evidence_pack)
+        
+        logger.info(
+            f"Built and persisted EvidencePack",
+            extra={
+                "payload": {
+                    "pack_id": evidence_pack.pack_id,
+                    "retrieval_bundle_id": bundle_id,
+                    "snippet_count": len(evidence_pack.snippets),
+                }
+            }
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Failed to persist EvidencePack: {e}", exc_info=True)
+        raise
+    finally:
+        # Emit span even on failure (with error field)
+        opik_emitter.emit_span(
+            span_name="evidence_pack_creation",
+            job_id=job_id or f"section_{section_id}",
+            project_id=project_id,
+            ingestion_id=ingestion_id,
+            meta={
+                "retrieval_bundle_id": bundle_id,
+                "evidence_pack_id": evidence_pack.pack_id if evidence_pack else None,
+                "section_id": section_id,
+                "snippet_count": len(evidence_pack.snippets) if evidence_pack else 0,
+            },
+            error=error_msg,
+        )
+    
+    # Build legacy packet_a format for backward compatibility with synthesize_section/criticize_section
+    packet_a = [
+        {
+            "text": snippet.quote_text,
+            "citation": {
+                "chunk_id": snippet.chunk_id,
+                "page": snippet.page_number,
+                "source": pointer.file_id[:16] if pointer.file_id else "",
+            },
+        }
+        for snippet, pointer in zip(evidence_pack.snippets, evidence_pack.pointers)
+    ]
     
     # Step 4: Build Packet B
     update_progress("packet_b", 0.5, "Building analytical notes packet")
     packet_b = build_packet_b(project_id, section, notes_service)
+    
+    # Apply Tier B budget: cap Packet B total tokens
+    from ...shared.runtime_budgets import cap_packet_b_tokens
+    packet_b = cap_packet_b_tokens(packet_b)
     
     # Step 5: Synthesizer call
     update_progress("synthesis", 0.6, "Synthesizing section content")
@@ -803,17 +1239,18 @@ def run_section_synthesis(
     
     section_text = synthesize_section(
         section=section,
-        packet_a=packet_a,
+        evidence_pack=evidence_pack,
         packet_b=packet_b,
         project_config=project_config,
         state=state,
+        db=db,  # Pass db for locked section check
     )
     
     # Step 6: Critic call
     update_progress("critique", 0.8, "Validating section content")
     critique = criticize_section(
         section_text=section_text,
-        packet_a=packet_a,
+        evidence_pack=evidence_pack,
         packet_b=packet_b,
         project_config=project_config,
         section_id=section_id,  # Pass section_id for logging
@@ -850,11 +1287,16 @@ def run_section_synthesis(
     retrieval_bundle = bundle_service.get_bundle(bundle_id) if bundle_id else None
     
     if not retrieval_bundle:
-        # Create a minimal RetrievalBundle if not persisted
+        # Create a minimal RetrievalBundle if not persisted (fallback)
+        # This should not happen in normal flow - RetrievalService should persist it
+        if not ingestion_id:
+            raise SectionSynthesisError("ingestion_id is required for RetrievalBundle persistence")
+        
         retrieval_bundle = RetrievalBundle.create(
             query_text=query_text,
             project_id=project_id,
-            candidate_chunks=reranked_chunks,
+            ingestion_id=ingestion_id,  # Required for evidence scoping
+            candidate_chunks=reranked_chunks,  # Fallback: use reranked as candidates
             reranked_chunks=reranked_chunks,
             embedder_model_id="nvidia/nv-embedqa-e5-v5",
             reranker_model_id="nvidia/llama-3.2-nv-rerankqa-1b-v2" if RERANKER_ENABLED else "none",
@@ -875,24 +1317,25 @@ def run_section_synthesis(
         if prom.get("note_id")
     ]
     
-    # Extract chunk citations from section_text (look for [[chunk:<id>]] or [[<id>]] patterns)
-    # Support both formats: [[chunk:<id>]] (preferred) and [[<id>]] (backward compatible)
+    # Extract chunk citations from section_text (canonical format: \cite{chunk:<id>})
     import re
-    # Pattern 1: [[chunk:<id>]] (explicit chunk citation)
-    chunk_citation_pattern = r'\[\[chunk:([^\]]+)\]\]'
-    # Pattern 2: [[<id>]] (backward compatible - assume chunk if not claim: or chunk: prefix)
-    # This matches simple IDs like [[chunk-123]] but excludes [[chunk:...]] and [[claim:...]]
-    simple_citation_pattern = r'\[\[(?!chunk:|claim:)([^\]]+)\]\]'
+    # Pattern 1: \cite{chunk:<id>} (canonical format)
+    chunk_citation_pattern = r'\\cite\{chunk:([^\}]+)\}'
+    chunk_citations_canonical = re.findall(chunk_citation_pattern, section_text)
     
-    chunk_citations_explicit = re.findall(chunk_citation_pattern, section_text)
-    chunk_citations_simple = re.findall(simple_citation_pattern, section_text)
+    # Pattern 2: Backward compatibility - [[chunk:<id>]] or [[<id>]] (convert to canonical if found)
+    # This handles any legacy format that may have slipped through
+    legacy_chunk_pattern = r'\[\[chunk:([^\]]+)\]\]'
+    legacy_simple_pattern = r'\[\[(?!chunk:|claim:)([^\]]+)\]\]'
+    chunk_citations_legacy = re.findall(legacy_chunk_pattern, section_text) + re.findall(legacy_simple_pattern, section_text)
     
-    # Combine and deduplicate chunk citations
-    chunk_citation_ids = list(set(chunk_citations_explicit + chunk_citations_simple))
+    # Combine and deduplicate chunk citations (prefer canonical format)
+    chunk_citation_ids = list(set(chunk_citations_canonical + chunk_citations_legacy))
     
-    # Extract actual claim IDs if present (format: [[claim:<id>]])
-    claim_citation_pattern = r'\[\[claim:([^\]]+)\]\]'
-    claim_ids = list(set(re.findall(claim_citation_pattern, section_text)))
+    # Extract actual claim IDs if present (format: \cite{claim:<id>} or [[claim:<id>]])
+    claim_citation_pattern_canonical = r'\\cite\{claim:([^\}]+)\}'
+    claim_citation_pattern_legacy = r'\[\[claim:([^\]]+)\]\]'
+    claim_ids = list(set(re.findall(claim_citation_pattern_canonical, section_text) + re.findall(claim_citation_pattern_legacy, section_text)))
     
     # citation_keys should remain empty for section blocks (reserved for BibTeX keys)
     citation_keys = []
@@ -928,40 +1371,56 @@ def run_section_synthesis(
         for prom in critique.get("suggested_promotions", [])
     ]
     
-    persistence_results = synthesis_service.persist_section_run(
-        project_id=project_id,
-        section_id=section_id,
-        retrieval_bundle=retrieval_bundle,
-        section_draft=section_block,
-        promotions=promotions,
-    )
+    # Opik tracing: Final compile/section persist (critical path span 4)
+    from ..telemetry.opik_emitter import get_opik_emitter
+    opik_emitter = get_opik_emitter()
+    persist_error = None
+    persistence_results = {}
     
-    logger.info(
-        f"Section synthesis completed",
-        extra={
-            "payload": {
-                "project_id": project_id,
-                "section_id": section_id,
-                "bundle_id": bundle_id,
-                "block_id": section_block.block_id,
-                "promotions_applied": persistence_results["promotions_applied"],
+    try:
+        persistence_results = synthesis_service.persist_section_run(
+            project_id=project_id,
+            section_id=section_id,
+            retrieval_bundle=retrieval_bundle,
+            section_draft=section_block,
+            promotions=promotions,
+        )
+        
+        logger.info(
+            f"Section synthesis completed",
+            extra={
+                "payload": {
+                    "project_id": project_id,
+                    "section_id": section_id,
+                    "bundle_id": bundle_id,
+                    "block_id": section_block.block_id,
+                    "promotions_applied": persistence_results.get("promotions_applied", 0),
+                }
             }
-        }
-    )
+        )
+    except Exception as e:
+        persist_error = str(e)
+        logger.error(f"Failed to persist section run: {e}", exc_info=True)
+        raise
+    finally:
+        # Emit span even on failure (with error field)
+        opik_emitter.emit_span(
+            span_name="section_persist",
+            job_id=job_id or f"section_{section_id}",
+            project_id=project_id,
+            ingestion_id=ingestion_id,
+            meta={
+                "block_id": section_block.block_id,
+                "section_id": section_id,
+                "retrieval_bundle_id": bundle_id,
+                "evidence_pack_id": evidence_pack.pack_id if evidence_pack else None,
+                "promotions_applied": persistence_results.get("promotions_applied", 0) if not persist_error else 0,
+            },
+            error=persist_error,
+        )
     
-    # Mark as complete
-    if job_id:
-        try:
-            from ..job_store import update_job_record
-            from ..state import JobStatus
-            update_job_record(job_id, {
-                "current_step": "complete",
-                "progress": 1.0,
-                "message": "Section synthesis completed",
-                "status": JobStatus.SUCCEEDED.value,
-            })
-        except Exception as e:
-            logger.warning(f"Failed to update job completion: {e}", exc_info=True)
+    # Mark as complete (use update_progress for consistency, tier will be None for complete)
+    update_progress("complete", 1.0, "Section synthesis completed")
     
     return {
         "bundle_id": bundle_id,

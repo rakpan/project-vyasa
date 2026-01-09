@@ -102,6 +102,40 @@ def get_active_prompt_with_meta(
             # Cache expired, remove it
             del _prompt_cache[cache_key]
     
+    # Try DB-backed prompt registry first (new, preferred)
+    try:
+        from ...shared.prompt_registry import get_prompt as get_db_prompt
+        
+        # Map prompt_name to prompt_id (e.g., "vyasa-cartographer" -> "cartographer_pass2")
+        prompt_id_map = {
+            "vyasa-cartographer": "cartographer_pass2",
+            "vyasa-critic": "critic_verify",
+            "vyasa-synthesizer": "synthesizer_section_writer",
+            "section_writer": "synthesizer_section_writer",
+            "cross_examiner": "critic_verify",
+        }
+        prompt_id = prompt_id_map.get(prompt_name, prompt_name)
+        
+        db_profile = get_db_prompt(prompt_id, default)
+        
+        if db_profile.get("source") == "db":
+            # Use DB-backed prompt
+            template = db_profile["template"]
+            metadata = PromptUse.from_template(
+                prompt_name=prompt_name,
+                template=template,
+                resolved_source="db",
+                tag=f"v{db_profile.get('version', 0)}",
+                cache_hit=False,
+            )
+            logger.debug(
+                f"Using DB-backed prompt profile '{prompt_id}' v{db_profile.get('version', 0)}",
+                extra={"payload": {"prompt_name": prompt_name, "prompt_id": prompt_id, "version": db_profile.get("version", 0)}}
+            )
+            return template, metadata
+    except Exception as e:
+        logger.debug(f"DB prompt registry unavailable for '{prompt_name}': {e}, trying Opik/default")
+    
     # Prompt registry not enabled or Opik not configured
     if not PROMPT_REGISTRY_ENABLED or not OPIK_ENABLED or not OPIK_BASE_URL:
         logger.debug(

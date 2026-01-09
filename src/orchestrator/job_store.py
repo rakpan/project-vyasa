@@ -103,6 +103,34 @@ def update_job_record(job_id: str, patch: Dict[str, Any]) -> None:
             _mem_store[job_id].update(patch)
 
 
+def get_job_by_idempotency_key(idempotency_key: str) -> Optional[Dict[str, Any]]:
+    """Get job record by idempotency key.
+    
+    Args:
+        idempotency_key: Idempotency key to search for.
+    
+    Returns:
+        Job record if found, None otherwise.
+    """
+    try:
+        db = _get_db()
+        _ensure_collection(db)
+        cursor = db.aql.execute(
+            f"FOR j IN {JOBS_COLLECTION} FILTER j.idempotency_key == @ik SORT j.created_at DESC LIMIT 1 RETURN j",
+            bind_vars={"ik": idempotency_key},
+        )
+        existing = list(cursor)
+        if existing:
+            return existing[0]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to query job by idempotency key", extra={"payload": {"error": str(exc)}})
+        # Fallback to memory store
+        for job_id, record in _mem_store.items():
+            if record.get("idempotency_key") == idempotency_key:
+                return record
+    return None
+
+
 def get_job_record(job_id: str) -> Optional[Dict[str, Any]]:
     try:
         db = _get_db()

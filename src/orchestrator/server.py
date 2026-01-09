@@ -1015,6 +1015,77 @@ def _run_workflow_async(job_id: str, initial_state: ResearchState) -> None:
     """Run workflow in background thread using LangGraph event stream."""
     asyncio.run(_run_workflow_coroutine(job_id, initial_state))
 
+def _resolve_ingestion_pdf_path(ingestion_id: str, project_id: str) -> Optional[Path]:
+    """Resolve a safe, server-owned PDF path for an ingestion record."""
+    try:
+        from .services.project_service import get_project_service
+        from .ingestion_store import IngestionStore
+        from .storage.local_file_store import UPLOADS_BASE_DIR
+    except Exception:
+        logger.warning("Failed to import ingestion dependencies for PDF resolution")
+        return None
+
+    project_service = get_project_service()
+    if project_service is None:
+        logger.warning("Project service unavailable; cannot resolve ingestion file path")
+        return None
+
+    ingestion_store = IngestionStore(project_service.db)
+    record = ingestion_store.get_ingestion(ingestion_id)
+    if not record:
+        logger.warning(f"Ingestion record not found: {ingestion_id}")
+        return None
+
+    if record.project_id != project_id:
+        logger.warning(
+            "Ingestion project mismatch while resolving file path",
+            extra={"payload": {"ingestion_id": ingestion_id, "project_id": project_id}}
+        )
+        return None
+
+    if not record.file_path:
+        logger.warning(f"Ingestion record missing file_path: {ingestion_id}")
+        return None
+
+    try:
+        resolved_path = Path(record.file_path).expanduser().resolve()
+    except (ValueError, OSError) as exc:
+        logger.warning(f"Invalid ingestion file path: {type(exc).__name__}")
+        return None
+
+    allowed_root = UPLOADS_BASE_DIR.resolve()
+    try:
+        if not resolved_path.is_relative_to(allowed_root):
+            logger.warning(
+                "Blocked ingestion file path outside uploads root",
+                extra={"payload": {"ingestion_id": ingestion_id, "file_path": str(resolved_path)}}
+            )
+            return None
+    except AttributeError:
+        try:
+            common_path = Path(os.path.commonpath([resolved_path, allowed_root]))
+            if common_path != allowed_root:
+                logger.warning(
+                    "Blocked ingestion file path outside uploads root",
+                    extra={"payload": {"ingestion_id": ingestion_id, "file_path": str(resolved_path)}}
+                )
+                return None
+        except (ValueError, OSError):
+            logger.warning(
+                "Blocked ingestion file path due to invalid common path",
+                extra={"payload": {"ingestion_id": ingestion_id, "file_path": str(resolved_path)}}
+            )
+            return None
+
+    if not resolved_path.is_file():
+        logger.warning(
+            "Ingestion file path missing or not a file",
+            extra={"payload": {"ingestion_id": ingestion_id, "file_path": str(resolved_path)}}
+        )
+        return None
+
+    return resolved_path
+
 
 async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> None:
     try:
@@ -1029,54 +1100,14 @@ async def _run_workflow_coroutine(job_id: str, initial_state: ResearchState) -> 
         
         # Ingest PDF chunks into Qdrant if PDF path and ingestion_id are available
         # This happens BEFORE workflow starts to ensure chunks are available for retrieval
-        pdf_path = initial_state.get("pdf_path")
         ingestion_id = initial_state.get("ingestion_id")
         file_hash = initial_state.get("doc_hash") or initial_state.get("file_hash")
         project_id = initial_state.get("project_id")
         rigor_level = initial_state.get("rigor_level") or (initial_state.get("project_context") or {}).get("rigor_level", "exploratory")
         
-        # Only ingest if we have a real PDF file path (not just a filename)
-        if pdf_path and ingestion_id and file_hash and project_id:
-            from pathlib import Path
-            # Security: Validate path before resolving to prevent path traversal
-            # Only allow paths within temp directory
-            allowed_root = Path(tempfile.gettempdir()).resolve()
-            try:
-                # Security: Validate path before resolving to prevent path traversal
-                # Normalize the path and ensure it's within allowed_root
-                input_path = Path(pdf_path)
-                
-                # For relative paths, resolve against allowed_root
-                if not input_path.is_absolute():
-                    resolved_pdf_path = (allowed_root / input_path).resolve()
-                else:
-                    # For absolute paths, resolve and then validate
-                    resolved_pdf_path = input_path.resolve()
-                
-                # Security check: Ensure resolved path is within allowed_root (prevents path traversal)
-                # Use try/except for is_relative_to (Python 3.9+) or fallback to string comparison
-                try:
-                    # Python 3.9+ has is_relative_to which is more reliable
-                    if not resolved_pdf_path.is_relative_to(allowed_root):
-                        logger.warning(f"Path traversal attempt blocked: {pdf_path}")
-                        resolved_pdf_path = None
-                except AttributeError:
-                    # Fallback for Python < 3.9: use commonpath check
-                    try:
-                        common_path = Path(os.path.commonpath([resolved_pdf_path, allowed_root]))
-                        if common_path != allowed_root:
-                            logger.warning(f"Path traversal attempt blocked: {pdf_path}")
-                            resolved_pdf_path = None
-                    except (ValueError, OSError):
-                        # Paths on different drives or invalid - block it
-                        logger.warning(f"Path traversal attempt blocked: {pdf_path}")
-                        resolved_pdf_path = None
-            except (ValueError, OSError) as e:
-                # Invalid path - log but don't expose details
-                logger.warning(f"Invalid path provided: {type(e).__name__}")
-                resolved_pdf_path = None
-            
-            if resolved_pdf_path and resolved_pdf_path.is_file() and allowed_root in resolved_pdf_path.parents:
+        if ingestion_id and file_hash and project_id:
+            resolved_pdf_path = _resolve_ingestion_pdf_path(ingestion_id, project_id)
+            if resolved_pdf_path:
                 try:
                     from .storage.qdrant import QdrantStorage
                     qdrant_storage = QdrantStorage()
@@ -1366,22 +1397,14 @@ def submit_workflow():
     try:
         is_valid, errors = validate_qdrant_collections()
         if not is_valid:
-            error_msg = (
-                f"Qdrant collection dimension mismatch detected. "
-                f"Expected dimension: {EMBEDDING_DIMENSION}. "
-                f"Errors: {'; '.join(errors)}. "
-                f"Please run 'scripts/reindex_corpus.sh' to migrate to the new embedding model, "
-                f"or update Qdrant collections to match the configured EMBEDDING_DIMENSION."
-            )
             logger.critical(
                 "Workflow submission blocked due to dimension mismatch",
                 extra={"payload": {"errors": errors, "expected_dimension": EMBEDDING_DIMENSION}}
             )
             return jsonify({
-                "error": error_msg,
+                "error": "Qdrant collection dimension mismatch detected.",
                 "code": "DIMENSION_MISMATCH",
                 "expected_dimension": EMBEDDING_DIMENSION,
-                "errors": errors,
             }), 503
     except Exception as e:
         logger.error(f"Failed to validate Qdrant dimensions: {e}", exc_info=True)

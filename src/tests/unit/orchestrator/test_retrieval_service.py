@@ -17,6 +17,9 @@ from src.orchestrator.schemas.retrieval import RetrievalBundle
 from src.shared.config import RERANKER_ENABLED, RERANKER_REQUIRED, EMBEDDER_MODEL_ID, RERANKER_MODEL_ID
 
 
+TEST_INGESTION_ID = "test-ingestion-123"
+
+
 @pytest.fixture
 def mock_qdrant_storage():
     """Mock QdrantStorage."""
@@ -94,6 +97,7 @@ def test_retrieve_with_reranker_success(retrieval_service, mock_bundle_service, 
     mock_bundle = RetrievalBundle.create(
         query_text=query,
         project_id=project_id,
+        ingestion_id=TEST_INGESTION_ID,
         candidate_chunks=sample_chunks,
         reranked_chunks=expected_reranked,
         embedder_model_id=EMBEDDER_MODEL_ID or "test-embedder",
@@ -108,6 +112,7 @@ def test_retrieve_with_reranker_success(retrieval_service, mock_bundle_service, 
         chunks, bundle_id = retrieval_service.retrieve_for_section(
             query_text=query,
             project_id=project_id,
+            ingestion_id=TEST_INGESTION_ID,
             section_id=section_id,
             use_reranker=True,
         )
@@ -138,6 +143,7 @@ def test_retrieve_reranker_required_failure(retrieval_service, sample_chunks):
                 retrieval_service.retrieve_for_section(
                     query_text=query,
                     project_id=project_id,
+                    ingestion_id=TEST_INGESTION_ID,
                     use_reranker=True,
                 )
 
@@ -163,6 +169,7 @@ def test_retrieve_reranker_optional_fallback(retrieval_service, mock_bundle_serv
     mock_bundle = RetrievalBundle.create(
         query_text=query,
         project_id=project_id,
+        ingestion_id=TEST_INGESTION_ID,
         candidate_chunks=sample_chunks,
         reranked_chunks=expected_reranked,
         embedder_model_id=EMBEDDER_MODEL_ID or "test-embedder",
@@ -179,6 +186,7 @@ def test_retrieve_reranker_optional_fallback(retrieval_service, mock_bundle_serv
             chunks, bundle_id = retrieval_service.retrieve_for_section(
                 query_text=query,
                 project_id=project_id,
+                ingestion_id=TEST_INGESTION_ID,
                 top_m=top_m,
                 use_reranker=True,
             )
@@ -208,6 +216,7 @@ def test_retrieve_without_reranker(retrieval_service, mock_bundle_service, sampl
     mock_bundle = RetrievalBundle.create(
         query_text=query,
         project_id=project_id,
+        ingestion_id=TEST_INGESTION_ID,
         candidate_chunks=sample_chunks,
         reranked_chunks=sample_chunks[:top_m],
         embedder_model_id=EMBEDDER_MODEL_ID or "test-embedder",
@@ -221,6 +230,7 @@ def test_retrieve_without_reranker(retrieval_service, mock_bundle_service, sampl
     chunks, bundle_id = retrieval_service.retrieve_for_section(
         query_text=query,
         project_id=project_id,
+        ingestion_id=TEST_INGESTION_ID,
         top_m=top_m,
         use_reranker=False,
     )
@@ -242,6 +252,7 @@ def test_retrieve_no_chunks(retrieval_service):
     chunks, bundle_id = retrieval_service.retrieve_for_section(
         query_text=query,
         project_id=project_id,
+        ingestion_id=TEST_INGESTION_ID,
     )
     
     assert chunks == []
@@ -271,6 +282,7 @@ def test_retrieve_bundle_persistence_failure(retrieval_service, sample_chunks):
         chunks, bundle_id = retrieval_service.retrieve_for_section(
             query_text=query,
             project_id=project_id,
+            ingestion_id=TEST_INGESTION_ID,
             use_reranker=True,
         )
     

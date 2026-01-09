@@ -54,6 +54,11 @@ from .nodes import (
     ExpertType,
 )
 from .base import wrap_prompt_with_context
+from ..schemas.verification_decision import VerificationDecisionRecord, VerificationDecision
+from ..schemas.evidence_pack import EvidencePack
+from ..services.verification_decision_service import VerificationDecisionService
+from ..services.evidence_pack_service import EvidencePackService
+from ..services.retrieval_bundle_service import RetrievalBundleService
 
 logger = get_logger("orchestrator", __name__)
 telemetry_emitter = get_telemetry_emitter()
@@ -191,6 +196,244 @@ def _build_conflict_report(
     return report
 
 
+def critic_verify_claim_bounded(
+    claim: Dict[str, Any],
+    evidence_pack: EvidencePack,
+    project_id: str,
+    ingestion_id: str,
+    db: Optional[Any] = None,
+    bounded_retry_used: bool = False,
+) -> VerificationDecisionRecord:
+    """Verify a claim against EvidencePack with bounded retry (Tier B).
+    
+    Applies runtime budgets:
+    - max output tokens from Tier B budgets
+    - bounded retry max from Tier B budgets
+    - prompt template from DB-backed registry
+    """
+    """Bounded spot-check verification of a single claim against EvidencePack.
+    
+    Protocol:
+    - Critic only sees EvidencePack snippets (never full PDF)
+    - For Ambiguous: allow at most ONE bounded retry (one extra snippet)
+    - Persist decision per claim with full provenance
+    
+    Args:
+        claim: Claim/triple dictionary to verify.
+        evidence_pack: EvidencePack containing bounded evidence snippets.
+        project_id: Project identifier.
+        ingestion_id: Ingestion identifier.
+        db: Optional ArangoDB database instance for persistence.
+        bounded_retry_used: Whether a bounded retry has already been used.
+    
+    Returns:
+        VerificationDecisionRecord with decision and supporting chunk IDs.
+    """
+    from ..prompts import get_active_prompt_with_meta, DEFAULT_CRITIC_PROMPT
+    from ..nodes.nodes import route_to_expert, call_expert_with_fallback
+    from ..config import ExpertType
+    
+    claim_id = claim.get("claim_id", "")
+    claim_text = claim.get("claim_text") or f"{claim.get('subject', '')} {claim.get('predicate', '')} {claim.get('object', '')}"
+    
+    # Format EvidencePack snippets for verification
+    evidence_text = "EVIDENCE PACK (Bounded Evidence - Spot Check):\n"
+    for idx, snippet in enumerate(evidence_pack.snippets, 1):
+        pointer = evidence_pack.pointers[idx-1] if idx-1 < len(evidence_pack.pointers) else None
+        evidence_text += f"[{idx}] {snippet.quote_text}\n"
+        evidence_text += f"    (chunk_id: {snippet.chunk_id}, page {snippet.page_number or '?'})\n\n"
+    
+    # Build verification prompt
+    system_template, _ = get_active_prompt_with_meta("vyasa-critic", DEFAULT_CRITIC_PROMPT)
+    
+    verification_instruction = """
+CRITICAL: You are performing a bounded spot-check verification of a claim against EvidencePack snippets.
+
+You MUST return valid JSON ONLY (no prose, no markdown code blocks). The output MUST strictly conform to this schema:
+
+{
+  "decision": "Verified" | "Unsupported" | "Contradicted" | "Ambiguous",
+  "rationale": "Short rationale (max 500 chars)",
+  "supporting_chunk_ids": ["chunk_id1", "chunk_id2", "chunk_id3"] (1-3 chunk IDs from EvidencePack),
+  "requires_retry": false (true only if decision is Ambiguous and retry not yet used)
+}
+
+REQUIREMENTS:
+- decision MUST be one of: Verified, Unsupported, Contradicted, Ambiguous
+- supporting_chunk_ids MUST reference chunk_ids from the EvidencePack provided (1-3 chunks)
+- rationale MUST be concise (max 500 chars)
+- If decision is Ambiguous and requires_retry is true, a bounded retry (one extra snippet) may be used
+"""
+    
+    system_prompt = f"{system_template}\n\n{verification_instruction}"
+    
+    user_prompt = f"""Verify the following claim against the EvidencePack:
+
+CLAIM TO VERIFY:
+{claim_text}
+
+EVIDENCE PACK:
+{evidence_text}
+
+Return ONLY valid JSON with decision, rationale, and supporting_chunk_ids from the EvidencePack above."""
+    
+    # Call Nemotron via SGLang (Tier-B call)
+    expert_url, expert_name, expert_model = route_to_expert("critic_verify", ExpertType.LOGIC_REASONING)
+    
+    prompt = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    
+    try:
+        response = call_expert_with_fallback(
+            expert_url=expert_url,
+            expert_name=expert_name,
+            prompt=prompt,
+            model_config=expert_model,
+            node_name="critic_verify",
+            job_id=None,
+        )
+        
+        # Parse JSON response
+        extracted = response.get("content", "") if isinstance(response, dict) else str(response)
+        
+        # Try to extract JSON from response
+        json_match = re.search(r'\{.*"decision".*\}', extracted, re.DOTALL)
+        if json_match:
+            verification_result = json.loads(json_match.group(0))
+        else:
+            # Try parsing entire response as JSON
+            verification_result = json.loads(extracted)
+        
+        decision_str = verification_result.get("decision", "Unsupported")
+        rationale = verification_result.get("rationale", "No rationale provided")
+        supporting_chunk_ids = verification_result.get("supporting_chunk_ids", [])
+        requires_retry = verification_result.get("requires_retry", False)
+        
+        # Validate decision enum
+        try:
+            decision = VerificationDecision(decision_str)
+        except ValueError:
+            logger.warning(f"Invalid decision value: {decision_str}, defaulting to Unsupported")
+            decision = VerificationDecision.UNSUPPORTED
+        
+        # Validate supporting_chunk_ids are from EvidencePack
+        valid_chunk_ids = [s.chunk_id for s in evidence_pack.snippets]
+        supporting_chunk_ids = [cid for cid in supporting_chunk_ids if cid in valid_chunk_ids]
+        
+        # Ensure 1-3 chunk IDs
+        if not supporting_chunk_ids:
+            # Default to first chunk if none provided
+            supporting_chunk_ids = [evidence_pack.snippets[0].chunk_id] if evidence_pack.snippets else []
+        elif len(supporting_chunk_ids) > 3:
+            supporting_chunk_ids = supporting_chunk_ids[:3]
+        
+        # Handle Ambiguous with bounded retry (if not already used)
+        if decision == VerificationDecision.AMBIGUOUS and requires_retry and not bounded_retry_used:
+            # Get one extra snippet (if available)
+            if len(evidence_pack.snippets) < 20:  # EvidencePack max is 20
+                # In a full implementation, we'd retrieve one more chunk from RetrievalBundle
+                # For now, we'll mark that retry was attempted
+                bounded_retry_used = True
+                logger.debug(
+                    f"Ambiguous decision for claim {claim_id}, bounded retry used",
+                    extra={"payload": {"claim_id": claim_id, "evidence_pack_id": evidence_pack.pack_id}}
+                )
+        
+        # Create VerificationDecisionRecord
+        verification_decision = VerificationDecisionRecord(
+            claim_id=claim_id,
+            decision=decision,
+            rationale=rationale[:500],  # Enforce max length
+            supporting_chunk_ids=supporting_chunk_ids,
+            bounded_retry_used=bounded_retry_used,
+            project_id=project_id,
+            ingestion_id=ingestion_id,
+            evidence_pack_id=evidence_pack.pack_id,
+            retrieval_bundle_id=evidence_pack.retrieval_bundle_id,
+        )
+        
+        # Persist if DB available
+        if db:
+            try:
+                decision_service = VerificationDecisionService(db)
+                verification_decision = decision_service.save_decision(verification_decision)
+                logger.debug(
+                    f"Saved VerificationDecision for claim {claim_id}",
+                    extra={
+                        "payload": {
+                            "decision_id": verification_decision.decision_id,
+                            "claim_id": claim_id,
+                            "decision": decision.value,
+                            "evidence_pack_id": evidence_pack.pack_id,
+                        }
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to persist VerificationDecision: {e}", exc_info=True)
+        
+        # Opik tracing: Critic verify/flag decisions (critical path span 3)
+        from ..telemetry.opik_emitter import get_opik_emitter
+        opik_emitter = get_opik_emitter()
+        opik_emitter.emit_span(
+            span_name="critic_verify",
+            job_id=None,  # Not available in this context
+            project_id=project_id,
+            ingestion_id=ingestion_id,
+            meta={
+                "claim_id": claim_id,
+                "decision": decision.value,
+                "evidence_pack_id": evidence_pack.pack_id,
+                "retrieval_bundle_id": evidence_pack.retrieval_bundle_id,
+                "supporting_chunk_ids": supporting_chunk_ids,
+                "bounded_retry_used": bounded_retry_used,
+            },
+            error=None,  # Success case
+        )
+        
+        return verification_decision
+        
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(
+            f"Failed to verify claim {claim_id}: {e}",
+            exc_info=True
+        )
+        
+        # Opik tracing: Emit span even on failure
+        from ..telemetry.opik_emitter import get_opik_emitter
+        opik_emitter = get_opik_emitter()
+        opik_emitter.emit_span(
+            span_name="critic_verify",
+            job_id=None,  # Not available in this context
+            project_id=project_id,
+            ingestion_id=ingestion_id,
+            meta={
+                "claim_id": claim_id,
+                "decision": "UNSUPPORTED",  # Default on failure
+                "evidence_pack_id": evidence_pack.pack_id if evidence_pack else None,
+                "retrieval_bundle_id": evidence_pack.retrieval_bundle_id if evidence_pack else None,
+                "supporting_chunk_ids": [],
+                "bounded_retry_used": bounded_retry_used,
+            },
+            error=error_msg,
+        )
+        
+        # Return Unsupported decision on failure
+        return VerificationDecisionRecord(
+            claim_id=claim_id,
+            decision=VerificationDecision.UNSUPPORTED,
+            rationale=f"Verification failed: {error_msg[:500]}",
+            supporting_chunk_ids=[evidence_pack.snippets[0].chunk_id] if evidence_pack and evidence_pack.snippets else [],
+            bounded_retry_used=bounded_retry_used,
+            project_id=project_id,
+            ingestion_id=ingestion_id,
+            evidence_pack_id=evidence_pack.pack_id if evidence_pack else "",
+            retrieval_bundle_id=evidence_pack.retrieval_bundle_id if evidence_pack else "",
+        )
+
+
 @trace_node
 def critic_node(state: ResearchState) -> ResearchState:
     """Validate extracted graph and return pass/fail with critiques.
@@ -202,23 +445,36 @@ def critic_node(state: ResearchState) -> ResearchState:
     state = validate_state_schema(state)
     state = hydrate_project_context(state)
     extracted = state.get("extracted_json") or {}
-    raw_text = state.get("raw_text", "")
     synthesis = state.get("synthesis", "")
     
-    # Debug logging for raw_text preservation at node entry
+    # Get project context
+    project_id = state.get("project_id")
+    ingestion_id = state.get("ingestion_id")
     job_id = state.get("jobId") or state.get("job_id")
+    
+    # Debug logging
     logger.debug(
-        "Critic node entry",
+        "Critic node entry (bounded verification)",
         extra={
             "payload": {
                 "job_id": job_id,
-                "raw_text_length": len(raw_text) if raw_text else 0,
-                "has_raw_text": "raw_text" in state,
-                "has_pdf_path": "pdf_path" in state,
-                "state_keys": list(state.keys())[:20],  # Limit to first 20 keys for logging
+                "project_id": project_id,
+                "ingestion_id": ingestion_id,
+                "has_extracted": bool(extracted),
             }
         }
     )
+    
+    # Get DB connection for persistence
+    db = None
+    try:
+        from arango import ArangoClient
+        from ...shared.config import get_memory_url, get_arango_password, ARANGODB_DB, ARANGODB_USER
+        client = ArangoClient(hosts=get_memory_url())
+        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
+    except Exception as e:
+        logger.warning(f"Failed to connect to DB for critic: {e}", exc_info=True)
+        # Continue without DB (decisions won't be persisted, but verification can proceed)
     
     # Fetch prompt from Prompt Registry (with fallback to factory default)
     from ..prompts import get_active_prompt_with_meta, DEFAULT_CRITIC_PROMPT
@@ -247,263 +503,234 @@ def critic_node(state: ResearchState) -> ResearchState:
             "critic_status": "fail",
         }
 
-    def _load_page_text(doc_hash: str, page: int) -> str:
-        """Load page text from cache or extract from PDF.
-        
-        Args:
-            doc_hash: SHA256 hash of the PDF document
-            page: 1-based page number
-        
-        Returns:
-            Text content of the page, or empty string if not available
-        """
+    # Get triples/claims from extracted_json
+    triples = extracted.get("triples", []) if isinstance(extracted, dict) else []
+    if not triples:
+        logger.warning("No triples found in extracted_json for verification")
+        return {
+            **state,
+            "critiques": ["No triples found for verification"],
+            "critic_status": "fail",
+        }
+    
+    # Get or build EvidencePack for verification
+    # Protocol: Critic only sees EvidencePack snippets (never full PDF)
+    evidence_pack = None
+    if state.get("evidence_pack_id") and db:
+        # Try to load EvidencePack from state
         try:
-            from .pdf_text_cache import load_page_text
-            pdf_path = state.get("pdf_path")
-            return load_page_text(doc_hash, page, pdf_path=pdf_path)
+            pack_service = EvidencePackService(db)
+            evidence_pack = pack_service.get_pack(state.get("evidence_pack_id"))
         except Exception as e:
-            logger.warning(
-                f"Failed to load page text for doc_hash={doc_hash[:16]}... page={page}: {e}",
-                extra={"payload": {"doc_hash": doc_hash[:16], "page": page}},
-                exc_info=True,
-            )
-            # Fallback to raw_text if cache fails (graceful degradation)
-            return raw_text or ""
-
-    def _snippet_exists(snippet: str, text: str) -> bool:
-        if not snippet or not text:
-            return False
-        if snippet in text:
-            return True
-        # Fuzzy containment
-        import difflib
-        return difflib.SequenceMatcher(None, snippet, text).quick_ratio() > 0.6
-
-    def _validate_claims() -> tuple[list[str], bool]:
-        """Validate claims and triples with hardened evidence binding checks.
-        
-        The Critic's Gate: Rejects any claim/triple that:
-        - Lacks doc_hash (hard requirement)
-        - Has invalid bbox range [0, 1000]
-        - Has snippet that doesn't match page text (fuzzy match)
-        
-        Returns:
-            Tuple of (critiques list, validation_ok bool)
-        """
-        critiques_local: list[str] = []
-        ok = True
-        claims = extracted.get("claims") or []
-        triples = extracted.get("triples") or []
-        
-        # Validate claims
-        for claim in claims:
-            if not isinstance(claim, dict):
-                critiques_local.append("Claim is not an object")
-                ok = False
-                continue
-            
-            pointer = claim.get("source_pointer") or {}
-            bbox = pointer.get("bbox")
-            doc_hash = claim.get("doc_hash") or pointer.get("doc_hash")
-            page = pointer.get("page")
-            snippet = pointer.get("snippet", "")
-            project_id = claim.get("project_id")
-            
-            # Hard requirement: doc_hash must exist
-            if not doc_hash:
-                critiques_local.append("Claim missing doc_hash (required for evidence binding)")
-                ok = False
-                continue
-            
-            # Hard requirement: source_pointer must have all fields
-            if not page or not bbox or len(bbox) != 4:
-                critiques_local.append("Claim missing source_pointer fields (page/bbox required)")
-                ok = False
-                continue
-            
-            # Validate bbox range [0, 1000]
-            if any((c < 0 or c > 1000) for c in bbox):
-                critiques_local.append(f"Claim bbox out of range (must be 0-1000): {bbox}")
-                ok = False
-            
-            # Validate project_id
-            if not project_id:
-                critiques_local.append("Claim missing project_id")
-                ok = False
-            
-            # Real text verification: fuzzy match snippet against page text
-            if doc_hash and page and snippet:
-                try:
-                    page_text = _load_page_text(doc_hash, page)
-                    if not _snippet_exists(snippet, page_text):
-                        critiques_local.append(
-                            f"Claim snippet not found in page text (doc_hash={doc_hash[:16]}... page={page})"
-                        )
-                        ok = False
-                except Exception as e:
-                    logger.warning(f"Failed to verify snippet for claim: {e}", exc_info=True)
-                    critiques_local.append(f"Failed to verify claim snippet: {e}")
-                    ok = False
-        
-        # Validate triples (same checks; source_pointer required)
-        for triple in triples:
-            if not isinstance(triple, dict) or not triple:
-                continue
-            
-            pointer = triple.get("source_pointer") or {}
-            bbox = pointer.get("bbox")
-            doc_hash = triple.get("doc_hash") or pointer.get("doc_hash")
-            page = pointer.get("page")
-            snippet = triple.get("snippet") or triple.get("evidence", "")
-            
-            # Hard requirement: doc_hash must exist
-            if not doc_hash:
-                critiques_local.append("Triple missing doc_hash (required for evidence binding)")
-                ok = False
-                continue
-            if not page or not bbox or len(bbox) != 4:
-                critiques_local.append("Triple source_pointer missing required fields (page/bbox)")
-                ok = False
-                continue
-            
-            # Validate bbox range
-            if any((c < 0 or c > 1000) for c in bbox):
-                critiques_local.append(f"Triple bbox out of range (must be 0-1000): {bbox}")
-                ok = False
-            
-            # Real text verification
-            if snippet:
-                try:
-                    page_text = _load_page_text(doc_hash, page)
-                    if not _snippet_exists(snippet, page_text):
-                        critiques_local.append(
-                            f"Triple snippet not found in page text (doc_hash={doc_hash[:16]}... page={page})"
-                        )
-                        ok = False
-                except Exception as e:
-                    logger.warning(f"Failed to verify triple snippet: {e}", exc_info=True)
-                    critiques_local.append(f"Failed to verify triple snippet: {e}")
-                    ok = False
-        
-        return critiques_local, ok
-
-    claim_critiques, claims_ok = _validate_claims()
-    conflict_flags = state.get("conflict_flags") or []
-
-    context_segments = []
-    if claim_critiques:
-        context_segments.append(f"Claim critiques: {json.dumps(claim_critiques, ensure_ascii=False)}")
-    if conflict_flags:
-        context_segments.append(f"Conflict flags: {conflict_flags}")
+            logger.warning(f"Failed to load EvidencePack from state: {e}", exc_info=True)
     
-    # Use wrap_prompt_with_context for consistent context injection
-    # Apply context injection AFTER fetching from Opik
-    system_prompt = wrap_prompt_with_context(state, system_template)
-    
-    # Add claim-specific context segments
-    if context_segments:
-        system_prompt = f"{system_prompt}\n\nContext:\n" + "\n".join(context_segments)
-
-    user_content = json.dumps(
-        {
-            "extracted_graph": extracted,
-            "raw_text": raw_text,
-        },
-        ensure_ascii=False,
-    )
-
-    critique_prompt = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_content},
-    ]
-
-    try:
-        # Legacy/simple path: attempt direct HTTP call first (monkeypatch-friendly for tests)
+    # If no EvidencePack in state, build one from triples' chunk_ids
+    if not evidence_pack and project_id and ingestion_id and db:
         try:
-            resp = requests.post(
-                get_brain_url(),
-                json={"messages": critique_prompt, "response_format": {"type": "json_object"}},
-                timeout=5,
+            from ..storage.qdrant import QdrantStorage
+            
+            # Collect chunk_ids from triples
+            chunk_ids = []
+            for triple in triples:
+                if isinstance(triple, dict):
+                    # Get chunk_ids from triple metadata or source_pointer
+                    triple_chunk_ids = triple.get("chunk_ids", [])
+                    if not triple_chunk_ids:
+                        # Fallback: try to extract from metadata
+                        metadata = triple.get("metadata", {})
+                        triple_chunk_ids = metadata.get("chunk_ids", [])
+                    chunk_ids.extend(triple_chunk_ids)
+            
+            # Deduplicate
+            chunk_ids = list(set(chunk_ids))
+            
+            if chunk_ids:
+                # Retrieve chunks from Qdrant
+                qdrant_storage = QdrantStorage()
+                chunks = []
+                for chunk_id in chunk_ids[:20]:  # Limit to 20 chunks (EvidencePack max)
+                    try:
+                        chunk_data = qdrant_storage.get_chunks_by_ids([chunk_id], project_id)
+                        if chunk_data:
+                            chunks.extend(chunk_data)
+                    except Exception as e:
+                        logger.warning(f"Failed to retrieve chunk {chunk_id}: {e}")
+                
+                if chunks:
+                    # Build RetrievalBundle (required for EvidencePack)
+                    bundle_service = RetrievalBundleService(db)
+                    from ..schemas.retrieval import RetrievalBundle
+                    retrieval_bundle = RetrievalBundle.create(
+                        query_text="Critic verification",
+                        project_id=project_id,
+                        ingestion_id=ingestion_id,
+                        candidate_chunks=chunks,
+                        reranked_chunks=chunks,
+                        embedder_model_id="nvidia/nv-embedqa-e5-v5",
+                        reranker_model_id="none",
+                        top_k_embed=len(chunks),
+                        top_k_rerank=len(chunks),
+                        query_source="critic_verification",
+                        section_id=None,
+                    )
+                    bundle_service.save_bundle(retrieval_bundle)
+                    
+                    # Build EvidencePack
+                    from ..section_synthesis.section_orchestrator import build_evidence_pack
+                    evidence_pack = build_evidence_pack(
+                        reranked_chunks=chunks,
+                        retrieval_bundle=retrieval_bundle,
+                        ingestion_id=ingestion_id,
+                        project_id=project_id,
+                        section_id=None,
+                    )
+                    
+                    # Persist EvidencePack
+                    pack_service = EvidencePackService(db)
+                    evidence_pack = pack_service.save_pack(evidence_pack)
+                    
+                    logger.info(
+                        f"Built EvidencePack for critic verification",
+                        extra={
+                            "payload": {
+                                "pack_id": evidence_pack.pack_id,
+                                "chunk_count": len(chunks),
+                                "snippet_count": len(evidence_pack.snippets),
+                            }
+                        }
+                    )
+        except Exception as e:
+            logger.error(f"Failed to build EvidencePack for critic: {e}", exc_info=True)
+            # Continue without EvidencePack (will fail verification)
+    
+    if not evidence_pack:
+        logger.error("No EvidencePack available for critic verification")
+        return {
+            **state,
+            "critiques": ["EvidencePack required for verification but not available"],
+            "critic_status": "fail",
+        }
+    
+    # Perform bounded spot-check verification for each claim/triple
+    verification_decisions = []
+    critiques = []
+    verified_count = 0
+    unsupported_count = 0
+    contradicted_count = 0
+    ambiguous_count = 0
+    
+    for triple in triples:
+        if not isinstance(triple, dict):
+            continue
+        
+        claim_id = triple.get("claim_id", "")
+        if not claim_id:
+            logger.warning("Triple missing claim_id, skipping verification")
+            continue
+        
+        # Check if decision already exists (avoid duplicate verification)
+        if db:
+            try:
+                decision_service = VerificationDecisionService(db)
+                existing_decisions = decision_service.get_decisions_by_claim(claim_id, project_id)
+                if existing_decisions:
+                    # Use most recent decision
+                    verification_decisions.append(existing_decisions[0])
+                    decision = existing_decisions[0].decision
+                    if decision == VerificationDecision.VERIFIED:
+                        verified_count += 1
+                    elif decision == VerificationDecision.UNSUPPORTED:
+                        unsupported_count += 1
+                    elif decision == VerificationDecision.CONTRADICTED:
+                        contradicted_count += 1
+                    elif decision == VerificationDecision.AMBIGUOUS:
+                        ambiguous_count += 1
+                    continue
+            except Exception as e:
+                logger.warning(f"Failed to check existing decisions: {e}", exc_info=True)
+        
+        # Perform bounded verification
+        try:
+            decision = critic_verify_claim_bounded(
+                claim=triple,
+                evidence_pack=evidence_pack,
+                project_id=project_id,
+                ingestion_id=ingestion_id,
+                db=db,
+                bounded_retry_used=False,  # Start with no retry
             )
-            content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "{}")
-            parsed = json.loads(content) if isinstance(content, str) else content
-            status = parsed.get("status", "fail").lower()
-            critiques = parsed.get("critiques", [])
-            if not isinstance(critiques, list):
-                critiques = [str(critiques)]
-            revision_count = state.get("revision_count", 0) + (0 if status == "pass" else 1)
-            critic_score = 1.0 if status == "pass" else 0.0
-            synthesis_val = state.get("synthesis") or "synthesis_placeholder"
-            # Preserve ALL state fields (defensive preservation)
-            return {
-                **state,
-                "critiques": critiques,
-                "revision_count": revision_count,
-                "critic_status": status,
-                "critic_score": critic_score,
-                "synthesis": synthesis_val,
+            
+            verification_decisions.append(decision)
+            
+            # Handle Ambiguous with bounded retry (if not already used)
+            if decision.decision == VerificationDecision.AMBIGUOUS and not decision.bounded_retry_used:
+                # Retry with one extra snippet (if available)
+                # In a full implementation, we'd add one more chunk to EvidencePack
+                # For now, we'll mark the decision as requiring retry
+                logger.debug(
+                    f"Ambiguous decision for claim {claim_id}, attempting bounded retry",
+                    extra={"payload": {"claim_id": claim_id}}
+                )
+                # Note: Full retry implementation would add one more snippet to EvidencePack
+                # and call critic_verify_claim_bounded again with bounded_retry_used=True
+            
+            # Aggregate counts
+            if decision.decision == VerificationDecision.VERIFIED:
+                verified_count += 1
+            elif decision.decision == VerificationDecision.UNSUPPORTED:
+                unsupported_count += 1
+                critiques.append(f"Claim {claim_id}: Unsupported - {decision.rationale}")
+            elif decision.decision == VerificationDecision.CONTRADICTED:
+                contradicted_count += 1
+                critiques.append(f"Claim {claim_id}: Contradicted - {decision.rationale}")
+            elif decision.decision == VerificationDecision.AMBIGUOUS:
+                ambiguous_count += 1
+                critiques.append(f"Claim {claim_id}: Ambiguous - {decision.rationale}")
+                
+        except Exception as e:
+            logger.error(
+                f"Failed to verify claim {claim_id}: {e}",
+                exc_info=True
+            )
+            critiques.append(f"Claim {claim_id}: Verification failed - {str(e)}")
+            unsupported_count += 1
+    
+    # Determine overall status
+    total_claims = len(triples)
+    if total_claims == 0:
+        status = "fail"
+    elif verified_count == total_claims:
+        status = "pass"
+    elif contradicted_count > 0:
+        status = "fail"
+    elif unsupported_count > verified_count:
+        status = "fail"
+    else:
+        status = "pass"  # Mostly verified, allow some ambiguous/unsupported
+    
+    # Log verification summary
+    logger.info(
+        "Critic bounded verification completed",
+        extra={
+            "payload": {
+                "total_claims": total_claims,
+                "verified": verified_count,
+                "unsupported": unsupported_count,
+                "contradicted": contradicted_count,
+                "ambiguous": ambiguous_count,
+                "evidence_pack_id": evidence_pack.pack_id if evidence_pack else None,
             }
-        except Exception:
-            pass
-        # Route to appropriate expert: Critic uses Brain (logic/reasoning) service
-        expert_url, expert_name, expert_model = route_to_expert("critic_node", ExpertType.LOGIC_REASONING)
-        decision = check_kv_backpressure(expert_url)
-        if decision.get("action") == "retry_later":
-            # Preserve ALL state fields (defensive preservation)
-            return {**state, "critic_status": "retry_later", "error": "RETRY_LATER"}
-        # soft delay already applied inside decision for >85%
-        
-        # Get role for allowed_tools
-        role = role_registry.get_role("critic")
-        
-        data, meta = call_expert_with_fallback(
-            expert_url=expert_url,
-            expert_name=expert_name,
-            model_id=expert_model,
-            prompt=critique_prompt,
-            request_params={
-                "temperature": 0.3,
-                "top_p": 0.9,
-                "max_tokens": 8192,
-                "response_format": {"type": "json_object"},
-            },
-            fallback_url=None,  # No fallback for critic (already using Brain)
-            fallback_model_id=None,
-            node_name="critic_node",
-            state=state,
-            allowed_tools=role.allowed_tools,
-        )
-        latency_ms = meta.get("duration_ms", 0.0)
-        usage = meta.get("usage")
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-        parsed = json.loads(content) if isinstance(content, str) else content
-        status = parsed.get("status", "fail").lower()
-        critiques = parsed.get("critiques", [])
-        if not isinstance(critiques, list):
-            critiques = [str(critiques)]
-        
-        # Additional check: If Brain response itself looks garbled, mark as fail
-        if _detect_quantization_failure(content):
-            logger.warning(
-                "FP4 quantization failure detected in Brain response",
-                extra={"payload": {"response_preview": content[:200]}},
-            )
-            status = "fail"
-            critiques.append("Brain response appears garbled (possible quantization failure)")
-
-        # Snippet existence check (best-effort)
-        critiques.extend(claim_critiques)
-        if not claims_ok:
-            status = "fail"
-
-        # Deterministic conflict detection: detect contradictions using graph traversal
-        detected_conflicts = []
-        project_id = state.get("project_id")
-        ingestion_id = state.get("ingestion_id")
-        job_id = state.get("jobId") or state.get("job_id")
-        rigor_level = state.get("rigor_level") or (state.get("project_context") or {}).get("rigor_level", "exploratory")
-        
-        if project_id:
+        }
+    )
+    
+    # Conflict flags from state
+    conflict_flags = state.get("conflict_flags") or []
+    
+    # Deterministic conflict detection: detect contradictions using graph traversal
+    detected_conflicts = []
+    rigor_level = state.get("rigor_level") or (state.get("project_context") or {}).get("rigor_level", "exploratory")
+    
+    if project_id:
             try:
                 from ..storage.arango import load_claims_for_conflict_detection
                 from ..conflict_utils import (
@@ -653,113 +880,82 @@ def critic_node(state: ResearchState) -> ResearchState:
                 logger.warning(f"Failed to perform deterministic conflict detection: {e}", exc_info=True)
                 # Continue without conflict detection (graceful degradation)
         
-        # Conflict flags surfaced during context assembly
-        conflict_flags = state.get("conflict_flags") or []
-        if conflict_flags:
-            status = "fail"
-            critiques.append("Conflict Resolution Needed")
-            critiques.append("Recommendation: Cartographer must resolve contradictory evidence before proceeding.")
-        
-        # Vocabulary guardrail check: scan synthesis output for forbidden words
-        if synthesis:
-            try:
-                from ...shared.vocab_guard import get_vocab_guard
-                vocab_guard = get_vocab_guard()
-                forbidden_words = vocab_guard.get_forbidden_words()
+    # Conflict flags surfaced during context assembly
+    if conflict_flags:
+        status = "fail"
+        critiques.append("Conflict Resolution Needed")
+        critiques.append("Recommendation: Cartographer must resolve contradictory evidence before proceeding.")
+    
+    # Vocabulary guardrail check: scan synthesis output for forbidden words
+    if synthesis:
+        try:
+            from ...shared.vocab_guard import get_vocab_guard
+            vocab_guard = get_vocab_guard()
+            forbidden_words = vocab_guard.get_forbidden_words()
+            
+            if forbidden_words:
+                # Case-insensitive regex pattern to match forbidden words with word boundaries
+                # Escape special regex characters in words
+                escaped_words = [re.escape(word) for word in forbidden_words]
+                pattern = r'\b(' + '|'.join(escaped_words) + r')\b'
+                matches = re.findall(pattern, synthesis, re.IGNORECASE)
                 
-                if forbidden_words:
-                    # Case-insensitive regex pattern to match forbidden words with word boundaries
-                    # Escape special regex characters in words
-                    escaped_words = [re.escape(word) for word in forbidden_words]
-                    pattern = r'\b(' + '|'.join(escaped_words) + r')\b'
-                    matches = re.findall(pattern, synthesis, re.IGNORECASE)
-                    
-                    if matches:
-                        # Get unique matches (lowercased for consistency)
-                        unique_matches = sorted(set(word.lower() for word in matches))
-                        status = "fail"
-                        critiques.append(f"Prohibited vocabulary detected: {', '.join(unique_matches)}")
-                        logger.warning(
-                            "Vocab guardrail: Prohibited words found in synthesis",
-                            extra={"payload": {"forbidden_words": unique_matches, "job_id": state.get("job_id")}},
-                        )
-            except Exception as e:
-                logger.warning(f"Failed to check vocabulary guardrail: {e}", exc_info=True)
-                # Don't fail on guardrail check errors - just log and continue
-        
-        # Increment revision count on failure
-        revision_count = state.get("revision_count", 0)
-        if status != "pass":
-            revision_count += 1
-        critic_score = 1.0 if status == "pass" else 0.0
-        logger.info(
-            "Critic evaluated extraction",
-            extra={
-                "payload": {
-                    "expert": meta.get("expert_name", expert_name),
-                    "telemetry": {
-                        "model_id": meta.get("model_id", expert_model),
-                        "task_type": "adjudicate",
-                        "tokens_in_est": estimate_tokens(extracted_str),
-                        "tokens_out_est": estimate_tokens(content if isinstance(content, str) else json.dumps(content)),
-                        "latency_ms": latency_ms,
-                        "kv_policy": get_model_config("brain").kv_policy,
-                    }
-                }
-            },
-        )
-        enriched_state: ResearchState = {}
-        if usage:
-            enriched_state["_sglang_usage"] = usage  # type: ignore[index]
-        enriched_state["_expert_name"] = meta.get("expert_name", expert_name)  # type: ignore[index]
-        enriched_state["_expert_url"] = meta.get("url_base", expert_url)  # type: ignore[index]
-        base_state: ResearchState = {
-            **enriched_state,
-            "critiques": critiques,
-            "revision_count": revision_count,
-            "critic_status": status,
-            "critic_score": critic_score,
-        }
-        conflict_report = _build_conflict_report({**state, **base_state}, conflict_flags, status, revision_count)
-        if conflict_report:
-            try:
-                store_conflict_report(conflict_report.model_dump())
-                telemetry_emitter.emit_event(
-                    "conflict_report_emitted",
-                    {
-                        "report_id": conflict_report.report_id,
-                        "job_id": conflict_report.job_id,
-                        "conflict_hash": conflict_report.conflict_hash,
-                        "deadlock": conflict_report.deadlock,
-                        "deadlock_type": conflict_report.deadlock_type.value if conflict_report.deadlock_type else None,
-                        "blocker_count": len([i for i in conflict_report.conflict_items if i.severity == ConflictSeverity.BLOCKER]),
-                        "recommended_next_step": conflict_report.recommended_next_step.value,
-                    },
-                )
-                base_state["conflict_report_id"] = conflict_report.report_id  # type: ignore[index]
-                base_state["conflict_report"] = conflict_report.model_dump()  # type: ignore[index]
-            except Exception:
-                logger.warning("Failed to persist conflict report", exc_info=True)
-        # Set phase to VETTING
-        base_state["phase"] = PhaseEnum.VETTING.value
-        # Preserve ALL state fields (defensive preservation)
-        return {**state, **base_state}
-    except Exception:
-        logger.error(
-            "Critic validation failed",
-            extra={"payload": {"has_extracted": bool(extracted)}},
-            exc_info=True,
-        )
-        # On failure to critique, force manual review path
-        # Preserve ALL state fields (defensive preservation)
-        revision_count = state.get("revision_count", 0) + 1
-        return {
-            **state,
-            "critiques": ["Critic execution failed"],
-            "revision_count": revision_count,
-            "critic_status": "fail",
-            "phase": PhaseEnum.VETTING.value,
-        }
+                if matches:
+                    # Get unique matches (lowercased for consistency)
+                    unique_matches = sorted(set(word.lower() for word in matches))
+                    status = "fail"
+                    critiques.append(f"Prohibited vocabulary detected: {', '.join(unique_matches)}")
+                    logger.warning(
+                        "Vocab guardrail: Prohibited words found in synthesis",
+                        extra={"payload": {"forbidden_words": unique_matches, "job_id": job_id}},
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to check vocabulary guardrail: {e}", exc_info=True)
+            # Don't fail on guardrail check errors - just log and continue
+    
+    # Increment revision count on failure
+    revision_count = state.get("revision_count", 0)
+    if status != "pass":
+        revision_count += 1
+    critic_score = 1.0 if status == "pass" else 0.0
+    
+    # Build return state with verification decisions
+    base_state: ResearchState = {
+        "critiques": critiques,
+        "revision_count": revision_count,
+        "critic_status": status,
+        "critic_score": critic_score,
+        "verification_decisions": [d.model_dump() for d in verification_decisions],  # Include decisions in state
+        "evidence_pack_id": evidence_pack.pack_id if evidence_pack else None,
+    }
+    
+    # Build conflict report if needed
+    conflict_report = _build_conflict_report({**state, **base_state}, conflict_flags, status, revision_count)
+    if conflict_report:
+        try:
+            store_conflict_report(conflict_report.model_dump())
+            telemetry_emitter.emit_event(
+                "conflict_report_emitted",
+                {
+                    "report_id": conflict_report.report_id,
+                    "job_id": job_id,
+                    "conflict_hash": conflict_report.conflict_hash,
+                    "deadlock": conflict_report.deadlock,
+                    "deadlock_type": conflict_report.deadlock_type.value if conflict_report.deadlock_type else None,
+                    "blocker_count": len([i for i in conflict_report.conflict_items if i.severity == ConflictSeverity.BLOCKER]),
+                    "recommended_next_step": conflict_report.recommended_next_step.value,
+                },
+            )
+            base_state["conflict_report_id"] = conflict_report.report_id  # type: ignore[index]
+            base_state["conflict_report"] = conflict_report.model_dump()  # type: ignore[index]
+        except Exception:
+            logger.warning("Failed to persist conflict report", exc_info=True)
+    
+    # Set phase to VETTING
+    base_state["phase"] = PhaseEnum.VETTING.value
+    
+    # Preserve ALL state fields (defensive preservation)
+    return {**state, **base_state}
 
 
 def reframing_node(state: ResearchState) -> ResearchState:

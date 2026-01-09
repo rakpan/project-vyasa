@@ -93,9 +93,17 @@ class RetrievalService:
         Raises:
             ValueError: If reranker is required but unavailable.
         """
-        # Use config defaults if not provided
-        top_k = top_k or RETRIEVAL_TOP_K
-        top_m = top_m or RERANK_TOP_M
+        # Use budgets from system_settings (Tier A limits)
+        from ...shared.runtime_budgets import get_tier_a_limits
+        tier_a_limits = get_tier_a_limits()
+        
+        # Use budgets if not explicitly provided, otherwise use provided values
+        top_k = top_k or tier_a_limits.get("retrieval_top_k", RETRIEVAL_TOP_K)
+        top_m = top_m or tier_a_limits.get("rerank_top_m", RERANK_TOP_M)
+        
+        # Enforce budget caps (never exceed configured limits)
+        top_k = min(top_k, tier_a_limits.get("retrieval_top_k", RETRIEVAL_TOP_K))
+        top_m = min(top_m, tier_a_limits.get("rerank_top_m", RERANK_TOP_M))
         
         # Determine reranker usage:
         # - If explicitly set (True/False), use that
@@ -179,26 +187,37 @@ class RetrievalService:
             reranked_chunks = sorted_chunks[:top_m]
         
         # Step 3: Persist RetrievalBundle (if bundle_service available)
+        # Keyed by: (project_id, ingestion_id, section_id, query_id)
         bundle_id = None
         if self.bundle_service:
             try:
-                retrieval_bundle = RetrievalBundle.create(
-                    query_text=query_text,
-                    project_id=project_id,
-                    candidate_chunks=candidate_chunks,
-                    reranked_chunks=reranked_chunks,
-                    embedder_model_id=EMBEDDER_MODEL_ID,
-                    reranker_model_id=RERANKER_MODEL_ID if use_reranker and not rerank_skipped else "none",
-                    top_k_embed=top_k,
-                    top_k_rerank=top_m,
-                    query_source="blueprint_section",
-                    section_id=section_id,
-                    rerank_skipped=rerank_skipped,
-                    rerank_error=rerank_error,
-                )
-                
-                self.bundle_service.save_bundle(retrieval_bundle)
-                bundle_id = retrieval_bundle.bundle_id
+                # Validate ingestion_id is provided (required for evidence scoping)
+                if not ingestion_id:
+                    logger.warning(
+                        "ingestion_id not provided for RetrievalBundle - cannot persist without ingestion scoping",
+                        extra={"payload": {"project_id": project_id, "section_id": section_id}}
+                    )
+                else:
+                    # Store candidate_chunks with ids + scores (top-K)
+                    # Store reranked_chunks with ids + ranks/scores (top-M)
+                    retrieval_bundle = RetrievalBundle.create(
+                        query_text=query_text,
+                        project_id=project_id,
+                        ingestion_id=ingestion_id,  # Required for evidence scoping
+                        candidate_chunks=candidate_chunks,  # Top-K with ids + scores
+                        reranked_chunks=reranked_chunks,  # Top-M with ids + ranks/scores
+                        embedder_model_id=EMBEDDER_MODEL_ID,
+                        reranker_model_id=RERANKER_MODEL_ID if use_reranker and not rerank_skipped else "none",
+                        top_k_embed=top_k,
+                        top_k_rerank=top_m,
+                        query_source="blueprint_section",
+                        section_id=section_id,
+                        rerank_skipped=rerank_skipped,
+                        rerank_error=rerank_error,
+                    )
+                    
+                    self.bundle_service.save_bundle(retrieval_bundle)
+                    bundle_id = retrieval_bundle.bundle_id
                 
                 logger.debug(
                     f"Persisted RetrievalBundle: {bundle_id}",
@@ -246,11 +265,20 @@ class RetrievalService:
         import requests
         
         # Normalize chunks to OpenAI-style format
+        # Apply candidate truncation (Tier A budget)
+        from ...shared.runtime_budgets import truncate_candidate_text, get_tier_a_limits
+        tier_a_limits = get_tier_a_limits()
+        candidate_trunc_tokens = tier_a_limits.get("candidate_trunc_tokens", 600)
+        
         documents = []
         for chunk in chunks:
+            chunk_text = chunk.get("text_content") or chunk.get("text", "")
+            # Truncate candidate text to budget
+            truncated_text = truncate_candidate_text(chunk_text, candidate_trunc_tokens)
+            
             doc = {
                 "id": chunk.get("chunk_id"),
-                "text": chunk.get("text_content") or chunk.get("text", ""),
+                "text": truncated_text,
             }
             # Preserve metadata
             if "payload" in chunk:

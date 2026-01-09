@@ -232,6 +232,64 @@ class OpikEmitter:
             self._safe_post(url, payload)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"Opik validation emission failed (ignored): {exc}", exc_info=True)
+    
+    def emit_span(
+        self,
+        span_name: str,
+        job_id: str,
+        project_id: Optional[str],
+        ingestion_id: Optional[str] = None,
+        meta: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """Emit a critical path span to Opik.
+        
+        Used for tracing critical operations in section synthesis:
+        - EvidencePack creation
+        - Triple extraction (first entity family)
+        - Critic verify/flag decisions
+        - Section persist/compile
+        
+        Args:
+            span_name: Name of the span (e.g., "evidence_pack_creation", "triple_extraction", "critic_verify", "section_persist")
+            job_id: Job identifier
+            project_id: Project identifier (optional)
+            ingestion_id: Ingestion identifier (optional, for evidence scoping)
+            meta: Optional metadata with stable identifiers (retrieval_bundle_id, evidence_pack_id, claim_id, block_id, section_id, etc.)
+            error: Optional error message if span represents a failure
+        """
+        if not self._enabled:
+            return
+        
+        client = self._get_client()
+        if not client:
+            return
+        
+        try:
+            payload = {
+                "project": client["project"],
+                "run_type": "span",
+                "metadata": {
+                    "span_name": span_name,
+                    "job_id": job_id,
+                    "project_id": project_id,
+                    "ingestion_id": ingestion_id,
+                    "timestamp": get_utc_now().isoformat(),
+                    **(meta or {}),
+                },
+            }
+            
+            # Add error field if present (ensures failures are traced)
+            if error:
+                payload["metadata"]["error"] = error
+                payload["metadata"]["success"] = False
+            else:
+                payload["metadata"]["success"] = True
+            
+            url = f"{client['base_url']}/api/traces"
+            self._safe_post(url, payload)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"Opik span emission failed (ignored): {exc}", exc_info=True)
 
 
 # Global singleton instance

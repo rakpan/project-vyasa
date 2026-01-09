@@ -15,6 +15,8 @@ preserves anchor metadata losslessly.
 
 import hashlib
 import logging
+import os
+import tempfile
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
@@ -130,14 +132,7 @@ class QdrantStorage:
         except ImportError:
             raise RuntimeError("pymupdf is required for PDF chunking")
         
-        pdf_path_obj = Path(pdf_path).expanduser().resolve()
-        allowed_root = Path(tempfile.gettempdir()).resolve()
-        try:
-            pdf_path_obj.relative_to(allowed_root)
-        except ValueError:
-            raise FileNotFoundError("PDF path not allowed")
-        if not pdf_path_obj.is_file():
-            raise FileNotFoundError("PDF not found")
+        pdf_path_obj = self._resolve_pdf_path(pdf_path)
         
         # Open PDF and extract chunks with metadata
         doc = pymupdf.open(str(pdf_path_obj))
@@ -251,6 +246,48 @@ class QdrantStorage:
             
         finally:
             doc.close()
+
+    @staticmethod
+    def _resolve_pdf_path(pdf_path: str) -> Path:
+        """Resolve a PDF path against allowed roots and validate it."""
+        if not pdf_path:
+            raise FileNotFoundError("PDF path not provided")
+        if "\x00" in pdf_path:
+            raise FileNotFoundError("PDF path not allowed")
+
+        from .local_file_store import UPLOADS_BASE_DIR
+        allowed_roots = [Path(tempfile.gettempdir()).resolve(), UPLOADS_BASE_DIR.resolve()]
+
+        candidate = Path(pdf_path).expanduser()
+        resolved: Optional[Path] = None
+
+        def _is_under_root(path: Path, root: Path) -> bool:
+            try:
+                return path.is_relative_to(root)
+            except AttributeError:
+                try:
+                    return Path(os.path.commonpath([path, root])) == root
+                except (ValueError, OSError):
+                    return False
+
+        if candidate.is_absolute():
+            try:
+                abs_path = candidate.resolve()
+            except (ValueError, OSError):
+                raise FileNotFoundError("PDF path not allowed")
+            if any(_is_under_root(abs_path, root) for root in allowed_roots):
+                resolved = abs_path
+        else:
+            for root in allowed_roots:
+                try_path = (root / candidate).resolve()
+                if _is_under_root(try_path, root):
+                    resolved = try_path
+                    break
+
+        if not resolved or not resolved.is_file():
+            raise FileNotFoundError("PDF not found")
+
+        return resolved
     
     def _split_text_into_chunks(self, text: str, chunk_size: int, overlap: int) -> List[str]:
         """Split text into chunks deterministically.
@@ -510,9 +547,11 @@ class QdrantStorage:
             # Import reranker config (needed for both None check and global disable check)
             from ...shared.config import RERANKER_ENABLED
             
-            # Determine reranker usage: check config if not explicitly set
+            # Determine reranker usage:
+            # - Default: False (do NOT rerank by default - callers must opt-in)
+            # - Only use reranker if explicitly requested AND globally enabled
             if use_reranker is None:
-                use_reranker = RERANKER_ENABLED
+                use_reranker = False  # Default: no reranking (callers must opt-in)
             
             # If reranker is disabled globally, never use it (even if caller requested it)
             if use_reranker and not RERANKER_ENABLED:

@@ -15,6 +15,9 @@ from src.orchestrator.schemas.retrieval import RetrievalBundle
 from src.orchestrator.services.retrieval_bundle_service import RetrievalBundleService
 
 
+TEST_INGESTION_ID = "test-ingestion-123"
+
+
 @pytest.fixture
 def mock_db():
     """Mock ArangoDB database."""
@@ -71,6 +74,7 @@ def sample_bundle():
     return RetrievalBundle.create(
         query_text="Test query",
         project_id="test-project-123",
+        ingestion_id=TEST_INGESTION_ID,
         candidate_chunks=candidate_chunks,
         reranked_chunks=reranked_chunks,
         embedder_model_id="nvidia/nv-embedqa-e5-v5",
@@ -103,6 +107,7 @@ def test_get_bundle(bundle_service, mock_db):
     bundle_doc = {
         "bundle_id": bundle_id,
         "project_id": "test-project-123",
+        "ingestion_id": TEST_INGESTION_ID,
         "query_text": "Test query",
         "candidate_chunks": [],
         "reranked_chunks": [],
@@ -144,6 +149,7 @@ def test_list_bundles(bundle_service, mock_db):
         {
             "bundle_id": "bundle-1",
             "project_id": project_id,
+            "ingestion_id": TEST_INGESTION_ID,
             "section_id": "section-1",
             "query_id": "query-1",
             "query_text": "Query 1",
@@ -159,6 +165,7 @@ def test_list_bundles(bundle_service, mock_db):
         {
             "bundle_id": "bundle-2",
             "project_id": project_id,
+            "ingestion_id": TEST_INGESTION_ID,
             "section_id": "section-2",
             "query_id": "query-2",
             "query_text": "Query 2",

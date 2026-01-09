@@ -327,6 +327,7 @@ def test_run_section_synthesis_full_loop(sample_section, sample_project_config, 
     mock_bundle = RetrievalBundle.create(
         query_text="test query",
         project_id="test-project-123",
+        ingestion_id="ingestion-456",
         candidate_chunks=sample_chunks,
         reranked_chunks=sample_chunks,
         embedder_model_id="test-embedder",

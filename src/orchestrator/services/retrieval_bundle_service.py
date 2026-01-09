@@ -38,13 +38,16 @@ class RetrievalBundleService:
         
         coll = self.db.collection(RETRIEVAL_BUNDLES_COLLECTION)
         
-        # Indexes for efficient queries
+        # Indexes for efficient queries (keyed by: project_id, ingestion_id, section_id, query_id)
         try:
             coll.ensure_persistent_index(["bundle_id"], unique=True)
             coll.ensure_persistent_index(["project_id"])
+            coll.ensure_persistent_index(["ingestion_id"])
             coll.ensure_persistent_index(["section_id"])
             coll.ensure_persistent_index(["query_id"])
             # Composite indexes for common queries
+            coll.ensure_persistent_index(["project_id", "ingestion_id"])
+            coll.ensure_persistent_index(["project_id", "ingestion_id", "section_id"])
             coll.ensure_persistent_index(["project_id", "section_id"])
             coll.ensure_persistent_index(["project_id", "created_at"])
         except ArangoError:

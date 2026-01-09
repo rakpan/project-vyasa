@@ -17,6 +17,8 @@ from src.orchestrator.services.section_synthesis_service import SectionSynthesis
 from src.shared.schema import ManuscriptBlock
 from src.orchestrator.schemas.analytical_notes import AnalyticalNote, NoteState
 
+TEST_INGESTION_ID = "test-ingestion-123"
+
 
 @pytest.fixture
 def mock_db():
@@ -74,6 +76,7 @@ def sample_retrieval_bundle():
     bundle = RetrievalBundle.create(
         query_text="Test query",
         project_id="test-project-123",
+        ingestion_id=TEST_INGESTION_ID,
         candidate_chunks=candidate_chunks,
         reranked_chunks=reranked_chunks,
         embedder_model_id="nvidia/nv-embedqa-e5-v5",

@@ -21,10 +21,11 @@ class RetrievalBundle(BaseModel):
     Stored per query/section for reproducibility and audit.
     """
     
-    # Identifiers
+    # Identifiers (keyed by: project_id, ingestion_id, section_id, query_id)
     bundle_id: str = Field(..., description="Unique bundle identifier (UUID)")
     query_id: Optional[str] = Field(None, description="Query identifier (if part of a query sequence)")
     project_id: str = Field(..., description="Project identifier")
+    ingestion_id: str = Field(..., description="Ingestion identifier (required for evidence scoping)")
     section_id: Optional[str] = Field(None, description="Blueprint section ID (if applicable)")
     
     # Query metadata
@@ -67,6 +68,7 @@ class RetrievalBundle(BaseModel):
         cls,
         query_text: str,
         project_id: str,
+        ingestion_id: str,
         candidate_chunks: List[Dict[str, Any]],
         reranked_chunks: List[Dict[str, Any]],
         embedder_model_id: str,
@@ -94,6 +96,7 @@ class RetrievalBundle(BaseModel):
             bundle_id=bundle_id,
             query_id=query_id,
             project_id=project_id,
+            ingestion_id=ingestion_id,
             section_id=section_id,
             query_text=query_text,
             query_source=query_source,

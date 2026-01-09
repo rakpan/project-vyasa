@@ -61,16 +61,18 @@ def _normalize_domain(domain: str) -> str:
     Returns:
         Normalized domain (lowercase, no www., no protocol, no path)
     """
-    # Prepend scheme if missing so urlparse can extract hostname
     candidate = domain.strip()
     if not candidate:
         return ""
+    # Ensure urlparse treats the input as a URL with a netloc
     if "://" not in candidate:
-        candidate = f"//{candidate}"
+        candidate = f"http://{candidate}"
     parsed = urlparse(candidate)
-    host = (parsed.hostname or "").lower()
+    host = (parsed.hostname or "").lower().rstrip(".")
     if host.startswith("www."):
         host = host[4:]
+    if ".." in host:
+        return ""
     # Allow only hostname characters (letters, digits, dots, hyphens)
     if not re.fullmatch(r"[a-z0-9.-]+", host):
         return ""

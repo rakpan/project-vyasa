@@ -82,11 +82,11 @@ def get_blueprint(project_id: str):
         
         return jsonify(blueprint.model_dump()), 200
     
-    except ValueError as e:
-        return jsonify({"error": f"Invalid version: {e}"}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid version"}), 400
     except Exception as e:
         logger.error(f"Failed to get blueprint: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to get blueprint"}), 500
 
 
 @blueprint_bp.route("/projects/<project_id>/blueprint", methods=["POST"])
@@ -173,11 +173,11 @@ def save_blueprint(project_id: str):
     
     except ValidationError as e:
         return jsonify({"error": "Validation failed", "details": e.errors()}), 400
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid blueprint payload"}), 400
     except Exception as e:
         logger.error(f"Failed to save blueprint: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to save blueprint"}), 500
 
 
 @blueprint_bp.route("/projects/<project_id>/sections/<section_id>/run", methods=["POST"])
@@ -223,6 +223,22 @@ def run_section(project_id: str, section_id: str):
         if not section:
             return jsonify({"error": f"Section {section_id} not found in blueprint"}), 404
         
+        # Check for duplicate/active runs (prevent duplicate runs)
+        idempotency_key = f"section_run_{project_id}_{section_id}_{blueprint.version}"
+        from ..job_store import get_job_by_idempotency_key
+        existing_job = get_job_by_idempotency_key(idempotency_key)
+        
+        if existing_job:
+            existing_status = existing_job.get("status")
+            # If job is still running or queued, return existing job info
+            if existing_status in ("RUNNING", "QUEUED", "PROCESSING"):
+                return jsonify({
+                    "error": "Section run already in progress",
+                    "job_id": existing_job.get("job_id"),
+                    "status": existing_status,
+                    "message": "A section run for this section is already in progress. Please wait for it to complete.",
+                }), 409  # Conflict status code
+        
         # Create job record for section synthesis
         initial_state = {
             "project_id": project_id,
@@ -234,7 +250,7 @@ def run_section(project_id: str, section_id: str):
         
         job_id = create_job_record(
             initial_state=initial_state,
-            idempotency_key=f"section_run_{project_id}_{section_id}_{blueprint.version}",
+            idempotency_key=idempotency_key,
         )
         
         logger.info(
@@ -317,9 +333,8 @@ def run_section(project_id: str, section_id: str):
             }), 200
             
         except SectionSynthesisError as e:
-            error_message = str(e)
             logger.error(
-                f"Section synthesis failed: {error_message}",
+                f"Section synthesis failed: {e}",
                 extra={
                     "payload": {
                         "job_id": job_id,
@@ -334,7 +349,7 @@ def run_section(project_id: str, section_id: str):
             try:
                 update_job_record(job_id, {
                     "status": JobStatus.FAILED.value,
-                    "error": error_message,
+                    "error": "Section synthesis failed",
                     "progress": 0.0,
                     "message": "Section synthesis failed",
                 })
@@ -348,13 +363,12 @@ def run_section(project_id: str, section_id: str):
             return jsonify({
                 "job_id": job_id,
                 "status": JobStatus.FAILED.value,
-                "error": error_message,
+                "error": "Section synthesis failed",
             }), 500
         except Exception as e:
             # Unexpected error (not SectionSynthesisError)
-            error_message = str(e)
             logger.error(
-                f"Unexpected error during section synthesis: {error_message}",
+                f"Unexpected error during section synthesis: {e}",
                 extra={
                     "payload": {
                         "job_id": job_id,
@@ -369,7 +383,7 @@ def run_section(project_id: str, section_id: str):
             try:
                 update_job_record(job_id, {
                     "status": JobStatus.FAILED.value,
-                    "error": f"Unexpected error: {error_message}",
+                    "error": "Unexpected error during section synthesis",
                     "progress": 0.0,
                     "message": "Section synthesis failed with unexpected error",
                 })
@@ -383,12 +397,12 @@ def run_section(project_id: str, section_id: str):
             return jsonify({
                 "job_id": job_id,
                 "status": JobStatus.FAILED.value,
-                "error": f"Unexpected error: {error_message}",
+                "error": "Unexpected error during section synthesis",
             }), 500
     
     except Exception as e:
         logger.error(f"Failed to create section synthesis job: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to create section synthesis job"}), 500
 
 
 @blueprint_bp.route("/projects/<project_id>/sections/<section_id>/status", methods=["GET"])
@@ -420,26 +434,36 @@ def get_section_status(project_id: str, section_id: str):
         status = job_record.get("status")
         progress = job_record.get("progress", 0.0)
         current_step = job_record.get("current_step")
+        tier = job_record.get("tier")  # Tier from job record (set by update_progress)
         
         # Map current_step to stage
         stage_map = {
-            "query_building": "query",
+            "query_building": "query_building",
             "retrieval": "retrieval",
             "rerank": "rerank",
-            "packet_a": "packet_a",
+            "packet_a": "evidence_pack",  # Map to evidence_pack for consistency
             "packet_b": "packet_b",
+            "cartographer_pass2": "cartographer_pass2",
+            "critique": "critic_verify",  # Map to critic_verify for consistency
             "synthesis": "synthesis",
-            "critique": "critique",
             "persist": "persist",
             "complete": "complete",
         }
         # Return None for unmapped stages (not "unknown")
         stage = stage_map.get(current_step) if current_step else None
         
+        # If tier not in job record, infer from stage (fallback)
+        if not tier and current_step:
+            from ..state import ExecutionTier
+            from ..section_synthesis.section_orchestrator import STAGE_TIER_MAP
+            tier_obj = STAGE_TIER_MAP.get(current_step)
+            tier = tier_obj.value if tier_obj else None
+        
         result = {
             "job_id": job_id,
             "status": status,
             "stage": stage,
+            "tier": tier,  # Tier A or Tier B (or None for terminal states)
             "current_step": current_step,  # Include raw current_step for debugging
             "progress_percent": round(progress * 100, 1) if progress is not None else None,
             "progress": progress,
@@ -454,7 +478,7 @@ def get_section_status(project_id: str, section_id: str):
     
     except Exception as e:
         logger.error(f"Failed to get section status: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to get section status"}), 500
 
 
 @blueprint_bp.route("/projects/<project_id>/manuscript/blocks", methods=["GET"])
@@ -491,4 +515,4 @@ def list_manuscript_blocks(project_id: str):
     
     except Exception as e:
         logger.error(f"Failed to list manuscript blocks: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to list manuscript blocks"}), 500

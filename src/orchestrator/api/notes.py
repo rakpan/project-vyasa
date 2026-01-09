@@ -98,7 +98,7 @@ def list_notes(project_id: str):
     
     except Exception as e:
         logger.error(f"Failed to list notes: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to list notes"}), 500
 
 
 @notes_bp.route("/projects/<project_id>/notes", methods=["POST"])
@@ -164,7 +164,7 @@ def create_note(project_id: str):
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Failed to create note: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to create note"}), 500
 
 
 @notes_bp.route("/notes/<note_id>", methods=["GET"])
@@ -187,7 +187,7 @@ def get_note(note_id: str):
     
     except Exception as e:
         logger.error(f"Failed to get note: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to get note"}), 500
 
 
 @notes_bp.route("/notes/<note_id>", methods=["PATCH"])
@@ -241,7 +241,7 @@ def update_note(note_id: str):
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Failed to update note: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to update note"}), 500
 
 
 @notes_bp.route("/notes/<note_id>", methods=["DELETE"])
@@ -264,4 +264,4 @@ def delete_note(note_id: str):
     
     except Exception as e:
         logger.error(f"Failed to delete note: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to delete note"}), 500

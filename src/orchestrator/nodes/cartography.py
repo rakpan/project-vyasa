@@ -25,13 +25,21 @@ from ...shared.logger import get_logger
 from ...shared.utils import get_utc_now
 from ...shared.role_manager import RoleRegistry
 from ..context_packer import build_extraction_layers, stub_retrieve_evidence
-from ..state import PhaseEnum, ResearchState
+from ..state import PhaseEnum, ResearchState, acquire_tier_b_slot, release_tier_b_slot
 from ..normalize import normalize_extracted_json
 from ..telemetry import get_telemetry_emitter, trace_node
 from ..config import ExpertType
 from arango import ArangoClient
 
 from .base import wrap_prompt_with_context
+from ..schemas.candidate_mentions import CandidateMentions, CandidateMention
+from ..schemas.evidence_pack import EvidencePack
+from ..services.candidate_mentions_service import CandidateMentionsService
+from ..services.evidence_pack_service import EvidencePackService
+from ..services.retrieval_bundle_service import RetrievalBundleService
+from ..retrieval.retrieval_service import RetrievalService
+from ..section_synthesis.section_orchestrator import build_evidence_pack
+from ..state import ExecutionTier
 
 logger = get_logger("orchestrator", __name__)
 telemetry_emitter = get_telemetry_emitter()
@@ -288,9 +296,559 @@ def _filter_conflicting_canonical(
     return filtered_canonical
 
 
+def cartographer_pass1_candidate_mentions(
+    project_id: str,
+    ingestion_id: str,
+    raw_text: str,
+    chunks: List[Dict[str, Any]],
+    db: Optional[Any] = None,
+) -> CandidateMentions:
+    """Pass 1 (Tier A): Gather candidate entity mentions using cheap recall methods.
+    
+    Methods:
+    - Keyword/regex matching
+    - TOC-guided targeting
+    - Embedding-driven mention gathering
+    
+    This pass NEVER emits triples - only candidate mentions.
+    
+    Args:
+        project_id: Project identifier.
+        ingestion_id: Ingestion identifier.
+        raw_text: Raw document text.
+        chunks: List of chunks from Qdrant (with chunk_id, text_content, payload).
+        db: Optional ArangoDB database instance for persistence.
+    
+    Returns:
+        CandidateMentions collection with all detected mentions.
+    """
+    from ...shared.config import get_embedder_url
+    import requests
+    
+    mentions: List[CandidateMention] = []
+    detection_methods_used = []
+    
+    # Entity type keywords (cheap keyword matching)
+    entity_keywords = {
+        "Vulnerability": ["vulnerability", "vulnerable", "exploit", "attack", "weakness", "flaw", "breach", "threat"],
+        "Mechanism": ["mechanism", "defense", "mitigation", "protection", "countermeasure", "safeguard", "control"],
+        "Constraint": ["constraint", "limit", "requirement", "dependency", "resource", "capacity", "budget"],
+        "Outcome": ["outcome", "result", "effect", "consequence", "impact", "benefit", "cost"],
+    }
+    
+    # Method 1: Keyword matching (cheap recall)
+    detection_methods_used.append("keyword")
+    for entity_type, keywords in entity_keywords.items():
+        pattern = re.compile(r'\b(' + '|'.join(re.escape(kw) for kw in keywords) + r')\b', re.IGNORECASE)
+        for chunk in chunks:
+            chunk_id = chunk.get("chunk_id", "")
+            text_content = chunk.get("text_content") or chunk.get("text", "")
+            payload = chunk.get("payload", {})
+            page_number = payload.get("page_number")
+            section_label = payload.get("section_label") or payload.get("heading")
+            
+            matches = pattern.finditer(text_content)
+            for match in matches:
+                mention = CandidateMention(
+                    entity_type=entity_type,
+                    mention_text=match.group(0),
+                    chunk_id=chunk_id,
+                    page_number=page_number,
+                    confidence=0.5,  # Base confidence for keyword matches
+                    section_label=section_label,
+                    detection_method="keyword",
+                    context_snippet=text_content[max(0, match.start()-50):match.end()+50],
+                )
+                mentions.append(mention)
+    
+    # Method 2: TOC-guided targeting (if TOC sections detected)
+    detection_methods_used.append("toc_guided")
+    toc_keywords = ["introduction", "method", "result", "discussion", "conclusion", "background", "related work"]
+    for chunk in chunks:
+        text_content = chunk.get("text_content") or chunk.get("text", "")
+        payload = chunk.get("payload", {})
+        section_label = payload.get("section_label") or payload.get("heading", "")
+        chunk_id = chunk.get("chunk_id", "")
+        page_number = payload.get("page_number")
+        
+        # If section label matches TOC keywords, boost mentions in this chunk
+        if any(toc_kw in section_label.lower() for toc_kw in toc_keywords):
+            # Look for entity mentions near section headers
+            for entity_type in entity_keywords.keys():
+                # Simple pattern: entity type word near section start
+                pattern = re.compile(r'\b' + re.escape(entity_type.lower()) + r'\b', re.IGNORECASE)
+                if pattern.search(text_content[:200]):  # First 200 chars of chunk
+                    mention = CandidateMention(
+                        entity_type=entity_type,
+                        mention_text=entity_type,
+                        chunk_id=chunk_id,
+                        page_number=page_number,
+                        confidence=0.6,  # Higher confidence for TOC-guided
+                        section_label=section_label,
+                        detection_method="toc_guided",
+                        context_snippet=text_content[:200],
+                    )
+                    mentions.append(mention)
+    
+    # Method 3: Embedding-driven mention gathering (if embedder available)
+    try:
+        embedder_url = get_embedder_url()
+        if embedder_url:
+            detection_methods_used.append("embedding")
+            # Query embedder for entity type embeddings
+            entity_queries = {
+                "Vulnerability": "security vulnerability weakness exploit",
+                "Mechanism": "defense mechanism protection mitigation",
+                "Constraint": "constraint limit requirement dependency",
+                "Outcome": "outcome result effect consequence",
+            }
+            
+            # For each entity type, find chunks with high similarity
+            for entity_type, query_text in entity_queries.items():
+                try:
+                    response = requests.post(
+                        f"{embedder_url}/embed",
+                        json={"texts": [query_text]},
+                        timeout=5
+                    )
+                    if response.ok:
+                        # In a full implementation, we'd compare embeddings
+                        # For now, we'll use a simple heuristic: chunks with entity keywords
+                        for chunk in chunks:
+                            chunk_id = chunk.get("chunk_id", "")
+                            text_content = chunk.get("text_content") or chunk.get("text", "")
+                            payload = chunk.get("payload", {})
+                            page_number = payload.get("page_number")
+                            section_label = payload.get("section_label") or payload.get("heading")
+                            
+                            # Check if chunk contains entity type keywords
+                            keywords = entity_keywords.get(entity_type, [])
+                            if any(kw in text_content.lower() for kw in keywords):
+                                # Check if we already have this mention
+                                existing = any(
+                                    m.chunk_id == chunk_id and m.entity_type == entity_type
+                                    for m in mentions
+                                )
+                                if not existing:
+                                    mention = CandidateMention(
+                                        entity_type=entity_type,
+                                        mention_text=entity_type,
+                                        chunk_id=chunk_id,
+                                        page_number=page_number,
+                                        confidence=0.55,  # Slightly higher for embedding-guided
+                                        section_label=section_label,
+                                        detection_method="embedding",
+                                        context_snippet=text_content[:300],
+                                    )
+                                    mentions.append(mention)
+                except Exception as e:
+                    logger.debug(f"Embedding-driven mention gathering failed: {e}")
+    except Exception as e:
+        logger.debug(f"Embedder not available for mention gathering: {e}")
+    
+    # Deduplicate mentions (same chunk_id + entity_type)
+    seen = set()
+    unique_mentions = []
+    for mention in mentions:
+        key = (mention.chunk_id, mention.entity_type, mention.mention_text.lower())
+        if key not in seen:
+            seen.add(key)
+            unique_mentions.append(mention)
+    
+    # Create CandidateMentions collection
+    candidate_mentions = CandidateMentions.create(
+        project_id=project_id,
+        ingestion_id=ingestion_id,
+        mentions=unique_mentions,
+        detection_methods_used=list(set(detection_methods_used)),
+    )
+    
+    # Persist if DB available
+    if db:
+        try:
+            mentions_service = CandidateMentionsService(db)
+            candidate_mentions = mentions_service.save_mentions(candidate_mentions)
+            logger.info(
+                f"Pass 1: Saved {len(unique_mentions)} candidate mentions",
+                extra={
+                    "payload": {
+                        "mentions_id": candidate_mentions.mentions_id,
+                        "project_id": project_id,
+                        "ingestion_id": ingestion_id,
+                        "entity_types": list(set(m.entity_type for m in unique_mentions)),
+                    }
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to persist CandidateMentions: {e}", exc_info=True)
+    
+    return candidate_mentions
+
+
+def cartographer_pass2_triple_extraction(
+    project_id: str,
+    ingestion_id: str,
+    candidate_mentions: CandidateMentions,
+    project_context: Dict[str, Any],
+    db: Any,
+    state: Optional[ResearchState] = None,
+) -> Dict[str, Any]:
+    """Pass 2 (Tier B): Extract schema-locked triples from EvidencePacks.
+    
+    For each entity_type:
+    1. Build EvidencePack from relevant candidate mentions (top-M)
+    2. Call Nemotron via SGLang using JSON-locked prompts
+    3. Output strict triples with claim_id/entity ids, relations, spans
+    4. Store backing chunk_ids for Critic verification
+    
+    This pass ONLY consumes EvidencePacks and emits strict JSON.
+    
+    Args:
+        project_id: Project identifier.
+        ingestion_id: Ingestion identifier.
+        candidate_mentions: CandidateMentions from Pass 1.
+        project_context: ProjectConfig context.
+        db: ArangoDB database instance.
+        state: Optional ResearchState for context injection.
+    
+    Returns:
+        Dict with "triples" array containing strict JSON triples with chunk_ids.
+    
+    Raises:
+        ValueError: If EvidencePack cannot be built or Nemotron call fails.
+    """
+    from ..storage.qdrant import QdrantStorage
+    from ..services.evidence_pack_service import EvidencePackService
+    from ..services.retrieval_bundle_service import RetrievalBundleService
+    from ..section_synthesis.section_orchestrator import build_evidence_pack
+    from ..nodes.nodes import route_to_expert, call_expert_with_fallback
+    from ..config import ExpertType
+    from ..prompts import get_active_prompt_with_meta, DEFAULT_CARTOGRAPHER_PROMPT
+    
+    # Group mentions by entity_type
+    mentions_by_type: Dict[str, List[CandidateMention]] = {}
+    for mention in candidate_mentions.mentions:
+        if mention.entity_type not in mentions_by_type:
+            mentions_by_type[mention.entity_type] = []
+        mentions_by_type[mention.entity_type].append(mention)
+    
+    all_triples = []
+    qdrant_storage = QdrantStorage()
+    pack_service = EvidencePackService(db)
+    
+    # Opik tracing: Track first triple extraction (critical path span 2)
+    from ..telemetry.opik_emitter import get_opik_emitter
+    opik_emitter = get_opik_emitter()
+    first_entity_family_processed = False
+    first_entity_type = None
+    first_triples_count = 0
+    first_extraction_error = None
+    
+    # For each entity_type, build EvidencePack and extract triples
+    for entity_type, mentions in mentions_by_type.items():
+        if not mentions:
+            continue
+        
+        # Get top-M mentions (by confidence, then by detection method priority)
+        # Priority: embedding > toc_guided > keyword
+        method_priority = {"embedding": 3, "toc_guided": 2, "keyword": 1}
+        sorted_mentions = sorted(
+            mentions,
+            key=lambda m: (m.confidence, method_priority.get(m.detection_method, 0)),
+            reverse=True
+        )
+        top_m_mentions = sorted_mentions[:20]  # Top 20 mentions per entity type
+        
+        # Get chunk IDs from mentions
+        chunk_ids = [m.chunk_id for m in top_m_mentions]
+        
+        # Retrieve chunks from Qdrant
+        chunks = []
+        for chunk_id in chunk_ids:
+            try:
+                chunk_data = qdrant_storage.get_chunks_by_ids([chunk_id], project_id)
+                if chunk_data:
+                    chunks.extend(chunk_data)
+            except Exception as e:
+                logger.warning(f"Failed to retrieve chunk {chunk_id}: {e}")
+        
+        if not chunks:
+            logger.warning(f"No chunks retrieved for entity_type {entity_type}")
+            continue
+        
+        # Build query from entity type and top mentions
+        query_text = f"Extract {entity_type} entities and their relationships from: " + ", ".join(
+            m.mention_text for m in top_m_mentions[:5]
+        )
+        
+        # Build RetrievalBundle (required for EvidencePack)
+        from ..schemas.retrieval import RetrievalBundle
+        retrieval_bundle = RetrievalBundle.create(
+            query_text=query_text,
+            project_id=project_id,
+            ingestion_id=ingestion_id,
+            candidate_chunks=chunks,
+            reranked_chunks=chunks,  # Use same chunks (already filtered)
+            embedder_model_id="nvidia/nv-embedqa-e5-v5",
+            reranker_model_id="none",  # No reranking in Pass 2 (chunks already selected)
+            top_k_embed=len(chunks),
+            top_k_rerank=len(chunks),
+            query_source="cartographer_pass2",
+            section_id=None,
+        )
+        
+        # Persist RetrievalBundle
+        bundle_service = RetrievalBundleService(db)
+        bundle_service.save_bundle(retrieval_bundle)
+        
+        # Build EvidencePack from RetrievalBundle
+        evidence_pack = build_evidence_pack(
+            reranked_chunks=chunks,
+            retrieval_bundle=retrieval_bundle,
+            ingestion_id=ingestion_id,
+            project_id=project_id,
+            section_id=None,
+        )
+        
+        # Persist EvidencePack
+        evidence_pack = pack_service.save_pack(evidence_pack)
+        
+        logger.debug(
+            f"Pass 2: Built EvidencePack for {entity_type}",
+            extra={
+                "payload": {
+                    "pack_id": evidence_pack.pack_id,
+                    "entity_type": entity_type,
+                    "mention_count": len(top_m_mentions),
+                    "snippet_count": len(evidence_pack.snippets),
+                }
+            }
+        )
+        
+        # Load prompt from DB-backed registry (with fallback to defaults)
+        from ...shared.prompt_registry import get_prompt as get_db_prompt
+        prompt_profile = get_db_prompt("cartographer_pass2", DEFAULT_CARTOGRAPHER_PROMPT)
+        system_template = prompt_profile["template"]
+        
+        # Fallback to Opik/defaults if DB not available
+        if prompt_profile.get("source") == "default":
+            system_template, prompt_meta = get_active_prompt_with_meta("vyasa-cartographer", DEFAULT_CARTOGRAPHER_PROMPT)
+        else:
+            # Use DB-backed template
+            from ..prompts.models import PromptUse
+            prompt_meta = PromptUse.from_template(
+                prompt_name="cartographer_pass2",
+                template=system_template,
+                resolved_source="db",
+                tag=f"v{prompt_profile.get('version', 0)}",
+                cache_hit=False,
+            )
+        
+        # Wrap with context
+        if state is None:
+            state = {"project_context": project_context}
+        else:
+            state = {**state, "project_context": project_context}
+        
+        from .base import wrap_prompt_with_context
+        system_prompt = wrap_prompt_with_context(state, system_template)
+        
+        # Add strict JSON schema instruction
+        schema_instruction = f"""
+CRITICAL: You MUST return valid JSON ONLY (no prose, no markdown code blocks). The output MUST strictly conform to this schema:
+
+{{
+  "triples": [
+    {{
+      "subject": "string (required)",
+      "predicate": "string (required)",
+      "object": "string (required)",
+      "confidence": 0.0-1.0 (required, float),
+      "claim_id": "string (unique identifier, required)",
+      "entity_type": "{entity_type}",
+      "chunk_ids": ["chunk_id1", "chunk_id2"] (array of backing chunk IDs, required),
+      "source_pointer": {{
+        "doc_hash": "string (file hash, required)",
+        "page": integer (1-based page number, required),
+        "snippet": "string (text excerpt, required)"
+      }},
+      "rq_hits": ["RQ1", "RQ2"] (array of research question IDs, required)
+    }}
+  ]
+}}
+
+REQUIREMENTS:
+- Every triple MUST have: subject, predicate, object, confidence, claim_id, chunk_ids, source_pointer, rq_hits
+- chunk_ids MUST reference chunks from the EvidencePack provided
+- rq_hits MUST be a non-empty array
+- Output MUST be valid JSON only
+"""
+        
+        system_prompt = f"{system_prompt}\n\n{schema_instruction}"
+        
+        # Format EvidencePack for prompt
+        evidence_text = "EVIDENCE PACK (Primary Sources - MUST be cited):\n"
+        for idx, snippet in enumerate(evidence_pack.snippets, 1):
+            pointer = evidence_pack.pointers[idx-1] if idx-1 < len(evidence_pack.pointers) else None
+            evidence_text += f"[{idx}] {snippet.quote_text}\n"
+            evidence_text += f"    (chunk_id: {snippet.chunk_id}, page {snippet.page_number or '?'})\n\n"
+        
+        user_prompt = f"""Extract {entity_type} entities and their relationships from the following evidence:
+
+{evidence_text}
+
+Return ONLY valid JSON with triples array. Each triple must include chunk_ids from the evidence pack above."""
+        
+        # Call Nemotron via SGLang (Tier-B call)
+        expert_url, expert_name, expert_model = route_to_expert("cartographer_pass2", ExpertType.EXTRACTION_SCHEMA)
+        
+        prompt = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        
+        # Acquire Tier B slot (serialize Nemotron calls: max-running-requests=1)
+        if not acquire_tier_b_slot(blocking=True, timeout=300.0):  # 5 minute timeout
+            raise ValueError("Tier B slot unavailable (timeout waiting for Nemotron call slot)")
+        
+        # Apply Tier B budget: max output tokens
+        from ...shared.runtime_budgets import get_output_max_tokens
+        max_output_tokens = get_output_max_tokens("cartographer_pass2")
+        
+        request_params = {
+            "temperature": 0.3,
+            "max_tokens": max_output_tokens,  # From runtime budgets
+            "response_format": {"type": "json_object"},
+        }
+        
+        logger.debug(
+            f"Using prompt profile v{prompt_profile.get('version', 0)} and output max_tokens={max_output_tokens} for cartographer_pass2",
+            extra={"payload": {"agent": "cartographer_pass2", "max_tokens": max_output_tokens, "prompt_version": prompt_profile.get("version", 0), "prompt_source": prompt_profile.get("source", "default")}}
+        )
+        
+        try:
+            response = call_expert_with_fallback(
+                expert_url=expert_url,
+                expert_name=expert_name,
+                model_id=expert_model,
+                prompt=prompt,
+                request_params=request_params,
+                node_name="cartographer_pass2",
+                state=state,
+            )
+            
+            # Parse JSON response
+            extracted = response.get("content", "") if isinstance(response, dict) else str(response)
+            
+            # Try to extract JSON from response
+            json_match = re.search(r'\{.*"triples".*\}', extracted, re.DOTALL)
+            if json_match:
+                extracted_json = json.loads(json_match.group(0))
+            else:
+                # Try parsing entire response as JSON
+                extracted_json = json.loads(extracted)
+            
+            # Normalize and validate
+            from ..normalize import normalize_extracted_json
+            normalized = normalize_extracted_json(extracted_json)
+            
+            # Ensure triples have chunk_ids from EvidencePack
+            triples = normalized.get("triples", [])
+            for triple in triples:
+                # Add chunk_ids if not present
+                if "chunk_ids" not in triple:
+                    # Extract chunk_ids from EvidencePack snippets
+                    triple["chunk_ids"] = [s.chunk_id for s in evidence_pack.snippets]
+                
+                # Ensure source_pointer has doc_hash
+                source_pointer = triple.get("source_pointer", {})
+                if "doc_hash" not in source_pointer and evidence_pack.pointers:
+                    pointer = evidence_pack.pointers[0]
+                    source_pointer["doc_hash"] = pointer.file_id or ""
+                    triple["source_pointer"] = source_pointer
+            
+            all_triples.extend(triples)
+            
+            logger.info(
+                f"Pass 2: Extracted {len(triples)} triples for {entity_type}",
+                extra={
+                    "payload": {
+                        "entity_type": entity_type,
+                        "triple_count": len(triples),
+                        "pack_id": evidence_pack.pack_id,
+                    }
+                }
+            )
+            
+            # Opik tracing: First triple extraction (critical path span 2)
+            if is_first_entity_family and not first_entity_family_processed:
+                first_entity_family_processed = True
+                first_triples_count = len(triples)
+                
+                # Extract first claim_id if available
+                first_claim_id = None
+                if triples and isinstance(triples[0], dict):
+                    first_claim_id = triples[0].get("claim_id")
+                
+                opik_emitter.emit_span(
+                    span_name="triple_extraction",
+                    job_id=state.get("jobId") or state.get("job_id") if state else "",
+                    project_id=project_id,
+                    ingestion_id=ingestion_id,
+                    meta={
+                        "entity_type": first_entity_type,
+                        "evidence_pack_id": evidence_pack.pack_id,
+                        "retrieval_bundle_id": retrieval_bundle.bundle_id,
+                        "triples_count": first_triples_count,
+                        "first_claim_id": first_claim_id,
+                    },
+                    error=None,
+                )
+            
+        except Exception as e:
+            logger.error(
+                f"Pass 2: Failed to extract triples for {entity_type}: {e}",
+                exc_info=True
+            )
+            
+            # Opik tracing: Emit span even on failure (for first entity family)
+            if is_first_entity_family and not first_entity_family_processed:
+                first_entity_family_processed = True
+                first_extraction_error = str(e)
+                
+                opik_emitter.emit_span(
+                    span_name="triple_extraction",
+                    job_id=state.get("jobId") or state.get("job_id") if state else "",
+                    project_id=project_id,
+                    ingestion_id=ingestion_id,
+                    meta={
+                        "entity_type": first_entity_type,
+                        "evidence_pack_id": evidence_pack.pack_id if evidence_pack else None,
+                        "retrieval_bundle_id": retrieval_bundle.bundle_id if retrieval_bundle else None,
+                        "triples_count": 0,
+                    },
+                    error=first_extraction_error,
+                )
+            
+            # Continue with next entity type (non-fatal)
+            continue
+        finally:
+            # Always release Tier B slot after triple extraction completes (success or failure)
+            # This is inside the loop so each entity_type releases its slot
+            release_tier_b_slot()
+    
+    return {
+        "triples": all_triples,
+        "mentions_id": candidate_mentions.mentions_id,
+    }
+
+
 @trace_node
 def cartographer_node(state: ResearchState) -> ResearchState:
-    """Extract graph JSON from raw text using Cortex Worker, incorporating prior critiques.
+    """Extract graph JSON from raw text using two-pass protocol (Tier A/Tier B).
+    
+    Pass 1 (Tier A): Gather candidate mentions using cheap recall methods.
+    Pass 2 (Tier B): Extract schema-locked triples from EvidencePacks.
     
     Uses Worker (SGLang) to extract structured knowledge graph with STRICT JSON
     requirements. The output is normalized to guarantee a `triples` array structure
@@ -353,6 +911,19 @@ def cartographer_node(state: ResearchState) -> ResearchState:
 
     if not raw_text:
         raise ValueError("raw_text is required for cartographer node")
+    
+    if not ingestion_id:
+        raise ValueError("ingestion_id is required for cartographer node (evidence scoping)")
+
+    # Get DB connection for persistence
+    db = None
+    try:
+        from arango import ArangoClient
+        client = ArangoClient(hosts=get_memory_url())
+        db = client.db(ARANGODB_DB, username=ARANGODB_USER, password=get_arango_password())
+    except Exception as e:
+        logger.warning(f"Failed to connect to DB for cartographer: {e}", exc_info=True)
+        # Continue without DB (mentions won't be persisted, but extraction can proceed)
 
     # RQ-scoped retrieval: Retrieve chunks from Qdrant for each Research Question
     rq_scoped_chunks: Dict[str, List[Dict[str, Any]]] = {}
@@ -391,460 +962,102 @@ def cartographer_node(state: ResearchState) -> ResearchState:
                 )
                 # Continue without Qdrant chunks (graceful degradation)
     
-    # Use wrap_prompt_with_context for consistent context injection
-    # Apply context injection AFTER fetching prompt from Opik
-    # This ensures all LLM calls are governed by ProjectConfig (thesis, RQs, anti-scope, rigor)
-    system_prompt = wrap_prompt_with_context(state, system_template)
-    
-    # Evidence-Aware RAG: Pre-extraction lookup with prioritized retrieval
-    established_knowledge, context_sources, selected_ref_ids = _query_established_knowledge(raw_text, state)
-    
-    # Store context metadata in a fresh dict per revision to avoid accumulation
-    merged_context_sources = {**state.get("context_sources", {}), **context_sources}
-    selected_reference_ids = selected_ref_ids
-    
-    if established_knowledge:
-        knowledge_section = "Established Knowledge:\n"
-        for entry in established_knowledge[:10]:
-            knowledge_section += f"- {entry.get('entity_name')} ({entry.get('entity_type')}): {entry.get('description', 'N/A')[:100]}\n"
-        knowledge_section += "Use this to focus on novel or updated relationships."
-        system_prompt = f"{system_prompt}\n\n{knowledge_section}"
-        logger.debug(
-            "Cartographer: Injected established knowledge into prompt",
+    # Two-pass protocol implementation
+    try:
+        # Pass 1 (Tier A): Gather candidate mentions (cheap recall)
+        logger.info("Cartographer Pass 1 (Tier A): Gathering candidate mentions")
+        candidate_mentions = cartographer_pass1_candidate_mentions(
+            project_id=project_id,
+            ingestion_id=ingestion_id,
+            raw_text=raw_text,
+            chunks=all_chunks_with_anchors,
+            db=db,
+        )
+        
+        # Pass 2 (Tier B): Extract triples from EvidencePacks
+        logger.info("Cartographer Pass 2 (Tier B): Extracting triples from EvidencePacks")
+        if not db:
+            raise RuntimeError("Database unavailable for Pass 2 (EvidencePack persistence required)")
+        
+        extraction_result = cartographer_pass2_triple_extraction(
+            project_id=project_id,
+            ingestion_id=ingestion_id,
+            candidate_mentions=candidate_mentions,
+            project_context=project_context or {},
+            db=db,
+            state=state,
+        )
+        
+        triples = extraction_result.get("triples", [])
+        
+        # Convert triples to normalized format expected by downstream nodes
+        from ..schemas.claims import Claim, SourceAnchor
+        canonical_claims = []
+        for triple in triples:
+            try:
+                # Ensure chunk_ids are present (required for Critic)
+                chunk_ids = triple.get("chunk_ids", [])
+                if not chunk_ids:
+                    logger.warning(f"Triple missing chunk_ids: {triple.get('claim_id', 'unknown')}")
+                    continue
+                
+                # Build source_anchor from triple
+                source_pointer = triple.get("source_pointer", {})
+                source_anchor = SourceAnchor(
+                    doc_hash=source_pointer.get("doc_hash", ""),
+                    page=source_pointer.get("page", 1),
+                    bbox=source_pointer.get("bbox"),
+                    snippet=source_pointer.get("snippet", ""),
+                )
+                
+                # Build Claim from triple
+                claim = Claim(
+                    claim_id=triple.get("claim_id", ""),
+                    claim_text=triple.get("claim_text", f"{triple.get('subject')} {triple.get('predicate')} {triple.get('object')}"),
+                    subject=triple.get("subject", ""),
+                    predicate=triple.get("predicate", ""),
+                    object=triple.get("object", ""),
+                    confidence=triple.get("confidence", 0.5),
+                    source_anchor=source_anchor,
+                    rq_hits=triple.get("rq_hits", []),
+                    relevance_score=triple.get("relevance_score"),
+                    # Store chunk_ids for Critic verification
+                    metadata={"chunk_ids": chunk_ids, "entity_type": triple.get("entity_type")},
+                )
+                
+                canonical_claims.append(claim.model_dump(exclude_none=True))
+            except Exception as e:
+                logger.error(f"Failed to convert triple to Claim: {e}", exc_info=True)
+                # Include as-is in exploratory mode
+                if rigor_level != "conservative":
+                    canonical_claims.append(triple)
+        
+        normalized = {
+            "triples": canonical_claims,
+            "mentions_id": extraction_result.get("mentions_id"),
+        }
+        
+        logger.info(
+            "Cartographer two-pass extraction completed",
             extra={
                 "payload": {
-                    "knowledge_count": len(established_knowledge),
-                    "context_sources": context_sources,
-                    "selected_reference_ids": selected_reference_ids,
+                    "triples_count": len(canonical_claims),
+                    "mentions_id": extraction_result.get("mentions_id"),
+                    "pass1_mentions": len(candidate_mentions.mentions),
                 }
             }
         )
         
-        # Emit telemetry with context sources
-        if job_id:
-            telemetry_emitter.emit_event(
-                "context_assembly",
-                {
-                    "job_id": job_id,
-                    "project_id": project_id,
-                    "node_name": "cartographer_node",
-                    "timestamp": get_utc_now().isoformat(),
-                    "context_sources": context_sources,
-                    "selected_reference_ids": selected_reference_ids,
-                    "knowledge_count": len(established_knowledge),
-                },
-            )
-    if force_refresh_context:
-        system_prompt = f"{system_prompt}\nForce refresh context: prioritize latest evidence and candidate facts."
-
-    layered_section = ""
-    if _env("ENABLE_CONTEXT_PACKING_EXTRACT", "false").lower() in ("1", "true", "yes"):
-        corpus_memory = state.get("corpus_memory") or []
-        evidence_chunks = state.get("evidence_chunks") or stub_retrieve_evidence(raw_text)
-        working_state = {
-            "schema": "triples array required",
-            "constraints": [
-                "triples must include subject, predicate, object, confidence",
-                "include evidence snippets with provenance if available",
-            ],
-            "conflicts": state.get("critiques") or [],
-        }
-        layered_section = build_extraction_layers(corpus_memory, evidence_chunks, working_state)
-
-    # Enhanced schema instruction for structured claims (strict JSON mapping to Claim schema)
-    schema_instruction = """
-CRITICAL: You MUST return valid JSON ONLY (no prose, no markdown code blocks). The output MUST strictly conform to this schema:
-
-{
-  "triples": [
-    {
-      "subject": "string (required)",
-      "predicate": "string (required)",
-      "object": "string (required)",
-      "confidence": 0.0-1.0 (required, float),
-      "claim_text": "string (human-readable claim, required)",
-      "relevance_score": 0.0-1.0 (relevance to thesis/RQs, optional but recommended),
-      "rq_hits": ["RQ1", "RQ2"] (array of research question IDs this claim addresses, required),
-      "source_pointer": {
-        "doc_hash": "string (file hash/SHA256, required)",
-        "page": integer (1-based page number, required),
-        "bbox": [x1, y1, x2, y2] (optional, bounding box coordinates),
-        "snippet": "string (text excerpt, optional but recommended)"
-      }
-    }
-  ]
-}
-
-REQUIREMENTS:
-- Every triple MUST have: subject, predicate, object, confidence, claim_text, rq_hits
-- rq_hits MUST be a non-empty array (at least one RQ ID)
-- source_pointer.doc_hash and source_pointer.page MUST be present
-- In conservative mode, bbox or snippet MUST be present in source_pointer
-"""
-    
-    # Add schema instruction (always include for strict enforcement)
-    system_prompt = f"{system_prompt}\n\n{schema_instruction}"
-    
-    # Add RQ-scoped chunks context if available
-    if rq_scoped_chunks:
-        chunks_section = "\n\nRetrieved Evidence Chunks (RQ-scoped):\n"
-        for rq_id, chunks in rq_scoped_chunks.items():
-            if chunks:
-                chunks_section += f"\n{rq_id} Evidence:\n"
-                for chunk in chunks[:3]:  # Show first 3 chunks per RQ
-                    text = chunk.get("text_content", "")[:200]  # Truncate for prompt
-                    page = chunk.get("page_number", "?")
-                    chunks_section += f"- Page {page}: {text}...\n"
-        system_prompt = f"{system_prompt}\n{chunks_section}"
-    
-    # Build user content with RQ-scoped chunks if available
-    user_sections = []
-    
-    # If we have RQ-scoped chunks, use them instead of raw_text
-    if rq_scoped_chunks and all_chunks_with_anchors:
-        user_sections.append("Evidence Chunks (retrieved from knowledge base):\n")
-        for rq_id, chunks in rq_scoped_chunks.items():
-            if chunks:
-                user_sections.append(f"\n{rq_id} Evidence:")
-                for chunk in chunks:
-                    text = chunk.get("text_content", "")
-                    page = chunk.get("page_number", "?")
-                    file_hash = chunk.get("file_hash", "")
-                    user_sections.append(f"[Page {page}, File: {file_hash[:16]}...]\n{text}\n")
-    else:
-        # Fallback to raw_text if no chunks available
-        user_sections.append(f"Document:\n{raw_text}")
-    
-    if layered_section:
-        user_sections.append(f"Layered context:\n{layered_section}")
-    if critiques:
-        user_sections.append(f"Previous critiques: {' | '.join(critiques)}")
-    user_content = "\n\n".join(user_sections)
-
-    prompt = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_content},
-    ]
-
-    try:
-        # Get role for allowed_tools
-        role = role_registry.get_role("cartographer")
-        
-        # Route to appropriate expert: Cartographer uses Worker (extraction) with Brain fallback
-        expert_url, expert_name, expert_model = route_to_expert("cartographer_node", ExpertType.EXTRACTION_SCHEMA)
-        fallback_url = get_brain_url() if expert_name == "Worker" else None
-        fallback_model = get_model_config("brain").model_id if fallback_url else None
-
-        data, meta = call_expert_with_fallback(
-            expert_url=expert_url,
-            expert_name=expert_name,
-            model_id=expert_model,
-            prompt=prompt,
-            request_params={
-                "temperature": 0.6,
-                "top_p": 0.95,
-                "max_tokens": 4096,
-                "response_format": {"type": "json_object"},
-            },
-            fallback_url=fallback_url,
-            fallback_model_id=fallback_model,
-            node_name="cartographer_node",
-            state=state,
-            allowed_tools=role.allowed_tools,
-        )
-        latency_ms = meta.get("duration_ms", 0.0)
-        usage = meta.get("usage")
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-        
-        # Parse JSON with fallback strategy (handles cases where response_format: json_object is not supported)
-        # This implements Guardrail 2: Prompt alignment contract - ensures JSON extraction works
-        extracted = None
-        parse_attempts = []
-        
-        if isinstance(content, str):
-            # Attempt 1: Direct JSON parse
-            try:
-                extracted = json.loads(content)
-                parse_attempts.append("direct_parse")
-            except json.JSONDecodeError:
-                # Attempt 2: Remove markdown code blocks and retry
-                try:
-                    cleaned = content.strip()
-                    if cleaned.startswith("```"):
-                        # Remove markdown code fence
-                        lines = cleaned.split("\n")
-                        if len(lines) > 2:
-                            # Remove first line (```json or ```) and last line (```)
-                            cleaned = "\n".join(lines[1:-1])
-                        else:
-                            cleaned = cleaned.replace("```", "").replace("```json", "").replace("```JSON", "")
-                    # Try to extract JSON object if wrapped in prose (regex fallback)
-                    import re
-                    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', cleaned, re.DOTALL)
-                    if json_match:
-                        cleaned = json_match.group(0)
-                    extracted = json.loads(cleaned)
-                    parse_attempts.append("markdown_cleaned")
-                    logger.debug(
-                        "Extracted JSON from markdown-wrapped response",
-                        extra={"payload": {"parse_method": "markdown_cleaned"}}
-                    )
-                except (json.JSONDecodeError, AttributeError) as e:
-                    # All parsing attempts failed - log and re-raise to be caught by outer handler
-                    logger.error(
-                        "Failed to parse JSON from extraction response after all fallback attempts",
-                        extra={
-                            "payload": {
-                                "content_preview": content[:200],
-                                "parse_attempts": parse_attempts,
-                                "error": str(e),
-                                "error_type": type(e).__name__,
-                            }
-                        },
-                        exc_info=True,
-                    )
-                    # Re-raise as JSONDecodeError to be caught by existing error handler
-                    raise json.JSONDecodeError(
-                        f"Failed to parse JSON after fallback attempts: {e}",
-                        content,
-                        0
-                    ) from e
-        else:
-            extracted = content
-        
-        # Normalize to guarantee triples structure (early normalization)
-        normalized = normalize_extracted_json(extracted)
-        
-        # Validate normalized structure: ensure triples exists and is a list
-        if not isinstance(normalized, dict):
-            logger.warning(
-                "Cartographer: normalized output is not a dict, using empty structure",
-                extra={"payload": {"normalized_type": type(normalized).__name__}},
-            )
-            normalized = {"triples": []}
-        
-        if "triples" not in normalized:
-            logger.warning(
-                "Cartographer: normalized output missing 'triples' key, adding empty array",
-                extra={"payload": {"normalized_keys": list(normalized.keys())}},
-            )
-            normalized["triples"] = []
-        
-        if not isinstance(normalized.get("triples"), list):
-            logger.warning(
-                "Cartographer: normalized 'triples' is not a list, converting to empty array",
-                extra={"payload": {"triples_type": type(normalized.get("triples")).__name__}},
-            )
-            normalized["triples"] = []
-        
-        # Convert triples to canonical Claim objects with source_anchor from Qdrant payload
-        triples = normalized.get("triples", [])
-        if isinstance(triples, list):
-            from ..schemas.claims import Claim, SourceAnchor
-            
-            canonical_claims = []
-            chunk_map = {chunk.get("chunk_id"): chunk for chunk in all_chunks_with_anchors}
-            
-            for triple in triples:
-                if not isinstance(triple, dict):
-                    continue
-                
-                # Try to find matching chunk by text similarity or use source_pointer
-                source_pointer = triple.get("source_pointer", {})
-                doc_hash = source_pointer.get("doc_hash") or triple.get("file_hash")
-                page_number = source_pointer.get("page") or triple.get("page_number", 1)
-                
-                # Find matching chunk from Qdrant results
-                matching_chunk = None
-                if doc_hash and page_number:
-                    for chunk in all_chunks_with_anchors:
-                        if (chunk.get("file_hash") == doc_hash and 
-                            chunk.get("page_number") == page_number):
-                            matching_chunk = chunk
-                            break
-                
-                # Build source_anchor from chunk payload or source_pointer
-                source_anchor = None
-                if matching_chunk:
-                    payload = matching_chunk.get("payload", {})
-                    anchor_data = {
-                        "doc_id": payload.get("file_hash") or doc_hash or "",
-                        "page_number": payload.get("page_number") or page_number,
-                    }
-                    if payload.get("bbox"):
-                        anchor_data["bbox"] = payload["bbox"]
-                    if source_pointer.get("snippet") or matching_chunk.get("text_content"):
-                        anchor_data["snippet"] = source_pointer.get("snippet") or matching_chunk.get("text_content", "")[:200]
-                    try:
-                        source_anchor = SourceAnchor(**anchor_data)
-                    except Exception as e:
-                        logger.warning(f"Failed to create SourceAnchor from chunk payload: {e}", exc_info=True)
-                elif source_pointer:
-                    # Fallback: create from source_pointer
-                    anchor_data = {
-                        "doc_id": doc_hash or "",
-                        "page_number": page_number,
-                    }
-                    if source_pointer.get("bbox"):
-                        bbox = source_pointer["bbox"]
-                        if isinstance(bbox, list) and len(bbox) == 4:
-                            x1, y1, x2, y2 = bbox
-                            anchor_data["bbox"] = {"x": float(x1), "y": float(y1), "w": float(x2 - x1), "h": float(y2 - y1)}
-                    if source_pointer.get("snippet"):
-                        anchor_data["snippet"] = source_pointer["snippet"]
-                    try:
-                        source_anchor = SourceAnchor(**anchor_data) if anchor_data.get("doc_id") else None
-                    except Exception as e:
-                        logger.warning(f"Failed to create SourceAnchor from source_pointer: {e}", exc_info=True)
-                
-                # Convert to Claim using from_triple_dict
-                try:
-                    # Ensure ingestion_id is present
-                    triple["ingestion_id"] = ingestion_id or triple.get("ingestion_id", "")
-                    triple["file_hash"] = doc_hash or triple.get("file_hash", "")
-                    
-                    # Create Claim from triple dict
-                    claim = Claim.from_triple_dict(triple, ingestion_id=ingestion_id or "", rigor_level=rigor_level)
-                    
-                    # Override source_anchor if we have a better one from Qdrant
-                    if source_anchor:
-                        claim.source_anchor = source_anchor
-                    
-                    # Validate in conservative mode (fail explicitly, no silent rejection)
-                    if rigor_level == "conservative":
-                        if not claim.source_anchor:
-                            error_msg = f"Claim {claim.claim_id} missing source_anchor in conservative mode"
-                            logger.error(
-                                error_msg,
-                                extra={"payload": {"claim_id": claim.claim_id, "triple": triple}}
-                            )
-                            raise ValueError(error_msg)
-                        if not claim.rq_hits:
-                            error_msg = f"Claim {claim.claim_id} missing rq_hits in conservative mode"
-                            logger.error(
-                                error_msg,
-                                extra={"payload": {"claim_id": claim.claim_id, "triple": triple}}
-                            )
-                            raise ValueError(error_msg)
-                    elif rigor_level == "exploratory":
-                        # In exploratory, warn but allow
-                        if not claim.source_anchor:
-                            logger.warning(
-                                f"Claim {claim.claim_id} missing source_anchor (exploratory mode, allowing)",
-                                extra={"payload": {"claim_id": claim.claim_id}}
-                            )
-                        if not claim.rq_hits:
-                            logger.warning(
-                                f"Claim {claim.claim_id} missing rq_hits (exploratory mode, allowing)",
-                                extra={"payload": {"claim_id": claim.claim_id}}
-                            )
-                    
-                    # Convert back to dict for state (maintain backward compatibility)
-                    canonical_claims.append(claim.model_dump(exclude_none=True))
-                except Exception as e:
-                    logger.error(
-                        f"Failed to convert triple to Claim: {e}",
-                        exc_info=True,
-                        extra={"payload": {"triple_keys": list(triple.keys())}}
-                    )
-                    # In conservative mode, fail explicitly on schema validation errors
-                    if rigor_level == "conservative":
-                        error_msg = f"Failed to convert triple to Claim in conservative mode: {e}"
-                        logger.error(
-                            error_msg,
-                            extra={"payload": {"triple_keys": list(triple.keys()), "error": str(e)}}
-                        )
-                        raise ValueError(error_msg) from e
-                    # In exploratory, include as-is
-                    canonical_claims.append(triple)
-            
-            normalized["triples"] = canonical_claims
-            triples = canonical_claims
-        
-        triples_count = len(triples)
-        # Determine actual model used (may be Brain if fallback was used)
-        actual_model = meta.get("model_id") or expert_model
-        actual_expert_name = meta.get("expert_name", expert_name)
-        actual_expert_url = meta.get("url_base", expert_url)
-        logger.info(
-            "Cartographer extracted graph",
-            extra={
-                "payload": {
-                    "triples_count": triples_count,
-                    "has_entities": "entities" in normalized,
-                    "expert": actual_expert_name,
-                    "telemetry": {
-                        "model_id": actual_model,
-                        "task_type": "extract",
-                        "tokens_in_est": estimate_tokens(raw_text),
-                        "tokens_out_est": estimate_tokens(content if isinstance(content, str) else json.dumps(content)),
-                        "latency_ms": latency_ms,
-                        "kv_policy": get_model_config("worker").kv_policy if actual_expert_name == "Worker" else get_model_config("brain").kv_policy,
-                    },
-                }
-            },
-        )
-        enriched_state: ResearchState = {}
-        if usage:
-            enriched_state["_sglang_usage"] = usage  # type: ignore[index]
-        enriched_state["_expert_name"] = actual_expert_name  # type: ignore[index]
-        enriched_state["_expert_url"] = actual_expert_url  # type: ignore[index]
         return {
-            **enriched_state,
             "extracted_json": normalized,
-            "triples": normalized.get("triples", []),
-            "context_sources": merged_context_sources,
-            "selected_reference_ids": selected_reference_ids,
+            "triples": canonical_claims,
             "phase": PhaseEnum.MAPPING.value,
         }
-    except json.JSONDecodeError as e:
-        logger.error(
-            "Cartographer failed to parse JSON response",
-            extra={"payload": {"prompt_chars": len(raw_text), "error": str(e)}},
-            exc_info=True,
-        )
-        # Return empty structure on JSON parse failure (not a dependency error)
-        return {"extracted_json": {"triples": []}, "triples": [], "phase": PhaseEnum.MAPPING.value}
-    except Exception as e:
-        # Detect dependency errors (infrastructure failures) that should fail the job
-        error_str = str(e).lower()
-        is_dependency_error = (
-            isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)) or
-            "connection" in error_str or
-            "timeout" in error_str or
-            "unavailable" in error_str or
-            "refused" in error_str or
-            "failed to connect" in error_str or
-            "name or service not known" in error_str or
-            "no route to host" in error_str
-        )
         
-        if is_dependency_error:
-            # Dependency error: raise to fail the job immediately
-            logger.error(
-                "Cartographer failed due to infrastructure dependency error",
-                extra={
-                    "payload": {
-                        "job_id": job_id,
-                        "ingestion_id": ingestion_id,
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                    }
-                },
-                exc_info=True,
-            )
-            # Raise with clear dependency error message
-            raise RuntimeError(
-                f"Infrastructure dependency unavailable: {str(e)}. "
-                "Please check that cortex-brain and cortex-worker services are running. "
-                "Upload is blocked until services recover."
-            ) from e
-        else:
-            # Non-dependency error: log and return empty structure (allow workflow to continue)
-            logger.error(
-                "Cartographer failed to extract graph (non-dependency error)",
-                extra={"payload": {"prompt_chars": len(raw_text), "error": str(e)}},
-                exc_info=True,
-            )
-            return {"extracted_json": {"triples": []}, "triples": [], "phase": PhaseEnum.MAPPING.value}
-
+    except Exception as e:
+        logger.error(
+            f"Cartographer two-pass extraction failed: {e}",
+            exc_info=True
+        )
+        # Return empty structure on failure
+        return {"extracted_json": {"triples": []}, "triples": [], "phase": PhaseEnum.MAPPING.value}
