@@ -102,6 +102,11 @@ from .api.ingestion import ingestion_bp
 app.register_blueprint(ingestion_bp)
 from .api.web_search import web_search_bp
 app.register_blueprint(web_search_bp)
+# Analytical Notes and Blueprint APIs
+from .api.notes import notes_bp
+from .api.blueprint import blueprint_bp
+app.register_blueprint(notes_bp)
+app.register_blueprint(blueprint_bp)
 from .api.settings import settings_bp
 app.register_blueprint(settings_bp)
 workflow_app = build_workflow()

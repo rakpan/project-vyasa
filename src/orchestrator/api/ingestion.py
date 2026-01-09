@@ -542,6 +542,205 @@ def retry_ingestion(project_id: str, ingestion_id: str):
         return jsonify({"error": "Internal server error"}), 500
 
 
+@ingestion_bp.route("/<project_id>/ingestions", methods=["GET"])
+def list_project_ingestions(project_id: str):
+    """List completed ingestions for a project.
+    
+    Query parameters:
+        status: Optional status filter (default: COMPLETED only)
+    
+    Response:
+        {
+            "ingestions": [
+                {
+                    "ingestion_id": str,
+                    "filename": str,
+                    "status": str (COMPLETED),
+                    "created_at": str,
+                    "chunk_count": int (optional),
+                    "triples_count": int (optional),
+                }
+            ]
+        }
+    """
+    try:
+        ingestion_store = _get_ingestion_store()
+        if ingestion_store is None:
+            return jsonify({"error": "Database unavailable"}), 503
+        
+        # Get status filter (default to COMPLETED only)
+        status_filter = request.args.get("status", "COMPLETED").upper()
+        
+        # Query ingestion records for this project
+        query = """
+        FOR ing IN ingestions
+        FILTER ing.project_id == @project_id
+        FILTER UPPER(ing.status) == @status_filter
+        SORT ing.created_at DESC
+        RETURN ing
+        """
+        
+        cursor = ingestion_store.db.aql.execute(
+            query,
+            bind_vars={"project_id": project_id, "status_filter": status_filter}
+        )
+        ingestion_records = list(cursor)
+        
+        # Build response with metadata
+        ingestions = []
+        for record in ingestion_records:
+            ingestion_id = record.get("ingestion_id") or record.get("_key", "")
+            job_id = record.get("job_id")
+            
+            # Get chunk count from record or Qdrant
+            chunk_count = record.get("chunk_count")
+            if chunk_count is None:
+                # Try to get from Qdrant if available
+                try:
+                    from ..storage.qdrant import QdrantStorage
+                    qdrant = QdrantStorage()
+                    chunk_count = qdrant.get_chunk_count(
+                        project_id=project_id,
+                        ingestion_id=ingestion_id
+                    )
+                except Exception:
+                    pass  # Best-effort, don't fail if unavailable
+            
+            # Get triples count from job result if available
+            triples_count = None
+            if job_id:
+                try:
+                    job = get_job(job_id)
+                    if job and job.get("result"):
+                        extracted = job.get("result", {}).get("extracted_json", {})
+                        if isinstance(extracted, dict):
+                            triples = extracted.get("triples", [])
+                            if isinstance(triples, list):
+                                triples_count = len(triples)
+                except Exception:
+                    pass  # Best-effort, don't fail if we can't get count
+            
+            ingestions.append({
+                "ingestion_id": ingestion_id,
+                "filename": record.get("filename", ""),
+                "status": status_filter,  # Normalized to uppercase
+                "created_at": record.get("created_at", ""),
+                "chunk_count": chunk_count,
+                "triples_count": triples_count,
+            })
+        
+        return jsonify({"ingestions": ingestions}), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to list project ingestions: {e}", exc_info=True)
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@ingestion_bp.route("/<project_id>/chunks", methods=["GET"])
+def get_chunks_metadata(project_id: str):
+    """Get chunk metadata by chunk IDs.
+    
+    Query parameters:
+        chunk_ids: Comma-separated list of chunk IDs (required)
+    
+    Response:
+        {
+            "chunks": [
+                {
+                    "chunk_id": str,
+                    "page_number": int,
+                    "file_hash": str,
+                    "source_filename": str (from ingestion record),
+                    "text_preview": str (first 200 chars),
+                    "ingestion_id": str,
+                    "chunk_index": int,
+                    "bbox": Optional[Dict],
+                }
+            ]
+        }
+    """
+    try:
+        chunk_ids_param = request.args.get("chunk_ids", "").strip()
+        if not chunk_ids_param:
+            return jsonify({"error": "chunk_ids query parameter is required"}), 400
+        
+        # Parse chunk IDs (comma-separated)
+        chunk_ids = [cid.strip() for cid in chunk_ids_param.split(",") if cid.strip()]
+        if not chunk_ids:
+            return jsonify({"error": "At least one chunk_id is required"}), 400
+        
+        # Limit to reasonable number (e.g., 100 chunks max per request)
+        if len(chunk_ids) > 100:
+            return jsonify({"error": "Maximum 100 chunk_ids allowed per request"}), 400
+        
+        # Get chunks from Qdrant
+        from ..storage.qdrant import QdrantStorage
+        qdrant_storage = QdrantStorage()
+        
+        chunks = qdrant_storage.get_chunks_by_ids(chunk_ids, project_id=project_id)
+        
+        # Get ingestion store to fetch filenames
+        ingestion_store = _get_ingestion_store()
+        if ingestion_store is None:
+            logger.warning("IngestionStore unavailable, returning chunks without filenames")
+        
+        # Enrich chunks with filename from ingestion records
+        enriched_chunks = []
+        file_hash_to_filename = {}  # Cache for filename lookups
+        
+        for chunk in chunks:
+            file_hash = chunk.get("file_hash")
+            ingestion_id = chunk.get("ingestion_id")
+            
+            # Get filename from ingestion record
+            source_filename = None
+            if ingestion_store and (file_hash or ingestion_id):
+                # Try to get from cache first
+                if file_hash and file_hash in file_hash_to_filename:
+                    source_filename = file_hash_to_filename[file_hash]
+                else:
+                    # Query ingestion record
+                    try:
+                        if ingestion_id:
+                            record = ingestion_store.get_ingestion(ingestion_id)
+                            if record and record.project_id == project_id:
+                                source_filename = record.filename
+                                if file_hash:
+                                    file_hash_to_filename[file_hash] = source_filename
+                        elif file_hash:
+                            # Find by file_hash
+                            records = ingestion_store.find_by_hash(file_hash, project_id=project_id)
+                            if records:
+                                source_filename = records[0].filename
+                                file_hash_to_filename[file_hash] = source_filename
+                    except Exception as e:
+                        logger.warning(f"Failed to get filename for chunk {chunk.get('chunk_id')}: {e}", exc_info=True)
+            
+            # Extract text preview (first 200 chars)
+            text_content = chunk.get("text_content", "")
+            text_preview = text_content[:200] if text_content else None
+            if text_preview and len(text_content) > 200:
+                text_preview += "..."
+            
+            enriched_chunk = {
+                "chunk_id": chunk.get("chunk_id"),
+                "page_number": chunk.get("page_number"),
+                "file_hash": file_hash,
+                "source_filename": source_filename,
+                "text_preview": text_preview,
+                "ingestion_id": ingestion_id,
+                "chunk_index": chunk.get("chunk_index"),
+                "bbox": chunk.get("bbox"),
+            }
+            enriched_chunks.append(enriched_chunk)
+        
+        return jsonify({"chunks": enriched_chunks}), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to get chunks metadata: {e}", exc_info=True)
+        return jsonify({"error": "Internal server error"}), 500
+
+
 @ingestion_bp.route("/<project_id>/ingest/<ingestion_id>", methods=["DELETE"])
 def delete_ingestion(project_id: str, ingestion_id: str):
     """Remove an ingestion record (soft delete).

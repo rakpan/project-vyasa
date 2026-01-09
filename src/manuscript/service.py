@@ -45,6 +45,8 @@ class ManuscriptService:
         try:
             blocks_col.ensure_persistent_index(["project_id", "block_id", "version"])
             blocks_col.ensure_persistent_index(["project_id", "order_index"])
+            blocks_col.ensure_persistent_index(["project_id", "section_id"])  # For section filtering
+            blocks_col.ensure_persistent_index(["section_id"])  # For cross-project queries (if needed)
         except ArangoError:
             # Indexes may already exist
             pass
@@ -172,8 +174,19 @@ class ManuscriptService:
             block.project_id = project_id
         
         # Librarian Key-Guard: Validate citations
-        if validate_citations and block.citation_keys:
-            self._validate_citations(project_id, block.citation_keys)
+        # Skip validation for section blocks that use chunk_ids instead of citation_keys
+        # (citation_keys are for BibTeX keys, chunk_ids are for chunk citations)
+        if validate_citations:
+            # If block has chunk_ids but no citation_keys, it's a section block - skip bibliography validation
+            # Section blocks use chunk_ids for citations, not BibTeX citation_keys
+            if block.chunk_ids and len(block.chunk_ids) > 0 and len(block.citation_keys) == 0:
+                logger.debug(
+                    f"Skipping citation validation for section block (uses chunk_ids, not citation_keys)",
+                    extra={"payload": {"block_id": block.block_id, "chunk_count": len(block.chunk_ids)}}
+                )
+            elif block.citation_keys:
+                # Validate BibTeX citation keys against bibliography
+                self._validate_citations(project_id, block.citation_keys)
         
         # Get next version
         version = self._get_next_version(project_id, block.block_id)

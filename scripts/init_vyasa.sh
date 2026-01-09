@@ -20,9 +20,11 @@ SECRETS_FILE="$DEPLOY_DIR/.secrets.env"
 
 usage() {
   cat <<EOF
-Usage: $0 [--bootstrap-secrets] [--configure-nvidia] [--force]
+Usage: $0 [--bootstrap-secrets] [--configure-nvidia] [--check-model-cache] [--skip-model-cache] [--force]
   --bootstrap-secrets   Generate secrets into deploy/.secrets.env (idempotent)
   --configure-nvidia     Configure NVIDIA Container Toolkit for Docker (requires sudo)
+  --check-model-cache    Verify model cache coverage and offer to preload missing models
+  --skip-model-cache     Skip model cache check during init
   --force                Overwrite deploy/.secrets.env even if it exists
   --help                 Show this help
 
@@ -36,12 +38,16 @@ EOF
 
 BOOTSTRAP=false
 CONFIGURE_NVIDIA=false
+CHECK_MODEL_CACHE=false
+SKIP_MODEL_CACHE=false
 FORCE=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --bootstrap-secrets) BOOTSTRAP=true ;;
     --configure-nvidia) CONFIGURE_NVIDIA=true ;;
+    --check-model-cache) CHECK_MODEL_CACHE=true ;;
+    --skip-model-cache) SKIP_MODEL_CACHE=true ;;
     --force) FORCE=true ;;
     --help|-h) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
@@ -195,14 +201,117 @@ configure_nvidia_runtime() {
   fi
 }
 
+load_model_env() {
+  local env_file="$DEPLOY_DIR/.env"
+  local secrets_file="$DEPLOY_DIR/.secrets.env"
+  if [ -f "$env_file" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file" 2>/dev/null || true
+    set +a
+  fi
+  if [ -f "$secrets_file" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$secrets_file" 2>/dev/null || true
+    set +a
+  fi
+}
+
+has_hf_cache() {
+  local model_id="$1"
+  local cache_dir="/raid/vyasa/hf_cache"
+  local safe="${model_id//\//--}"
+  local roots=("$cache_dir" "$cache_dir/hub")
+
+  for root in "${roots[@]}"; do
+    local repo_root="$root/models--$safe"
+    local snap_dir="$repo_root/snapshots"
+    if [ -d "$snap_dir" ]; then
+      if find "$snap_dir" -type f -maxdepth 3 -print -quit 2>/dev/null | grep -q .; then
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+has_ngc_embedder_cache() {
+  local cache_dir="/raid/vyasa/hf_cache"
+  local base_dir="$cache_dir/nvidia/nv-embedqa-e5-v5"
+  if [ -d "$base_dir" ]; then
+    if find "$base_dir" -type f -print -quit 2>/dev/null | grep -q .; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+check_model_cache() {
+  load_model_env
+
+  local text_model="${TEXT_MODEL_ID:-nvidia/Llama-3_3-Nemotron-Super-49B-v1_5}"
+  local vision_model="${VISION_MODEL_ID:-Qwen/Qwen2-VL-7B-Instruct}"
+  local embedder_model="${EMBEDDER_MODEL_ID:-nvidia/nv-embedqa-e5-v5}"
+  local reranker_model="${RERANKER_MODEL_ID:-nvidia/llama-3.2-nv-rerankqa-1b-v2}"
+
+  local missing=()
+
+  if ! has_hf_cache "$text_model"; then
+    missing+=("$text_model")
+  fi
+  if ! has_hf_cache "$vision_model"; then
+    missing+=("$vision_model")
+  fi
+  if ! has_hf_cache "$reranker_model"; then
+    missing+=("$reranker_model")
+  fi
+
+  if [ "$embedder_model" = "nvidia/nv-embedqa-e5-v5" ]; then
+    if ! has_ngc_embedder_cache; then
+      missing+=("$embedder_model (NVIDIA)")
+    fi
+  else
+    if ! has_hf_cache "$embedder_model"; then
+      missing+=("$embedder_model")
+    fi
+  fi
+
+  if [ "${#missing[@]}" -eq 0 ]; then
+    echo "✓ Model cache looks complete."
+    return 0
+  fi
+
+  echo "⚠️  Missing model cache entries:"
+  for model in "${missing[@]}"; do
+    echo "  - $model"
+  done
+
+  echo ""
+  read -r -p "Run model preload now? (scripts/preload_all_models.sh) [y/N] " response
+  if [[ "$response" =~ ^[Yy]$ ]]; then
+    "$PROJECT_ROOT/scripts/preload_all_models.sh"
+  else
+    echo "Skipping model preload. You can run it later:"
+    echo "  $PROJECT_ROOT/scripts/preload_all_models.sh"
+  fi
+}
+
 if $BOOTSTRAP; then
   bootstrap_secrets
+  if ! $SKIP_MODEL_CACHE; then
+    check_model_cache
+  fi
 fi
 
 if $CONFIGURE_NVIDIA; then
   configure_nvidia_runtime
 fi
 
-if ! $BOOTSTRAP && ! $CONFIGURE_NVIDIA; then
+if $CHECK_MODEL_CACHE; then
+  check_model_cache
+fi
+
+if ! $BOOTSTRAP && ! $CONFIGURE_NVIDIA && ! $CHECK_MODEL_CACHE; then
   usage
 fi

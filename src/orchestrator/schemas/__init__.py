@@ -7,6 +7,15 @@ from .disputes import DisputeContext, TriggerSourceType, DisputePriority
 from .evidence import NormalizedEvidenceUnit, ProvenanceType
 from .review import ReviewTask, ReviewStatus
 from .state import PhaseEnum, ResearchState
+from .retrieval import RetrievalBundle
+from .analytical_notes import AnalyticalNote, NoteState
+from .blueprint import (
+    ManuscriptBlueprint,
+    BlueprintSection,
+    VisualAnchor,
+    JournalSlot,
+    DepthIntent,
+)
 
 __all__ = [
     "Claim",
@@ -21,5 +30,13 @@ __all__ = [
     "ReviewStatus",
     "PhaseEnum",
     "ResearchState",
+    "RetrievalBundle",
+    "AnalyticalNote",
+    "NoteState",
+    "ManuscriptBlueprint",
+    "BlueprintSection",
+    "VisualAnchor",
+    "JournalSlot",
+    "DepthIntent",
 ]
 

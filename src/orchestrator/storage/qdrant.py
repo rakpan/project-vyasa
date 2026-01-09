@@ -172,6 +172,7 @@ class QdrantStorage:
                         "page_number": page_num,
                         "chunk_index": chunk_idx,
                         "chunk_text_length": len(chunk_text),
+                        "text_content": chunk_text,  # Store text content for retrieval
                     }
                     
                     # Add bbox if available
@@ -410,8 +411,13 @@ class QdrantStorage:
         file_hashes: Optional[List[str]] = None,  # Optional list of file_hashes to filter by
         limit: int = 5,
         query_vector: Optional[List[float]] = None,
+        top_k_embed: Optional[int] = None,  # Number of chunks to retrieve from Qdrant (before reranking)
+        top_k_rerank: Optional[int] = None,  # Number of chunks to return after reranking (default: limit)
+        use_reranker: Optional[bool] = None,  # Whether to use reranker (None = use global default from config)
     ) -> List[Dict[str, Any]]:
-        """Retrieve relevant chunks from Qdrant using semantic search.
+        """Retrieve relevant chunks from Qdrant using semantic search, optionally reranked.
+        
+        Flow: Embed query → Qdrant search (top-K) → Rerank (top-M) → Return
         
         Security: ALWAYS filters by project_id to prevent global retrieval.
         Can optionally filter by ingestion_id or a list of file_hashes.
@@ -421,15 +427,23 @@ class QdrantStorage:
             project_id: Project ID to filter by (REQUIRED for security).
             ingestion_id: Optional ingestion ID to filter by.
             file_hashes: Optional list of file hashes to filter by (alternative to ingestion_id).
-            limit: Maximum number of chunks to retrieve (default 5).
+            limit: Maximum number of chunks to return (default 5). Used as top_k_rerank if not specified.
             query_vector: Optional pre-computed embedding vector. If None, will need to be generated.
+            top_k_embed: Number of chunks to retrieve from Qdrant before reranking (default: 64 if reranker enabled, else limit).
+            top_k_rerank: Number of chunks to return after reranking (default: limit).
+            use_reranker: Whether to use reranker service.
+                - None: Use global default from RERANKER_ENABLED config
+                - True: Use reranker (if enabled in config)
+                - False: Never use reranker
         
         Returns:
             List of dictionaries, each representing a retrieved chunk with:
             - chunk_id: str
             - text_content: str (from payload)
             - payload: Dict with file_hash, ingestion_id, page_number, bbox, etc.
-            - score: float (relevance score)
+            - score: float (relevance score, rerank_score if reranker used)
+            - rerank_score: Optional[float] (reranker score if reranker used)
+            - rerank_rank: Optional[int] (reranker rank if reranker used)
         """
         if not QDRANT_AVAILABLE:
             logger.warning("Qdrant client not available. Returning empty list for retrieval.")
@@ -493,12 +507,38 @@ class QdrantStorage:
             # Create Filter object - project_id is ALWAYS required
             query_filter = Filter(must=filter_conditions) if filter_conditions else None
             
+            # Import reranker config (needed for both None check and global disable check)
+            from ...shared.config import RERANKER_ENABLED
+            
+            # Determine reranker usage: check config if not explicitly set
+            if use_reranker is None:
+                use_reranker = RERANKER_ENABLED
+            
+            # If reranker is disabled globally, never use it (even if caller requested it)
+            if use_reranker and not RERANKER_ENABLED:
+                logger.debug(
+                    "Reranker requested but RERANKER_ENABLED=false, falling back to embed-only",
+                    extra={"payload": {"project_id": project_id, "ingestion_id": ingestion_id}}
+                )
+                use_reranker = False
+            
+            # Determine retrieval limits
+            # Only expand top-K when reranking is actually enabled and will be used
+            # This prevents unnecessary expansion when reranker is disabled
+            if use_reranker:
+                embed_limit = top_k_embed if top_k_embed is not None else 64  # Default: retrieve 64, rerank to limit
+                rerank_limit = top_k_rerank if top_k_rerank is not None else limit
+            else:
+                # No reranking: use caller's limit directly, no expansion
+                embed_limit = limit
+                rerank_limit = limit
+            
             # Search Qdrant
             search_result = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=query_vector,
                 query_filter=query_filter,
-                limit=limit,
+                limit=embed_limit,
                 with_payload=True,
             )
             
@@ -519,6 +559,46 @@ class QdrantStorage:
                 }
                 chunks.append(chunk)
             
+            # Rerank if enabled and we have chunks
+            if use_reranker and chunks:
+                try:
+                    from ...shared.reranker_client import rerank_chunks
+                    reranked_chunks = rerank_chunks(
+                        query=query_text,
+                        chunks=chunks,
+                        top_k=rerank_limit,
+                        timeout=30
+                    )
+                    chunks = reranked_chunks
+                    logger.debug(
+                        f"Reranked {len(chunks)} chunks (from {embed_limit} candidates)",
+                        extra={
+                            "query": query_text[:100],
+                            "embed_limit": embed_limit,
+                            "rerank_limit": rerank_limit,
+                            "returned": len(chunks),
+                        }
+                    )
+                except Exception as e:
+                    # Degraded behavior: if reranker fails, check if it's required
+                    from ...shared.config import RERANKER_REQUIRED
+                    if RERANKER_REQUIRED:
+                        logger.error(
+                            f"Reranker is required but failed: {e}",
+                            exc_info=True
+                        )
+                        raise ValueError(f"Reranker is required but unavailable: {e}") from e
+                    else:
+                        logger.warning(
+                            f"Reranker failed, falling back to embed-only: {e}",
+                            exc_info=True
+                        )
+                        # Fallback: return top-M by embedding score
+                        chunks = chunks[:rerank_limit]
+            else:
+                # No reranking: return top-M by embedding score
+                chunks = chunks[:rerank_limit]
+            
             logger.debug(
                 f"Retrieved {len(chunks)} chunks from Qdrant",
                 extra={
@@ -526,6 +606,9 @@ class QdrantStorage:
                         "project_id": project_id,
                         "ingestion_id": ingestion_id,
                         "query_length": len(query_text),
+                        "use_reranker": use_reranker,
+                        "embed_limit": embed_limit,
+                        "rerank_limit": rerank_limit,
                     }
                 }
             )
@@ -534,4 +617,84 @@ class QdrantStorage:
             
         except Exception as e:
             logger.error(f"Failed to retrieve chunks from Qdrant: {e}", exc_info=True)
+            return []
+    
+    def get_chunks_by_ids(
+        self,
+        chunk_ids: List[str],
+        project_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve chunks by their IDs from Qdrant.
+        
+        Args:
+            chunk_ids: List of chunk IDs to retrieve.
+            project_id: Project ID (REQUIRED for security - validates chunks belong to project).
+        
+        Returns:
+            List of dictionaries, each representing a chunk with:
+            - chunk_id: str
+            - text_content: str (from payload or text field)
+            - page_number: int (from payload)
+            - file_hash: str (from payload)
+            - ingestion_id: str (from payload)
+            - chunk_index: int (from payload)
+            - bbox: Optional[Dict] (from payload)
+        """
+        if not QDRANT_AVAILABLE:
+            logger.warning("Qdrant not available, cannot retrieve chunks by IDs")
+            return []
+        
+        if not chunk_ids:
+            return []
+        
+        try:
+            # Convert chunk IDs to appropriate format (Qdrant expects int or str)
+            # Chunk IDs are SHA256 hashes (hex strings), so we can use them directly
+            point_ids = chunk_ids
+            
+            # Retrieve points by IDs
+            retrieved_points = self.client.retrieve(
+                collection_name=self.collection_name,
+                ids=point_ids,
+                with_payload=True,
+            )
+            
+            # Format results and validate project_id
+            chunks = []
+            for point in retrieved_points:
+                payload = point.payload or {}
+                
+                # Security: Validate project_id matches
+                chunk_project_id = payload.get("project_id")
+                if chunk_project_id != project_id:
+                    logger.warning(
+                        f"Chunk {point.id} belongs to project {chunk_project_id}, not {project_id} - skipping",
+                        extra={"payload": {"chunk_id": str(point.id), "chunk_project_id": chunk_project_id, "requested_project_id": project_id}}
+                    )
+                    continue
+                
+                # Extract text content (may be in payload.text_content or payload.text)
+                text_content = payload.get("text_content") or payload.get("text", "")
+                
+                # Build chunk metadata
+                chunk = {
+                    "chunk_id": str(point.id),
+                    "text_content": text_content,
+                    "page_number": payload.get("page_number"),
+                    "file_hash": payload.get("file_hash"),
+                    "ingestion_id": payload.get("ingestion_id"),
+                    "chunk_index": payload.get("chunk_index"),
+                    "bbox": payload.get("bbox"),
+                }
+                chunks.append(chunk)
+            
+            logger.debug(
+                f"Retrieved {len(chunks)} chunks by IDs from Qdrant",
+                extra={"payload": {"requested_count": len(chunk_ids), "retrieved_count": len(chunks), "project_id": project_id}}
+            )
+            
+            return chunks
+            
+        except Exception as e:
+            logger.error(f"Failed to retrieve chunks by IDs from Qdrant: {e}", exc_info=True)
             return []

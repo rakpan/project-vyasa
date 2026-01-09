@@ -7,7 +7,7 @@
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { useProjectStore } from "@/state/useProjectStore"
-import { FileText, Network, BookOpen, Folder, LayoutGrid } from "lucide-react"
+import { FileText, Network, BookOpen, Folder, LayoutGrid, Lightbulb } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useMemo } from "react"
 
@@ -72,6 +72,12 @@ export function NavProject() {
       href: `/projects/${activeProjectId}/manuscript`,
       icon: BookOpen,
       isActive: pathname === `/projects/${activeProjectId}/manuscript`,
+    },
+    {
+      title: "Perspectives",
+      href: `/projects/${activeProjectId}/perspectives`,
+      icon: Lightbulb,
+      isActive: pathname === `/projects/${activeProjectId}/perspectives`,
     },
     // Only show Research Cockpit when job context exists
     ...(researchCockpitUrl ? [{

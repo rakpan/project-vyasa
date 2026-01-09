@@ -31,12 +31,11 @@ services:
               # For multi-GPU, manually update to array format: ['0', '1']
               device_ids: ['0']
               capabilities: [gpu]
-    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${BRAIN_MODEL_PATH:-nvidia/Llama-3_3-Nemotron-Super-49B-v1_5}} --host 0.0.0.0 --port 30000 --tp-size 1 --quantization int8 --mem-fraction-static 0.50 --max-running-requests 1 --context-length 65536
+    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${BRAIN_MODEL_PATH:-nvidia/Llama-3_3-Nemotron-Super-49B-v1_5}} --host 0.0.0.0 --port 30000 --tp-size 1 --quantization w8a8_int8 --mem-fraction-static 0.50 --max-running-requests 1 --context-length 65536 --trust-remote-code --attention-backend flashinfer
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
       - NVIDIA_VISIBLE_DEVICES=${TEXT_GPU_IDS:-0}
       - HF_HOME=/raid/vyasa/hf_cache
-      - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
     cpuset: "10-19"
     shm_size: "16gb"
     mem_limit: "64g"
@@ -87,12 +86,11 @@ services:
               # For multi-GPU, manually update to array format: ['0', '1']
               device_ids: ['0']
               capabilities: [gpu]
-    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${WORKER_MODEL_PATH:-nvidia/Llama-3_3-Nemotron-Super-49B-v1_5}} --host 0.0.0.0 --port 30001 --tp-size 1 --quantization int8 --mem-fraction-static 0.50 --max-running-requests 1 --context-length 65536
+    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${WORKER_MODEL_PATH:-nvidia/Llama-3_3-Nemotron-Super-49B-v1_5}} --host 0.0.0.0 --port 30001 --tp-size 1 --quantization w8a8_int8 --mem-fraction-static 0.50 --max-running-requests 1 --context-length 65536 --trust-remote-code --attention-backend flashinfer
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - NVIDIA_VISIBLE_DEVICES=${TEXT_GPU_IDS:-0}
       - HF_HOME=/raid/vyasa/hf_cache
-      - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
     cpuset: "10-19"
     shm_size: "16gb"
     mem_limit: "32g"
@@ -139,12 +137,11 @@ services:
               # For multi-GPU, manually update to array format: ['0', '1']
               device_ids: ['0']
               capabilities: [gpu]
-    command: python3 -m sglang.launch_server --model-path ${VISION_MODEL_ID:-${VISION_MODEL_PATH:-Qwen/Qwen2-VL-7B-Instruct}} --host 0.0.0.0 --port 30002 --tp-size 1 --quantization int8 --mem-fraction-static 0.75 --max-running-requests 2 --context-length 8192
+    command: python3 -m sglang.launch_server --model-path ${VISION_MODEL_ID:-${VISION_MODEL_PATH:-Qwen/Qwen2-VL-7B-Instruct}} --host 0.0.0.0 --port 30002 --tp-size 1 --quantization w8a8_int8 --mem-fraction-static 0.75 --max-running-requests 2 --context-length 8192
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - NVIDIA_VISIBLE_DEVICES=${VISION_GPU_IDS:-0}
       - HF_HOME=/raid/vyasa/hf_cache
-      - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
     cpuset: "10-19"
     shm_size: "16gb"
     ports:
@@ -281,7 +278,6 @@ services:
       - HF_TOKEN=${HF_TOKEN}
       - NVIDIA_VISIBLE_DEVICES=${EMBEDDER_GPU_IDS:-}
       - HF_HOME=/raid/vyasa/hf_cache
-      - TRANSFORMERS_CACHE=/raid/vyasa/model_cache
     volumes:
       - /raid/vyasa/hf_cache:/raid/vyasa/hf_cache
       - /raid/vyasa/model_cache:/root/.cache/huggingface
@@ -290,6 +286,45 @@ services:
       - vyasa-net
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/30010"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Reranker service: NeMo Retriever Text Reranking NIM
+  # - Model: nvidia/llama-3.2-nv-rerankqa-1b-v2
+  # - Purpose: Refine top-K retrieval results to top-M evidence packets
+  # - GPU: Defaults to CPU (no GPU pinning) to avoid VRAM contention
+  #   To enable GPU: Set RERANKER_GPU_IDS in .env and uncomment runtime/device_ids below
+  reranker:
+    build:
+      context: ../src/reranker
+    # GPU configuration (uncomment if RERANKER_GPU_IDS is set):
+    # runtime: nvidia
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           device_ids: ${RERANKER_GPU_IDS}
+    #           capabilities: [gpu]
+    cpuset: "0-9"
+    shm_size: "16gb"
+    ports:
+      - "${PORT_RERANKER:-30011}:30011"
+    environment:
+      - RERANKER_MODEL_ID=${RERANKER_MODEL_ID:-nvidia/llama-3.2-nv-rerankqa-1b-v2}
+      - HF_TOKEN=${HF_TOKEN}
+      - NVIDIA_VISIBLE_DEVICES=${RERANKER_GPU_IDS:-}
+      - HF_HOME=/raid/vyasa/hf_cache
+    volumes:
+      - /raid/vyasa/hf_cache:/raid/vyasa/hf_cache
+      - /raid/vyasa/model_cache:/root/.cache/huggingface
+    restart: unless-stopped
+    networks:
+      - vyasa-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/30011"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -381,6 +416,8 @@ networks:
   vyasa-net:
     name: vyasa-net
     external: true
+    # Network is created by run_stack.sh before starting services
+    # Setting external: true prevents compose from trying to manage it
 
 volumes:
   memory_data:

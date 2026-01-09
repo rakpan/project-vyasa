@@ -375,6 +375,7 @@ def cartographer_node(state: ResearchState) -> ResearchState:
                         project_id=project_id,
                         ingestion_id=ingestion_id,
                         limit=chunks_per_rq,
+                        use_reranker=False,  # Cartography doesn't need reranking for speed
                     )
                     rq_scoped_chunks[rq_id] = chunks
                     all_chunks_with_anchors.extend(chunks)

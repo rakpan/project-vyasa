@@ -458,6 +458,16 @@ class ManuscriptBlock(BaseModel):
     updated_at: Optional[str] = Field(None, description="ISO timestamp when block was last updated")
     is_expert_verified: bool = Field(default=False, description="Whether an expert has verified this block")
     expert_notes: Optional[str] = Field(None, description="Optional notes from expert review")
+    
+    # Provenance fields (for section synthesis)
+    retrieval_bundle_id: Optional[str] = Field(None, description="RetrievalBundle ID used to generate this block")
+    chunk_ids: List[str] = Field(default_factory=list, description="Chunk IDs from Evidence Packet A used in this block")
+    note_ids: List[str] = Field(default_factory=list, description="Analytical Note IDs from Perspective Packet B used in this block")
+    model_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Model IDs used for synthesis: {'embedder': str, 'reranker': str, 'synthesizer': str, 'critic': str}"
+    )
+    section_id: Optional[str] = Field(None, description="Blueprint section ID this block corresponds to")
 
 
 class PatchObject(BaseModel):

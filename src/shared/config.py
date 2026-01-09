@@ -64,6 +64,11 @@ def get_embedder_url() -> str:
     return os.getenv("EMBEDDER_URL") or "http://embedder:30010"
 
 
+def get_reranker_url() -> str:
+    """Canonical reranker URL."""
+    return os.getenv("RERANKER_URL") or "http://reranker:30011"
+
+
 def get_orchestrator_url() -> str:
     """Canonical orchestrator URL."""
     return os.getenv("ORCHESTRATOR_URL") or "http://orchestrator:8000"
@@ -112,6 +117,13 @@ _embedding_model_path_fallback = os.getenv("EMBEDDING_MODEL_PATH")
 EMBEDDER_MODEL_ID: str = _env(
     "EMBEDDER_MODEL_ID",
     _embedding_model_path_fallback if _embedding_model_path_fallback else "nvidia/nv-embedqa-e5-v5"
+)
+
+# Reranker model (used by Reranker service)
+# Default: nvidia/llama-3.2-nv-rerankqa-1b-v2 (NeMo Retriever Text Reranking NIM)
+RERANKER_MODEL_ID: str = _env(
+    "RERANKER_MODEL_ID",
+    "nvidia/llama-3.2-nv-rerankqa-1b-v2"
 )
 
 # Backward compatibility: Emit deprecation warnings if legacy vars are used
@@ -181,6 +193,17 @@ EMBEDDING_MODEL_PATH: str = EMBEDDER_MODEL_ID  # type: ignore[misc,assignment]
 EMBEDDING_DIMENSION: int = int(_env("EMBEDDING_DIMENSION", "1024"))
 # HuggingFace Hub token for authenticated model downloads
 HF_TOKEN: Optional[str] = os.getenv("HF_TOKEN")
+
+# Reranker (NeMo Retriever Text Reranking NIM) - Relevance Scorer
+RERANKER_URL: str = get_reranker_url()
+
+# Reranker configuration (feature flags)
+RERANKER_ENABLED: bool = _env("RERANKER_ENABLED", "true").lower() in ("true", "1", "yes")
+RERANKER_REQUIRED: bool = _env("RERANKER_REQUIRED", "false").lower() in ("true", "1", "yes")
+
+# Retrieval configuration (defaults for section loop)
+RETRIEVAL_TOP_K: int = int(_env("RETRIEVAL_TOP_K", "64"))  # Top-K from Qdrant (before reranking)
+RERANK_TOP_M: int = int(_env("RERANK_TOP_M", "24"))  # Top-M after reranking
 
 # ============================================
 # Local Paths (DGX / RAID defaults)
