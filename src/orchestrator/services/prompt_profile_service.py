@@ -180,7 +180,7 @@ class PromptProfileService:
         constraints_obj = PromptConstraints.model_validate(constraints or {})
         
         profile = PromptProfile(
-            _key=f"{prompt_id}_v{next_version}",
+            key=f"{prompt_id}_v{next_version}",
             prompt_id=prompt_id,
             version=next_version,
             template=template,
@@ -465,7 +465,7 @@ class PromptProfileService:
         active_set.active_versions[prompt_id] = version
         active_set.updated_at = get_utc_now()
         active_set.updated_by = updated_by
-        active_set._key = ACTIVE_PROMPT_SET_KEY
+        active_set.key = ACTIVE_PROMPT_SET_KEY
         
         try:
             coll = self.db.collection(ACTIVE_PROMPT_SET_COLLECTION)

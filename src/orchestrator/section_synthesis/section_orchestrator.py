@@ -455,7 +455,7 @@ def synthesize_section(
     state: Optional[Dict[str, Any]] = None,
     db: Optional[Any] = None,
 ) -> str:
-    """Synthesize section using Nemotron 49B with section_writer prompt profile.
+    r"""Synthesize section using Nemotron 49B with section_writer prompt profile.
     
     Tier-B call: Requires EvidencePack (not raw PDF).
     
@@ -611,25 +611,28 @@ def synthesize_section(
     else:
         packet_b_text += "No analytical notes available.\n\n"
     
-    user_message = f"""Section: {section.heading}
-Journal Slot: {section.journal_slot.value}
-Depth Intent: {section.depth_intent.value}
-
-{packet_a_text}
-
-{packet_b_text if packet_b else "No analytical notes available."}
-
-CRITICAL RULES:
-1. All factual claims and citations MUST come from Packet A (Primary Sources).
-2. Packet B (Analytical Notes) may influence style, analogies, and pedagogy ONLY.
-3. Use sandwich pattern: {depth_instruction}
-4. Include inline citations using CANONICAL format: \\cite{{chunk:<chunk_id>}} for each claim from Packet A (e.g., \\cite{{chunk:chunk-123}}).
-5. Do NOT use numeric superscripts (e.g., [1], [2]) in the stored text. Only use \\cite{{chunk:<chunk_id>}} format.
-6. Do NOT cite Packet B directly. Use it to guide framing and style.
-7. Generate section text in Markdown format with fixed headings (use ## for section heading, ### for subsections).
-8. The compiler will later resolve \\cite{{chunk:<chunk_id>}} tokens into numeric superscripts at render time.
-
-Generate the section text now:"""
+    # Store citation pattern to avoid backslash issues in f-string (Python 3.12 restriction)
+    cite_pattern = "\\cite{chunk:<chunk_id>}"
+    cite_example = "\\cite{chunk:chunk-123}"
+    
+    # Build user message using string concatenation to avoid f-string parsing issues
+    user_message = (
+        f"Section: {section.heading}\n"
+        f"Journal Slot: {section.journal_slot.value}\n"
+        f"Depth Intent: {section.depth_intent.value}\n\n"
+        f"{packet_a_text}\n\n"
+        f"{packet_b_text if packet_b else 'No analytical notes available.'}\n\n"
+        "CRITICAL RULES:\n"
+        "1. All factual claims and citations MUST come from Packet A (Primary Sources).\n"
+        "2. Packet B (Analytical Notes) may influence style, analogies, and pedagogy ONLY.\n"
+        f"3. Use sandwich pattern: {depth_instruction}\n"
+        f"4. Include inline citations using CANONICAL format: {cite_pattern} for each claim from Packet A (e.g., {cite_example}).\n"
+        f"5. Do NOT use numeric superscripts (e.g., [1], [2]) in the stored text. Only use {cite_pattern} format.\n"
+        "6. Do NOT cite Packet B directly. Use it to guide framing and style.\n"
+        "7. Generate section text in Markdown format with fixed headings (use ## for section heading, ### for subsections).\n"
+        f"8. The compiler will later resolve {cite_pattern} tokens into numeric superscripts at render time.\n\n"
+        "Generate the section text now:"
+    )
     
     # Build prompt messages
     prompt_messages = [
@@ -789,7 +792,7 @@ def criticize_section(
         }
         for snippet, pointer in zip(evidence_pack.snippets, evidence_pack.pointers)
     ]
-    """
+    
     from ..prompts.defaults import DEFAULT_CROSS_EXAMINER_PROMPT
     
     # Fetch prompt from Prompt Registry
@@ -854,40 +857,42 @@ def criticize_section(
     
     vocab_clause = f"Vocabulary violations detected: {', '.join(vocabulary_violations)}" if vocabulary_violations else "No vocabulary violations detected."
     
-    user_message = f"""Section Draft:
-{section_text}
-
-{packet_a_text}
-
-{packet_b_text}
-
-CRITICAL VALIDATION RULES:
-1. Check that ALL citations \\cite{{chunk:<chunk_id>}} in section_text reference chunks in Packet A.
-2. Flag any factual claims that cannot be traced to Packet A.
-3. Flag any analogies/framing in section_text that go beyond what's supported by Packet A.
-4. For each Analytical Note in Packet B:
-   - Check if note's framing/style is used appropriately (influences style, not facts).
-   - If note's framing is used AND supported by Packet A evidence:
-     → Propose promotion: Draft Note → Manuscript Note (with reason + linked evidence).
-   - If note's framing goes beyond Packet A:
-     → Flag as "overreach" (do not promote).
-5. Check for vocabulary violations: {vocab_clause}
-6. Ensure citations use canonical format: \\cite{{chunk:<chunk_id>}} (not numeric superscripts like [1], [2]).
-
-Return JSON:
-{{
-    "overreach_flags": ["flag1", "flag2", ...],
-    "suggested_promotions": [
-        {{
-            "note_id": "uuid",
-            "reason": "Framing supported by evidence chunks [chunk_id1, chunk_id2]",
-            "linked_evidence": ["chunk_id1", "chunk_id2"]
-        }},
-        ...
-    ],
-    "vocabulary_suggestions": ["suggestion1", ...],
-    "required_citations_missing": ["chunk_id1", "chunk_id2", ...]
-}}"""
+    # Store citation pattern to avoid backslash issues in f-string (Python 3.12 restriction)
+    cite_pattern = "\\cite{chunk:<chunk_id>}"
+    
+    # Build user message using string formatting to avoid f-string parsing issues in Python 3.12
+    user_message = (
+        "Section Draft:\n"
+        f"{section_text}\n\n"
+        f"{packet_a_text}\n\n"
+        f"{packet_b_text}\n\n"
+        "CRITICAL VALIDATION RULES:\n"
+        f"1. Check that ALL citations {cite_pattern} in section_text reference chunks in Packet A.\n"
+        "2. Flag any factual claims that cannot be traced to Packet A.\n"
+        "3. Flag any analogies/framing in section_text that go beyond what's supported by Packet A.\n"
+        "4. For each Analytical Note in Packet B:\n"
+        "   - Check if note's framing/style is used appropriately (influences style, not facts).\n"
+        "   - If note's framing is used AND supported by Packet A evidence:\n"
+        "     → Propose promotion: Draft Note → Manuscript Note (with reason + linked evidence).\n"
+        "   - If note's framing goes beyond Packet A:\n"
+        '     → Flag as "overreach" (do not promote).\n'
+        f"5. Check for vocabulary violations: {vocab_clause}\n"
+        f"6. Ensure citations use canonical format: {cite_pattern} (not numeric superscripts like [1], [2]).\n\n"
+        "Return JSON:\n"
+        "{\n"
+        '    "overreach_flags": ["flag1", "flag2", ...],\n'
+        '    "suggested_promotions": [\n'
+        "        {\n"
+        '            "note_id": "uuid",\n'
+        '            "reason": "Framing supported by evidence chunks [chunk_id1, chunk_id2]",\n'
+        '            "linked_evidence": ["chunk_id1", "chunk_id2"]\n'
+        "        },\n"
+        "        ...\n"
+        "    ],\n"
+        '    "vocabulary_suggestions": ["suggestion1", ...],\n'
+        '    "required_citations_missing": ["chunk_id1", "chunk_id2", ...]\n'
+        "}"
+    )
     
     # Build prompt messages
     prompt_messages = [

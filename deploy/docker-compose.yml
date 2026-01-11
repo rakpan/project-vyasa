@@ -31,7 +31,7 @@ services:
               # For multi-GPU, manually update to array format: ['0', '1']
               device_ids: ['0']
               capabilities: [gpu]
-    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${BRAIN_MODEL_PATH:-nvidia/Llama-3_3-Nemotron-Super-49B-v1_5}} --host 0.0.0.0 --port 30000 --tp-size 1 --quantization w8a8_int8 --mem-fraction-static 0.50 --max-running-requests 1 --context-length 65536 --trust-remote-code --attention-backend flashinfer
+    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${BRAIN_MODEL_PATH:-nvidia/Llama-3_3-Nemotron-Super-49B-v1_5}} --host 0.0.0.0 --port 30000 --tp-size 1 --quantization petit_nvfp4 --mem-fraction-static 0.50 --max-running-requests 1 --context-length 65536 --trust-remote-code --attention-backend flashinfer
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
       - NVIDIA_VISIBLE_DEVICES=${TEXT_GPU_IDS:-0}
@@ -86,7 +86,7 @@ services:
               # For multi-GPU, manually update to array format: ['0', '1']
               device_ids: ['0']
               capabilities: [gpu]
-    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${WORKER_MODEL_PATH:-nvidia/Llama-3_3-Nemotron-Super-49B-v1_5}} --host 0.0.0.0 --port 30001 --tp-size 1 --quantization w8a8_int8 --mem-fraction-static 0.50 --max-running-requests 1 --context-length 65536 --trust-remote-code --attention-backend flashinfer
+    command: python3 -m sglang.launch_server --model-path ${TEXT_MODEL_ID:-${WORKER_MODEL_PATH:-nvidia/Llama-3_3-Nemotron-Super-49B-v1_5}} --host 0.0.0.0 --port 30001 --tp-size 1 --quantization petit_nvfp4 --mem-fraction-static 0.50 --max-running-requests 1 --context-length 65536 --trust-remote-code --attention-backend flashinfer
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - NVIDIA_VISIBLE_DEVICES=${TEXT_GPU_IDS:-0}

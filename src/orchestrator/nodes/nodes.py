@@ -284,7 +284,8 @@ def call_expert_with_fallback(
 # The __init__.py handles the actual imports for public API
 
 # Cartography
-from .cartography import cartographer_node
+# NOTE: cartographer_node is imported in __init__.py to avoid circular dependencies
+# (cartography.py imports from section_orchestrator which imports from nodes.py)
 
 # Quality/Governance
 # (imported in __init__.py to avoid circular imports)

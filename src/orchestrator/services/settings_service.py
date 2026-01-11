@@ -84,7 +84,7 @@ class SettingsService:
         # Set updated timestamp and user
         settings.updated_at = get_utc_now()
         settings.updated_by = updated_by
-        settings._key = SYSTEM_SETTINGS_KEY
+        settings.key = SYSTEM_SETTINGS_KEY
         
         try:
             coll = self.db.collection(SYSTEM_SETTINGS_COLLECTION)

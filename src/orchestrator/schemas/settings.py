@@ -86,12 +86,14 @@ class FeatureFlags(BaseModel):
 
 class SystemSettings(BaseModel):
     """System-wide settings (single document in ArangoDB)."""
-    _key: str = Field(default="system_settings", description="ArangoDB document key (singleton)")
+    key: str = Field(default="system_settings", alias="_key", description="ArangoDB document key (singleton)")
     runtime_budgets: RuntimeBudgets = Field(default_factory=RuntimeBudgets)
     manuscript_defaults: ManuscriptDefaults = Field(default_factory=ManuscriptDefaults)
     feature_flags: FeatureFlags = Field(default_factory=FeatureFlags)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_by: Optional[str] = Field(default=None, description="User/system that last updated settings")
+    
+    model_config = {"populate_by_name": True}  # Allow access by both 'key' and '_key'
 
 
 class PromptConstraints(BaseModel):
@@ -108,7 +110,7 @@ class PromptConstraints(BaseModel):
 
 class PromptProfile(BaseModel):
     """A versioned prompt profile."""
-    _key: str = Field(..., description="ArangoDB document key: {prompt_id}_v{version}")
+    key: str = Field(..., alias="_key", description="ArangoDB document key: {prompt_id}_v{version}")
     prompt_id: str = Field(..., description="Prompt identifier (e.g., 'critic_verify', 'synthesizer_section_writer')")
     version: int = Field(..., ge=1, description="Version number (auto-incremented per prompt_id)")
     template: str = Field(..., min_length=1, description="Prompt template text")
@@ -117,6 +119,8 @@ class PromptProfile(BaseModel):
     constraints: PromptConstraints = Field(default_factory=PromptConstraints)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: Optional[str] = Field(default=None, description="User/system that created this version")
+    
+    model_config = {"populate_by_name": True}  # Allow access by both 'key' and '_key'
     
     # Validation status (for activation gating)
     validation_status: Optional[str] = Field(
@@ -143,10 +147,12 @@ class PromptProfile(BaseModel):
 
 class ActivePromptSet(BaseModel):
     """Active prompt version mapping (single document in ArangoDB)."""
-    _key: str = Field(default="active_prompt_set", description="ArangoDB document key (singleton)")
+    key: str = Field(default="active_prompt_set", alias="_key", description="ArangoDB document key (singleton)")
     active_versions: Dict[str, int] = Field(
         default_factory=dict,
         description="Map of prompt_id -> active version number"
     )
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_by: Optional[str] = Field(default=None, description="User/system that last updated active versions")
+    
+    model_config = {"populate_by_name": True}  # Allow access by both 'key' and '_key'
